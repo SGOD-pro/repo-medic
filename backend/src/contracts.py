@@ -26,6 +26,25 @@ class RepairResult(BaseModel):
     state: Literal["succeeded", "failed", "cancelled"]
     reason: Optional[str] = None
 
+class RunDetail(RepairRequest, RepairResult):
+    pass
+
+class RunHistoryItem(BaseModel):
+    run_id: str
+    state: Literal["succeeded", "failed", "cancelled"]
+
+class EventPayload(BaseModel):
+    message: str
+
+class Event(BaseModel):
+    seq: int
+    type: str
+    payload: EventPayload
+
+class ReconnectResult(BaseModel):
+    run_id: str
+    events: List[Event]
+
 class HostPorts(Protocol):
     async def emit(self, event_type: str, payload: dict) -> None: ...
     async def save_artifact(self, kind: str, filename: str, content: bytes) -> str: ...

@@ -4,7 +4,7 @@ Owner foundation. This document owns topology, folder structure, internal interf
 
 ## Modules and communication
 
-Next.js UI → same-origin FastAPI → one queued worker → Python repair engine → Nemotron inference and ConTree execution adapters. API and worker share SQLite/private artifact disk; engine accesses persistence only through HostPorts. Run one backend service/process with one worker for the MVP. Deployment must keep the disk persistent. Do not add a separately hosted engine, Redis, Celery or service discovery.
+Next.js UI → same-origin FastAPI → one queued worker → Python repair engine → Nemotron inference and ConTree execution adapters. API and worker share persistence via a private Cloudflare D1 Worker bridge. Run one backend service/process with one worker for the MVP. Deployment will use the D1 database. The system is offline-first and has no user accounts or authentication. Do not add a separately hosted engine, Redis, Celery or service discovery.
 
 ## Folder structure and ownership
 
@@ -17,8 +17,8 @@ frontend/src/lib/contracts.ts      Foundation: matching TypeScript types
 frontend/tests/                    A: frontend checks
 backend/src/contracts.py          Foundation: Pydantic public/internal types
 backend/src/config.py             Foundation: environment parsing
-backend/src/api/                  B: FastAPI routes and sessions
-backend/src/storage/              B: SQLite and artifact persistence
+backend/src/api/                  B: FastAPI routes
+backend/src/storage/              B: D1 bridge and artifact persistence
 backend/src/worker.py             B: one worker, imports engine
 backend/src/engine/               C: orchestration and provider adapters
 backend/src/evaluation/           D: offline/explicit-live evaluation runner
@@ -34,7 +34,7 @@ Existing starter files may be adapted by their owner; this tree is the target, n
 
 Create owned queued run; worker claims it; engine validates curated recipe; baseline passes twice; dependency upgrade produces expected red tests; model proposes bounded allowlisted source changes; fresh upgraded sandbox verifies candidate; persist patch/logs/evidence; backend commits terminal state and final event. Failure/cancel/budget denial stops progression without manufacturing success.
 
-Snapshot filesystem state is distinct from a running environment. Create fresh execution from the fixed upgraded checkpoint for each candidate and final verification. Original tests/config remain preserved and validated. SDK calls and cleanup are C's responsibility; SQLite, cancellation and durable events are B's.
+Snapshot filesystem state is distinct from a running environment. Create fresh execution from the fixed upgraded checkpoint for each candidate and final verification. Original tests/config remain preserved and validated. SDK calls and cleanup are C's responsibility; D1 bridge, cancellation and durable events are B's.
 
 ## Internal engine contract
 

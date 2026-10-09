@@ -28,3 +28,25 @@ export interface RepairResult {
   state: State;
   reason?: string;
 }
+
+export interface RunDetail extends RepairRequest, RepairResult {}
+
+export interface RunHistoryItem {
+  run_id: string;
+  state: State;
+}
+
+export interface EventPayload {
+  message: string;
+}
+
+export interface Event {
+  seq: number;
+  type: string;
+  payload: EventPayload;
+}
+
+export interface ReconnectResult {
+  run_id: string;
+  events: Event[];
+}

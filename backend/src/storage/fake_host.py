@@ -1,4 +1,4 @@
-from backend.src.contracts import HostPorts
+from src.contracts import HostPorts
 
 class FakeHost:
     def __init__(self):

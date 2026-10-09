@@ -1,4 +1,4 @@
-from backend.src.contracts import RepairRequest, TaskRecipe, HostPorts, RepairResult
+from src.contracts import RepairRequest, TaskRecipe, HostPorts, RepairResult
 
 async def repair(request: RepairRequest, recipe: TaskRecipe, host: HostPorts) -> RepairResult:
     await host.emit("status", {"message": "Starting fake repair"})

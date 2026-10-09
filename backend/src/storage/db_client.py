@@ -1,6 +1,6 @@
 import httpx
 from typing import Any, Dict, List, Optional
-from backend.src.config import settings
+from src.config import settings
 
 class RepoMedicDB:
     """Python client for the Cloudflare D1 database bridge API."""

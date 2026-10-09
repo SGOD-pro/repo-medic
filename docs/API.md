@@ -31,7 +31,7 @@ All routes use `/api`. Session required except creating a session. Every run and
 SSE sends `id: seq`, `event: type`, and JSON data `{run_id,seq,ts,type,payload}`. `seq` starts at 1; `ts` is UTC ISO-8601. Types: `run.started`, `stage.completed`, `candidate.completed`, `usage.updated`, `run.finished`. Payloads respectively: `{mode,search_mode,max_run_usd}`, `{stage:"baseline"|"upgrade"|"repair"|"verification",passed:boolean,summary:string}`, `{candidate_id,passed:boolean,summary:string}`, Usage, and `{state,reason}`. Reconnect uses the larger of query `after` and valid Last-Event-ID. Frontend also reads RunSummary so a missed stream never hides completion.
 
 
-All timestamps are UTC. JSON property names are snake_case. Public summaries exclude provider refs, private filesystem paths, session hashes and secrets. Floats in usage are display estimates; backend cost accounting uses integer micro-USD (see DATABASE).
+All timestamps are UTC. JSON property names are snake_case. Public summaries exclude provider refs, private filesystem paths, and secrets. Floats in usage are display estimates; backend cost accounting uses integer micro-USD (see DATABASE).
 
 ## Endpoint behavior and errors
 

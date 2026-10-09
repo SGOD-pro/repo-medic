@@ -1,10 +1,10 @@
 # RepoMedic — database reference
 
-Owner B. One SQLite database on a persistent backend disk, one worker and private artifact files. No database service URL, PostgreSQL, Redis or S3 for this MVP. `REPOMEDIC_DB_PATH=backend/data/repomedic.sqlite` is a filesystem path interpreted from repository root; resolve it once at startup. If the host has no persistent disk, this design must be revised before deployment.
+Owner B. Persistence via Cloudflare D1 through a private Worker bridge (the D1 bridge). Artifacts can be stored via the bridge or D1 compatible storage. No direct SQLite filesystem access, PostgreSQL, Redis or S3 for this MVP. The `REPOMEDIC_DB_WORKER_URL` environment variable configures the connection.
 
 ## Types and metadata
 
-Opaque IDs and token hashes are TEXT. UTC times are ISO-8601 TEXT. Booleans are not needed in these tables. JSON is TEXT validated by shared Pydantic types at write/read boundaries. Cost columns are integer micro-USD (1 USD = 1,000,000); round reservations upward. API converts to displayed decimal dollars. PRAGMA foreign_keys=ON on every connection; journal_mode=WAL; bounded busy timeout. Use stdlib sqlite3 behind repository functions; thread off blocking DB work from async routes. No ORM required.
+Opaque IDs and token hashes are TEXT. UTC times are ISO-8601 TEXT. Booleans are not needed in these tables. JSON is TEXT validated by shared Pydantic types at write/read boundaries. Cost columns are integer micro-USD (1 USD = 1,000,000); round reservations upward. API converts to displayed decimal dollars. Use Cloudflare D1 HTTP client behind repository functions; thread off blocking DB work from async routes. No ORM required.
 
 ## Schema
 
@@ -20,7 +20,7 @@ Notation: PK primary key, FK foreign key, NN not null. Every unnamed optional co
 
 Enums use CHECK constraints matching API states/modes and artifact kinds. Operations kind is `model|sandbox`; status is `reserved|settled|uncertain|released`. Settled cost may be a conservative estimate if vendor billing is delayed; evidence labels it. Unknown paid completion stays uncertain with its reservation counted. Only an operation known not to have been submitted can release its reservation.
 
-Indexes: sessions(expires_at); runs(session_hash,created_at); runs(state,created_at); artifacts(run_id); operations(run_id,status). Tasks come from versioned curated recipe JSON, not a new editable tasks table. Candidate details live in durable events and evidence artifacts; do not create unnecessary candidate/user/team tables.
+Indexes: runs(state,created_at); artifacts(run_id); operations(run_id,status). Tasks come from versioned curated recipe JSON, not a new editable tasks table. Candidate details live in durable events and evidence artifacts; do not create unnecessary candidate/user/team tables.
 
 ## Relationships
 
@@ -38,6 +38,6 @@ Worker restart marks running jobs failed with a restart reason; outstanding rese
 
 ## Lifecycle and verification
 
-Initialize schema idempotently and track `PRAGMA user_version`; later incompatible changes require an explicit migration, never deleting the DB. Development tests use temporary directories. Startup does not erase records. Manual demo cleanup, after evidence backup, removes runs older than an operator-selected cutoff, then expired unreferenced sessions and orphan files. Do not hard-code automatic retention before submission requirements are known.
+Initialize schema idempotently and track `PRAGMA user_version`; later incompatible changes require an explicit migration, never deleting the DB. Development tests use temporary directories. Startup does not erase records. Manual demo cleanup, after evidence backup, removes runs older than an operator-selected cutoff, then orphan files. Do not hard-code automatic retention before submission requirements are known.
 
 Tests cover foreign keys, concurrent reservations, ordered events, terminal-state races, restart handling and cross-session isolation. API never serializes internal storage_path, provider_ref or token_hash.

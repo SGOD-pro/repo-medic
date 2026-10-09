@@ -3,12 +3,12 @@
 install:
 	cd frontend && npm install
 	cd db-worker && npm install
-	cd backend && uv pip install -r requirements.txt
+	cd backend && uv sync
 
 test:
 	@echo "Running tests..."
 	cd frontend && npm run test
-	cd backend && uv run python3 -m unittest discover tests
+	cd backend && uv run pytest
 
 lint:
 	@echo "Running lint..."
