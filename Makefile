@@ -7,18 +7,18 @@ install:
 
 test:
 	@echo "Running tests..."
-	cd frontend && npm run test || echo "Frontend tests not configured yet"
-	cd backend && python3 -m unittest discover tests || echo "Backend tests not configured yet"
+	cd frontend && npm run test
+	cd backend && uv run python3 -m unittest discover tests
 
 lint:
 	@echo "Running lint..."
-	cd frontend && npm run lint || echo "Frontend lint not configured yet"
-	cd backend && python3 -m flake8 src || echo "Backend lint not configured yet"
+	cd frontend && npm run lint
+	cd backend && uv run python3 -m flake8 src
 
 typecheck:
 	@echo "Running typecheck..."
-	cd frontend && npm run typecheck || npm run build || echo "Frontend typecheck not configured yet"
-	cd backend && python3 -m mypy src || echo "Backend typecheck not configured yet"
+	cd frontend && npm run typecheck
+	cd backend && uv run python3 -m mypy src
 
 verify: lint typecheck test
 	@echo "Verification passed"

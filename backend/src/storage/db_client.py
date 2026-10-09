@@ -45,14 +45,13 @@ class RepoMedicDB:
 
     # --- Runs ---
 
-    def create_run(self, run_id: str, session_hash: str, task_id: str, mode: str, search_mode: str, max_run_usd: float) -> Dict[str, Any]:
+    def create_run(self, run_id: str, task_id: str, mode: str, search_mode: str, max_run_usd: float) -> Dict[str, Any]:
         """Insert a queued run into D1."""
         return self._request(
             "POST",
             "/api/runs",
             json={
                 "run_id": run_id,
-                "session_hash": session_hash,
                 "task_id": task_id,
                 "mode": mode,
                 "search_mode": search_mode,

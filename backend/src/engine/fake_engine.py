@@ -2,7 +2,9 @@ from backend.src.contracts import RepairRequest, TaskRecipe, HostPorts, RepairRe
 
 async def repair(request: RepairRequest, recipe: TaskRecipe, host: HostPorts) -> RepairResult:
     await host.emit("status", {"message": "Starting fake repair"})
-    await host.reserve("model:1", 0.05)
+    reserved = await host.reserve("model:1", 0.05)
+    if not reserved:
+        return RepairResult(state="failed", reason="Budget denied")
     if await host.cancelled():
         return RepairResult(state="cancelled", reason="User cancelled")
     await host.settle("model:1", 0.05)

@@ -63,3 +63,14 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## 5. Team Ownership Rules
+
+**Respect package boundaries and avoid stepping on teammates' toes.**
+
+- **A owns frontend**: Task/progress/results/history UI, API client, UI checks.
+- **B owns backend**: Public API, D1 bridge/repositories/migrations, queue/HostPorts, artifact downloads.
+- **C owns engine**: Baseline/upgrade/repair/verifier, sequential and branch/refine logic, model/sandbox adapters.
+- **Lead owns integration**: Shared contracts/config/fixtures, checkpoint tags, operator credentials, and overall orchestration.
+
+Do not silently build or rewrite code that belongs to another owner's path. Request dependency/interface changes through the lead rather than editing another package.

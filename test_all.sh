@@ -2,7 +2,7 @@
 set -e
 echo "Running backend smoke tests..."
 cd backend
-.venv/bin/python smoke_test.py
+uv run python smoke_test.py
 cd ..
 echo "Running frontend smoke tests..."
 cd frontend

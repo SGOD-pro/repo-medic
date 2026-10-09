@@ -6,10 +6,10 @@ We build one complete E2E app, split by layer. Three humans work concurrently in
 
 | Person | Work package and owned output | Test dependency |
 | --- | --- | --- |
-| A | [Frontend](WORK_PACKAGE_A_FRONTEND.md): task/progress/results/history, API client, UI checks | Fake HTTP responses; no DB or provider keys |
-| B | [Backend](WORK_PACKAGE_B_BACKEND.md): public API, D1 bridge/repositories/migrations, queue/HostPorts, artifact downloads | FakeEngine and local D1 emulator |
-| C | [Engine](WORK_PACKAGE_C_ENGINE.md): baseline/upgrade/repair/verifier, sequential and branch/refine, model/sandbox adapters | FakeHost and fake providers; no finished backend/UI |
-| D optional | [Evaluation](WORK_PACKAGE_D_EVALUATION.md): regressions/evidence checker/benchmarks/demo | Starts with fixtures; real evaluation waits K4 |
+| A | [Frontend](scope/frontend.md): task/progress/results/history, API client, UI checks | Fake HTTP responses; no DB or provider keys |
+| B | [Backend](scope/backend.md): public API, D1 bridge/repositories/migrations, queue/HostPorts, artifact downloads | FakeEngine and local D1 emulator |
+| C | [Engine](scope/engine.md): baseline/upgrade/repair/verifier, sequential and branch/refine, model/sandbox adapters | FakeHost and fake providers; no finished backend/UI |
+| D optional | [Evaluation](scope/evaluation.md): regressions/evidence checker/benchmarks/demo | Starts with fixtures; real evaluation waits K4 |
 | You/lead | Shared contracts/config/fixtures, PR review, checkpoint tags, merges and operator credentials | Coordinate; don't silently build others' owned paths |
 
 ## K0 — preparation before assigning implementation
@@ -19,7 +19,7 @@ You + C prepare the common base. Teammates may sketch UI or read provider docs, 
 1. Put these 12 docs into the repo; archive conflicting old planning after review. PROJECT contains story only. AGENTS rules; PRD requirements/providers; architecture topology/internal ports; API public types; DATABASE D1 schema; UI screens; this file sequence/config.
 2. Commit shared Pydantic `backend/src/contracts.py` and matching TS `frontend/src/lib/contracts.ts`, plus exact repair/HostPorts signatures and API fixtures. Validate JSON against both schemas.
 3. Create canonical task recipe and success/failure/cancel/history/reconnect fixtures. Provider examples use sanitized/fake values; do not fabricate a real repository commit.
-4. Create config parser and `.env.example` with network-free default, empty secrets, common environment names below. Commit lockfiles/tool versions and runnable build/lint/typecheck/test commands. Create FakeEngine, FakeHost and fake provider skeletons implementing shared interfaces; these need not implement production features.
+4. Create config parser and `.env.example` with network-free default, empty secrets, common environment names below. Commit lockfiles/tool versions (using `uv` for Python packages) and runnable build/lint/typecheck/test commands. Create FakeEngine, FakeHost and fake provider skeletons implementing shared interfaces; these need not implement production features.
 5. Create db-worker skeleton/Wrangler config bound to your existing D1 ID; prepare local D1 emulator configuration. Freeze private bridge request/response contract from DATABASE. B implements repositories and migrations after this point, so the whole DB layer is not a prerequisite for teammates starting.
 6. Check clean install and shared fixtures/fake-interface smoke tests. Tag `foundation-ready`. Give each builder their branch, package and exact acceptance command.
 
