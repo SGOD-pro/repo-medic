@@ -8,11 +8,10 @@ The hackathon pitch is a coding agent that produces a verified repair with a vis
 
 ## MVP user flow
 
-1. Enter a shared demo access code.
-2. Choose a curated upgrade task and view its repository, commit, dependency versions and expected failure.
-3. Start a repair; see run mode, stages, candidates and budget usage.
-4. Inspect the winning patch, verification logs and exact tested versions.
-5. Download patch and evidence, or see an honest failure/cancellation reason.
+1. Choose a curated upgrade task and view its repository, commit, dependency versions and expected failure.
+2. Start a repair; see run mode, stages, candidates and budget usage.
+3. Inspect the winning patch, verification logs and exact tested versions.
+4. Download patch and evidence, or see an honest failure/cancellation reason.
 
 Modes: **offline** exercises deterministic fakes; **replay** displays saved evidence; **live** uses actual providers. Always show the mode. Replay is never described as a fresh live solve.
 

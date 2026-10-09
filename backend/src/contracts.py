@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import List, Optional, Literal, Protocol, Dict, Any, Union
 
 
@@ -115,6 +115,24 @@ class EventEnvelope(BaseModel):
     ts: str
     type: EventType
     payload: Dict[str, Any]
+
+    @model_validator(mode="after")
+    def validate_payload_by_type(self) -> "EventEnvelope":
+        if not isinstance(self.payload, dict) or not self.payload:
+            raise ValueError(f"Payload for event '{self.type}' cannot be empty")
+        if self.type == "run.started":
+            RunStartedPayload.model_validate(self.payload)
+        elif self.type == "stage.completed":
+            StageCompletedPayload.model_validate(self.payload)
+        elif self.type == "candidate.completed":
+            CandidateCompletedPayload.model_validate(self.payload)
+        elif self.type == "usage.updated":
+            UsageSummary.model_validate(self.payload)
+        elif self.type == "run.finished":
+            RunFinishedPayload.model_validate(self.payload)
+        else:
+            raise ValueError(f"Unsupported event type: {self.type}")
+        return self
 
 
 Event = EventEnvelope

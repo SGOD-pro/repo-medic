@@ -54,6 +54,25 @@ async def test_repair_success(dummy_request, dummy_recipe):
     assert "model:1" in host.reservations
     assert "model:1" in host.settlements
 
+    # Verify FakeEngine emits supported engine events
+    event_types = [e["type"] for e in host.events]
+    assert "stage.completed" in event_types
+    assert "usage.updated" in event_types
+    assert "candidate.completed" in event_types
+    # Verify FakeEngine never emits run.finished (B owns run.finished)
+    assert "run.finished" not in event_types
+
+    # Verify each emitted event is valid against EventEnvelope
+    for i, e in enumerate(host.events, 1):
+        env = EventEnvelope(
+            run_id=dummy_request.run_id,
+            seq=i,
+            ts="2026-10-09T00:00:00Z",
+            type=e["type"],
+            payload=e["payload"],
+        )
+        assert env.type == e["type"]
+
 
 @pytest.mark.asyncio
 async def test_repair_cancelled(dummy_request, dummy_recipe):
@@ -160,7 +179,7 @@ def test_negative_validations():
             seq=0,
             ts="2026-10-09T00:00:00Z",
             type="run.started",
-            payload={}
+            payload={"mode": "offline", "search_mode": "sequential", "max_run_usd": 1.0}
         )
 
     # Invalid event type
@@ -170,5 +189,51 @@ def test_negative_validations():
             seq=1,
             ts="2026-10-09T00:00:00Z",
             type="magic.completed",
-            payload={}
+            payload={"summary": "test"}
+        )
+
+    # Per-event payload negative validations
+    # 1. run.started
+    with pytest.raises(ValidationError):
+        EventEnvelope(run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="run.started", payload={})
+    with pytest.raises(ValidationError):
+        EventEnvelope(
+            run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="run.started",
+            payload={"mode": "invalid", "search_mode": "sequential", "max_run_usd": 1.0}
+        )
+
+    # 2. stage.completed
+    with pytest.raises(ValidationError):
+        EventEnvelope(run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="stage.completed", payload={})
+    with pytest.raises(ValidationError):
+        EventEnvelope(
+            run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="stage.completed",
+            payload={"stage": "invalid_stage", "passed": True, "summary": "msg"}
+        )
+
+    # 3. candidate.completed
+    with pytest.raises(ValidationError):
+        EventEnvelope(run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="candidate.completed", payload={})
+    with pytest.raises(ValidationError):
+        EventEnvelope(
+            run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="candidate.completed",
+            payload={"candidate_id": 123, "passed": "not_bool", "summary": "msg"}
+        )
+
+    # 4. usage.updated
+    with pytest.raises(ValidationError):
+        EventEnvelope(run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="usage.updated", payload={})
+    with pytest.raises(ValidationError):
+        EventEnvelope(
+            run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="usage.updated",
+            payload={"model_calls": -1, "input_tokens": 0, "output_tokens": 0, "estimated_usd": 0.0}
+        )
+
+    # 5. run.finished
+    with pytest.raises(ValidationError):
+        EventEnvelope(run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="run.finished", payload={})
+    with pytest.raises(ValidationError):
+        EventEnvelope(
+            run_id="r1", seq=1, ts="2026-10-09T00:00:00Z", type="run.finished",
+            payload={"state": "queued", "reason": None}
         )

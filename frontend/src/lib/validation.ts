@@ -116,7 +116,46 @@ export function validateEventEnvelope(input: unknown): EventEnvelope {
   if (typeof data.seq !== 'number' || data.seq < 1) throw new Error("seq must be an integer >= 1");
   if (typeof data.ts !== 'string' || !data.ts) throw new Error("ts must be a timestamp string");
   if (!VALID_EVENT_TYPES.has(data.type as EventType)) throw new Error(`Invalid event type: ${String(data.type)}`);
-  if (!isObject(data.payload)) throw new Error("payload must be an object");
+  if (!isObject(data.payload) || Object.keys(data.payload).length === 0) {
+    throw new Error(`payload for event type ${String(data.type)} must be a non-empty object`);
+  }
+
+  const p = data.payload;
+  switch (data.type) {
+    case "run.started":
+      if (!VALID_MODES.has(p.mode as Mode)) throw new Error("run.started payload requires valid mode");
+      if (!VALID_SEARCH_MODES.has(p.search_mode as SearchMode)) throw new Error("run.started payload requires valid search_mode");
+      if (typeof p.max_run_usd !== 'number' || p.max_run_usd < 0) throw new Error("run.started payload requires non-negative max_run_usd");
+      break;
+    case "stage.completed":
+      if (!["baseline", "upgrade", "repair", "verification"].includes(p.stage as string)) {
+        throw new Error("stage.completed payload requires valid stage name");
+      }
+      if (typeof p.passed !== 'boolean') throw new Error("stage.completed payload requires boolean passed");
+      if (typeof p.summary !== 'string') throw new Error("stage.completed payload requires string summary");
+      break;
+    case "candidate.completed":
+      if (typeof p.candidate_id !== 'string' || !p.candidate_id) {
+        throw new Error("candidate.completed payload requires candidate_id string");
+      }
+      if (typeof p.passed !== 'boolean') throw new Error("candidate.completed payload requires boolean passed");
+      if (typeof p.summary !== 'string') throw new Error("candidate.completed payload requires string summary");
+      break;
+    case "usage.updated":
+      if (typeof p.model_calls !== 'number' || p.model_calls < 0) throw new Error("usage.updated payload requires non-negative model_calls");
+      if (typeof p.input_tokens !== 'number' || p.input_tokens < 0) throw new Error("usage.updated payload requires non-negative input_tokens");
+      if (typeof p.output_tokens !== 'number' || p.output_tokens < 0) throw new Error("usage.updated payload requires non-negative output_tokens");
+      if (typeof p.estimated_usd !== 'number' || p.estimated_usd < 0) throw new Error("usage.updated payload requires non-negative estimated_usd");
+      break;
+    case "run.finished":
+      if (!["succeeded", "failed", "cancelled"].includes(p.state as string)) {
+        throw new Error("run.finished payload requires terminal state");
+      }
+      if (p.reason !== null && typeof p.reason !== 'string' && p.reason !== undefined) {
+        throw new Error("run.finished payload reason must be string or null");
+      }
+      break;
+  }
 
   return input as unknown as EventEnvelope;
 }
