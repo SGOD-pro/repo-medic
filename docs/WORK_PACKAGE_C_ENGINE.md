@@ -1,10 +1,10 @@
 # C — repair engine handoff
 
-Read [shared rules](../AGENTS.md), [product](PRD.md), [architecture](ARCHITECTURE.md) and [build plan](phases.md). Help the foundation owner freeze provider details; then start `feature/c-engine`. No finished UI or backend is required.
+Read [shared rules](../AGENTS.md), [product](PRD.md), [architecture](ARCHITECTURE.md) and [build plan](PHASES.md). Help the foundation owner freeze provider details; then start `feature/c-engine`. No finished UI or backend is required.
 
 ## Own and build
 
-Own `backend/src/engine/` and `backend/tests/engine/`. Implement `repair(request,recipe,host)` using FakeHost and fake model/sandbox adapters first. Keep provider adapters and repair orchestration together. No HTTP routes, SQLite imports or second deployment service.
+Own `backend/src/engine/` and `backend/tests/engine/`. Implement `repair(request,recipe,host)` using FakeHost and fake model/sandbox adapters first. Keep provider adapters and repair orchestration together. No HTTP routes, database imports or second deployment service.
 
 Stages:
 

@@ -2,17 +2,47 @@
   "run_id": "run-reconnect-1",
   "events": [
     {
+      "run_id": "run-reconnect-1",
       "seq": 1,
-      "type": "status",
+      "ts": "2026-10-09T20:00:00Z",
+      "type": "run.started",
       "payload": {
-        "message": "Starting repair"
+        "mode": "offline",
+        "search_mode": "sequential",
+        "max_run_usd": 10.0
       }
     },
     {
+      "run_id": "run-reconnect-1",
       "seq": 2,
-      "type": "status",
+      "ts": "2026-10-09T20:00:05Z",
+      "type": "stage.completed",
       "payload": {
-        "message": "Baseline check passed"
+        "stage": "baseline",
+        "passed": true,
+        "summary": "Baseline test suite passed cleanly"
+      }
+    },
+    {
+      "run_id": "run-reconnect-1",
+      "seq": 3,
+      "ts": "2026-10-09T20:00:10Z",
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 1,
+        "input_tokens": 100,
+        "output_tokens": 50,
+        "estimated_usd": 0.02
+      }
+    },
+    {
+      "run_id": "run-reconnect-1",
+      "seq": 4,
+      "ts": "2026-10-09T20:00:15Z",
+      "type": "run.finished",
+      "payload": {
+        "state": "succeeded",
+        "reason": null
       }
     }
   ]

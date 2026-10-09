@@ -1,6 +1,6 @@
 # D — evaluation and demo evidence handoff
 
-Read [shared rules](../AGENTS.md), [product](PRD.md), [architecture](ARCHITECTURE.md) and [build plan](phases.md). Optional fourth teammate owns this; with three, the foundation owner handles the minimum version. Start offline work at `foundation-ready`, not after the entire app finishes.
+Read [shared rules](../AGENTS.md), [product](PRD.md), [architecture](ARCHITECTURE.md) and [build plan](PHASES.md). Optional fourth teammate owns this; with three, the foundation owner handles the minimum version. Start offline work at `foundation-ready`, not after the entire app finishes.
 
 ## Own and build
 

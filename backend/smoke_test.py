@@ -16,6 +16,9 @@ def test_fixtures():
     with open('../fixtures/runs/cancel.json') as f:
         RunDetail.model_validate_json(f.read())
 
+    with open('../fixtures/runs/queued.json') as f:
+        RunDetail.model_validate_json(f.read())
+
     with open('../fixtures/runs/reconnect.json') as f:
         from src.contracts import ReconnectResult
         ReconnectResult.model_validate_json(f.read())

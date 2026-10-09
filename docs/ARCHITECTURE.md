@@ -58,4 +58,4 @@ A uses a fixture-backed HTTP client. B uses FakeEngine with the exact function s
 
 ## Configuration responsibility
 
-Foundation owns `config.py`, `.env.example`, types, task recipes, dependency locks and proxy settings. [phases](phases.md) lists environment keys and when credentials are needed. Secrets are backend-only; offline must remain network-free even if secrets are present. Server controls mode and caps.
+Foundation owns `config.py`, `.env.example`, types, task recipes, dependency locks and proxy settings. [phases](PHASES.md) lists environment keys and when credentials are needed. Secrets are backend-only; offline must remain network-free even if secrets are present. Server controls mode and caps.

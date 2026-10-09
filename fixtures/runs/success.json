@@ -3,6 +3,24 @@
   "task_id": "example-task-1",
   "mode": "offline",
   "search_mode": "sequential",
-  "max_run_usd": 10.0,
-  "state": "succeeded"
+  "state": "succeeded",
+  "reason": null,
+  "usage": {
+    "model_calls": 1,
+    "input_tokens": 120,
+    "output_tokens": 80,
+    "estimated_usd": 0.05
+  },
+  "artifacts": [
+    {
+      "artifact_id": "art-patch-1",
+      "kind": "patch",
+      "filename": "repair.diff"
+    },
+    {
+      "artifact_id": "art-evidence-1",
+      "kind": "evidence",
+      "filename": "verification.json"
+    }
+  ]
 }

@@ -1,43 +1,73 @@
 # RepoMedic — database reference
 
-Owner B. Persistence via Cloudflare D1 through a private Worker bridge (the D1 bridge). Artifacts can be stored via the bridge or D1 compatible storage. No direct SQLite filesystem access, PostgreSQL, Redis or S3 for this MVP. The `REPOMEDIC_DB_WORKER_URL` environment variable configures the connection.
+Owner B. Persistence uses Cloudflare D1 accessed through a private Cloudflare Worker bridge. No direct local SQLite filesystem access, PostgreSQL, Redis or S3 for this product. The environment variable REPOMEDIC_DB_WORKER_URL configures the private bridge connection. No user accounts, login, sessions, or session ownership exist in the database.
 
 ## Types and metadata
 
-Opaque IDs and token hashes are TEXT. UTC times are ISO-8601 TEXT. Booleans are not needed in these tables. JSON is TEXT validated by shared Pydantic types at write/read boundaries. Cost columns are integer micro-USD (1 USD = 1,000,000); round reservations upward. API converts to displayed decimal dollars. Use Cloudflare D1 HTTP client behind repository functions; thread off blocking DB work from async routes. No ORM required.
+Opaque identifiers are TEXT. UTC timestamps are ISO 8601 strings. Booleans are stored as integers 0 or 1 if needed. JSON payloads are TEXT strings validated by shared Pydantic models at boundaries. Cost values are integer micro USD where 1 USD equals 1,000,000 micro USD. The public API converts these values to decimal numbers for display.
 
 ## Schema
 
-Notation: PK primary key, FK foreign key, NN not null. Every unnamed optional column below is nullable.
+Notation: PK is primary key, FK is foreign key, NN is not null. Every unnamed optional column is nullable.
 
 | Table | Columns and constraints |
 | --- | --- |
-| sessions | `token_hash TEXT PK`, `created_at TEXT NN`, `expires_at TEXT NN`; random session token hashed before storage |
-| runs | `run_id TEXT PK`, `session_hash TEXT NN FK sessions.token_hash`, `task_id TEXT NN`, `mode TEXT NN`, `search_mode TEXT NN`, `state TEXT NN`, `reason TEXT`, `usage_json TEXT NN`, `created_at TEXT NN`, `updated_at TEXT NN`, `max_run_micro_usd INTEGER NN CHECK >=0` |
-| events | `run_id TEXT NN FK runs.run_id`, `seq INTEGER NN CHECK >=1`, `ts TEXT NN`, `type TEXT NN`, `payload_json TEXT NN`; composite PK `(run_id,seq)` |
-| artifacts | `artifact_id TEXT PK`, `run_id TEXT NN FK runs.run_id`, `kind TEXT NN`, `filename TEXT NN`, `storage_path TEXT NN`, `sha256 TEXT NN`, `size_bytes INTEGER NN CHECK >=0`, `created_at TEXT NN` |
-| operations | `operation_id TEXT PK`, `run_id TEXT NN FK runs.run_id`, `kind TEXT NN`, `status TEXT NN`, `reserved_micro_usd INTEGER NN CHECK >=0`, `settled_micro_usd INTEGER CHECK >=0`, `provider_ref TEXT`, `created_at TEXT NN`, `updated_at TEXT NN` |
+| runs | `run_id TEXT PK`, `task_id TEXT NN`, `mode TEXT NN`, `search_mode TEXT NN`, `state TEXT NN`, `reason TEXT`, `usage_json TEXT NN`, `created_at TEXT NN`, `updated_at TEXT NN`, `max_run_micro_usd INTEGER NN CHECK (max_run_micro_usd >= 0)` |
+| events | `run_id TEXT NN FK runs.run_id`, `seq INTEGER NN CHECK (seq >= 1)`, `ts TEXT NN`, `type TEXT NN`, `payload_json TEXT NN`; composite PK `(run_id, seq)` |
+| artifacts | `artifact_id TEXT PK`, `run_id TEXT NN FK runs.run_id`, `kind TEXT NN`, `filename TEXT NN`, `sha256 TEXT NN`, `size_bytes INTEGER NN CHECK (size_bytes >= 0)`, `content_base64 TEXT NN`, `created_at TEXT NN` |
+| operations | `operation_id TEXT PK`, `run_id TEXT NN FK runs.run_id`, `kind TEXT NN`, `status TEXT NN`, `reserved_micro_usd INTEGER NN CHECK (reserved_micro_usd >= 0)`, `settled_micro_usd INTEGER CHECK (settled_micro_usd >= 0)`, `provider_ref TEXT`, `created_at TEXT NN`, `updated_at TEXT NN` |
 
-Enums use CHECK constraints matching API states/modes and artifact kinds. Operations kind is `model|sandbox`; status is `reserved|settled|uncertain|released`. Settled cost may be a conservative estimate if vendor billing is delayed; evidence labels it. Unknown paid completion stays uncertain with its reservation counted. Only an operation known not to have been submitted can release its reservation.
+Enum constraints match API values. Operation kinds are model or sandbox. Operation statuses are reserved, settled, uncertain, or released.
 
-Indexes: runs(state,created_at); artifacts(run_id); operations(run_id,status). Tasks come from versioned curated recipe JSON, not a new editable tasks table. Candidate details live in durable events and evidence artifacts; do not create unnecessary candidate/user/team tables.
+Indexes: runs(state, created_at); artifacts(run_id); operations(run_id, status).
 
-## Relationships
+## Artifact storage in D1
 
-One session owns many runs. One run owns many events, artifacts and operations. Task ID references a versioned recipe in Git; evidence also records the recipe hash and commit so later edits cannot change historical meaning. Sessions are not hard-deleted on logout while referenced by runs; expire/revoke them and let retention purge runs first. Foreign keys restrict deletion; cleanup deletes dependent rows explicitly in a transaction.
+Artifacts are bounded and persisted directly inside Cloudflare D1 as base64 encoded text. Each individual artifact must not exceed 1,048,576 bytes (1 megabyte). Total artifact volume per run must not exceed 8,388,608 bytes (8 megabytes). Any attempt to exceed these boundaries fails clearly before storage.
 
-## Transactions and state
+## Private D1 Worker bridge contract
 
-Create a queued run atomically. Worker claims only queued rows. Allowed transitions: queued→running/failed/cancelled; running→succeeded/failed/cancelled. Terminal state is immutable. Conditional updates require the old active state, preventing a late engine result from overwriting cancellation. Final state and `run.finished` insert happen in one transaction, exactly once.
+The Python backend communicates with Cloudflare D1 through HTTP endpoints on the private Worker bridge using authorization bearer token DB_BRIDGE_TOKEN.
 
-Allocate MAX(seq)+1 and insert under one short write transaction, or equivalent serialized allocation. Persist artifact metadata only after its bytes are safely written to a generated path inside the artifact root. No paths from users or model output. Reconcile unreferenced files after crashes; missing artifact bytes never imply repair success.
+### 1. Runs endpoints
 
-Budget reservation uses BEGIN IMMEDIATE, checking both run cap and global configured ceiling before insertion. Global committed cost = settled amount for settled operations + full reservations for reserved/uncertain operations. Include both model and sandbox operations. Settle once; overrun freezes further paid work and reports the breach rather than hiding it. Do not reset the ledger during development just to regain credits.
+- POST `/api/runs`: Create queued run.
+  Request: `{"run_id": string, "task_id": string, "mode": string, "search_mode": string, "state": "queued", "max_run_micro_usd": number}`
+  Response 201: `{"ok": true, "run_id": string}`
 
-Worker restart marks running jobs failed with a restart reason; outstanding reservations become uncertain. Queued jobs may run once; no automatic resume of interrupted paid operations. No transaction stays open during network/provider calls.
+- GET `/api/runs/:run_id`: Fetch run details.
+  Response 200: `{"run_id": string, "task_id": string, "mode": string, "search_mode": string, "state": string, "reason": string | null, "usage": object, "artifacts": array}`
+  Response 404: `{"error": {"code": "not_found", "message": "Run not found"}}`
 
-## Lifecycle and verification
+- PATCH `/api/runs/:run_id`: Transition state.
+  Request: `{"state": string, "reason": string | null}`
+  Response 200: `{"ok": true}`
 
-Initialize schema idempotently and track `PRAGMA user_version`; later incompatible changes require an explicit migration, never deleting the DB. Development tests use temporary directories. Startup does not erase records. Manual demo cleanup, after evidence backup, removes runs older than an operator-selected cutoff, then orphan files. Do not hard-code automatic retention before submission requirements are known.
+### 2. Events endpoints
 
-Tests cover foreign keys, concurrent reservations, ordered events, terminal-state races, restart handling and cross-session isolation. API never serializes internal storage_path, provider_ref or token_hash.
+- POST `/api/runs/:run_id/events`: Append event.
+  Request: `{"type": string, "payload": object}`
+  Response 201: `{"ok": true, "seq": number, "ts": string}`
+
+- GET `/api/runs/:run_id/events?after=0`: Fetch ordered events.
+  Response 200: `{"events": [{"seq": number, "type": string, "payload": object, "ts": string}]}`
+
+### 3. Artifacts endpoints
+
+- POST `/api/runs/:run_id/artifacts`: Store bounded artifact.
+  Request: `{"artifact_id": string, "kind": string, "filename": string, "sha256": string, "size_bytes": number, "content_base64": string}`
+  Response 201: `{"ok": true, "artifact_id": string}`
+
+- GET `/api/runs/:run_id/artifacts/:artifact_id`: Fetch artifact content.
+  Response 200: `{"artifact_id": string, "kind": string, "filename": string, "sha256": string, "size_bytes": number, "content_base64": string}`
+  Response 404: `{"error": {"code": "not_found", "message": "Artifact not found"}}`
+
+### 4. Operations endpoints
+
+- POST `/api/runs/:run_id/operations`: Reserve budget.
+  Request: `{"operation_id": string, "kind": string, "reserved_micro_usd": number}`
+  Response 201: `{"ok": true}`
+
+- PATCH `/api/operations/:operation_id`: Settle actual cost.
+  Request: `{"settled_micro_usd": number}`
+  Response 200: `{"ok": true}`

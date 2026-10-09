@@ -13,7 +13,7 @@ UI to show the repair stages, candidates, and final downloaded patch/evidence.
 - [ ] Design it (spec): `/architect run progress and results`
 
 ### 3. History and reload · needs a decision
-View past runs and reload session state.
+View past runs and reload run state.
 **Done when:** A user can view history and reload an ongoing run.
 - [ ] Design it (spec): `/architect history and reload`
 

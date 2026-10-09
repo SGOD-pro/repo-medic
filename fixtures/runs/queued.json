@@ -1,0 +1,15 @@
+{
+  "run_id": "run-queued-1",
+  "task_id": "upgrade-example-01",
+  "mode": "offline",
+  "search_mode": "sequential",
+  "state": "queued",
+  "reason": null,
+  "usage": {
+    "model_calls": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "estimated_usd": 0.0
+  },
+  "artifacts": []
+}

@@ -18,7 +18,7 @@ Modes: **offline** exercises deterministic fakes; **replay** displays saved evid
 
 ## Scope and order
 
-Must ship: one curated task end to end; session ownership; persistent runs/events; sequential repair; fresh-environment verifier; cancellation; bounded paid calls; artifact download; clearly labeled mock/replay; one real recorded run.
+Must ship: one curated task end to end; persistent runs/events; sequential repair; fresh-environment verifier; cancellation; bounded paid calls; artifact download; clearly labeled mock/replay; one real recorded run.
 
 Next, only after this works: up to three candidate branches, with at most one refinement for each. Show measured benefit only if evaluation supports it.
 
@@ -29,8 +29,8 @@ Defer: arbitrary repositories, GitHub account connection, automatic PRs/merges, 
 | Module | Technology/service | How and why |
 | --- | --- | --- |
 | User workspace | Existing Next.js/React/TypeScript/Tailwind | Screens and typed HTTP client; retain repository versions until clean installation/build passes |
-| API/session | FastAPI, Pydantic, Uvicorn | Validate frozen API, access-code sessions and run lifecycle |
-| Persistence | Python sqlite3, private filesystem | Small single-host durable queue/events/artifacts; no ORM or cloud DB needed |
+| API | FastAPI, Pydantic, Uvicorn | Validate frozen API, no user accounts, and run lifecycle |
+| Persistence | Cloudflare D1 via private Worker bridge | Durable queue, events, runs and artifacts; no user accounts or local SQLite |
 | Engine | Plain Python async orchestration | Explicit repair stages, bounded branching and hard verification; no LangGraph dependency |
 | Model adapter | OpenAI-compatible async Python client (`openai`) | Calls NVIDIA model on Nebius; explicitly disable SDK automatic retries for paid submission |
 | Execution adapter | ConTree Python SDK/client (`contree_sdk`, `contree_client`) | Separate runtime executes code from image checkpoints; package names/versions installed from current official instructions and locked after spike |
@@ -66,4 +66,4 @@ Record actual resolved values here. These are not completed checks. Offline work
 
 All offline acceptance checks pass. A real run demonstrates the upgrade failure, safe source repair and fresh verification. Evidence contains actual logs, patch, tested versions and provider usage. Total provider/sandbox spend stays within the team's approximately $25 allocation, with money reserved for recording and judging.
 
-No invented benchmark scores, winning probability, pricing or model capabilities. Check current organizer submission/video rules before recording. See [architecture](ARCHITECTURE.md) for boundaries and [phases](phases.md) for delivery.
+No invented benchmark scores, winning probability, pricing or model capabilities. Check current organizer submission/video rules before recording. See [architecture](ARCHITECTURE.md) for boundaries and [phases](PHASES.md) for delivery.
