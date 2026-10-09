@@ -1,0 +1,19 @@
+{
+  "run_id": "run-reconnect-1",
+  "events": [
+    {
+      "seq": 1,
+      "type": "status",
+      "payload": {
+        "message": "Starting repair"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "status",
+      "payload": {
+        "message": "Baseline check passed"
+      }
+    }
+  ]
+}

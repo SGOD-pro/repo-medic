@@ -1,0 +1,8 @@
+{
+  "run_id": "run-success-1",
+  "task_id": "example-task-1",
+  "mode": "offline",
+  "search_mode": "sequential",
+  "max_run_usd": 10.0,
+  "state": "succeeded"
+}

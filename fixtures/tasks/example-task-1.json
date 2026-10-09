@@ -1,0 +1,16 @@
+{
+  "task_id": "example-task-1",
+  "repository": "https://github.com/example/repo",
+  "commit": "abcdef123456",
+  "test_command": [
+    "pytest",
+    "tests/"
+  ],
+  "allowed_source_paths": [
+    "src/"
+  ],
+  "expected_failure": "AssertionError",
+  "timeout_seconds": 600,
+  "max_candidates": 3,
+  "max_refinements": 1
+}

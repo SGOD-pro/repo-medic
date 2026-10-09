@@ -1,0 +1,61 @@
+# RepoMedic — system architecture
+
+Owner foundation. This document owns topology, folder structure, internal interfaces and execution workflow. Public HTTP schemas are in [API](API.md); persistent schema is in [DATABASE](DATABASE.md); screens are in [UI-UX](UI-UX.md). Do not copy those schemas into competing documents.
+
+## Modules and communication
+
+Next.js UI → same-origin FastAPI → one queued worker → Python repair engine → Nemotron inference and ConTree execution adapters. API and worker share SQLite/private artifact disk; engine accesses persistence only through HostPorts. Run one backend service/process with one worker for the MVP. Deployment must keep the disk persistent. Do not add a separately hosted engine, Redis, Celery or service discovery.
+
+## Folder structure and ownership
+
+
+```text
+AGENTS.md
+frontend/src/app/                  A: screens
+frontend/src/lib/api.ts            A: HTTP client and mock transport
+frontend/src/lib/contracts.ts      Foundation: matching TypeScript types
+frontend/tests/                    A: frontend checks
+backend/src/contracts.py          Foundation: Pydantic public/internal types
+backend/src/config.py             Foundation: environment parsing
+backend/src/api/                  B: FastAPI routes and sessions
+backend/src/storage/              B: SQLite and artifact persistence
+backend/src/worker.py             B: one worker, imports engine
+backend/src/engine/               C: orchestration and provider adapters
+backend/src/evaluation/           D: offline/explicit-live evaluation runner
+backend/tests/{api,engine,evaluation}/  Respective owners
+fixtures/{tasks,runs,providers}/  Foundation: shared JSON examples
+backend/data/                     Local only, ignored by Git
+```
+
+Existing starter files may be adapted by their owner; this tree is the target, not a claim those modules already exist. Root manifests, `.env.example`, shared fixture files and contracts are foundation-owned. Owners may request dependency additions; the foundation owner makes the lockfile changes.
+
+
+## Repair workflow
+
+Create owned queued run; worker claims it; engine validates curated recipe; baseline passes twice; dependency upgrade produces expected red tests; model proposes bounded allowlisted source changes; fresh upgraded sandbox verifies candidate; persist patch/logs/evidence; backend commits terminal state and final event. Failure/cancel/budget denial stops progression without manufacturing success.
+
+Snapshot filesystem state is distinct from a running environment. Create fresh execution from the fixed upgraded checkpoint for each candidate and final verification. Original tests/config remain preserved and validated. SDK calls and cleanup are C's responsibility; SQLite, cancellation and durable events are B's.
+
+## Internal engine contract
+
+
+Foundation declares these shared Python types before parallel work:
+
+- `RepairRequest(run_id,task_id,mode,search_mode,max_run_usd)`.
+- `TaskRecipe`: TaskSummary fields plus `test_command:list[str]`, `allowed_source_paths:list[str]`, `expected_failure:string`, `timeout_seconds:int`, `max_candidates:int`, `max_refinements:int`.
+- `RepairResult(state,reason)` where state is `succeeded|failed|cancelled`.
+- `async repair(request:RepairRequest, recipe:TaskRecipe, host:HostPorts)->RepairResult`.
+- HostPorts async methods: `emit(type,payload)->None`, `save_artifact(kind,filename,content:bytes)->str`, `reserve(operation_id,estimated_usd)->bool`, `settle(operation_id,actual_or_estimated_usd)->None`, `cancelled()->bool`.
+
+B implements HostPorts and runs the worker; C calls it and has no database or HTTP imports. B owns final transition/event: C never emits `run.finished`. Reservation is persisted before a paid operation; unknown completion retains its reservation and stops the run for review, without retry. Actual provider operation identifiers are recorded where available. C's provider interfaces live entirely inside its package and need not be shared with A/B. Cancellation/deadline checks apply to every stage, including final verification. C cleans up transient provider resources after collecting evidence; cleanup failure is recorded rather than triggering repair resubmission.
+
+
+B's HostPorts is bound to a run and operation kind. C supplies globally unique operation IDs with `model:` or `sandbox:` prefix; B derives the stored kind from that prefix. Foundation adds `record_provider_ref(operation_id,provider_ref)->None` to HostPorts for durable remote reference tracking. Never store credential material in that field. Settlement is idempotent; uncertain outcomes retain reservations.
+
+## Independence and integration
+
+A uses a fixture-backed HTTP client. B uses FakeEngine with the exact function signature. C uses FakeHost and fake model/sandbox adapters. D uses the same recipe/results to validate evidence. Foundation creates shared contracts and fixtures before work splits. Replace fakes at boundaries once their offline acceptance checks pass; integration starts with a complete offline flow, then a capped live run.
+
+## Configuration responsibility
+
+Foundation owns `config.py`, `.env.example`, types, task recipes, dependency locks and proxy settings. [phases](phases.md) lists environment keys and when credentials are needed. Secrets are backend-only; offline must remain network-free even if secrets are present. Server controls mode and caps.

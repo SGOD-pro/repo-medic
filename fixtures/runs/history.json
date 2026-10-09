@@ -1,0 +1,14 @@
+[
+  {
+    "run_id": "run-success-1",
+    "state": "succeeded"
+  },
+  {
+    "run_id": "run-fail-1",
+    "state": "failed"
+  },
+  {
+    "run_id": "run-cancel-1",
+    "state": "cancelled"
+  }
+]
