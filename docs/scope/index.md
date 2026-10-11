@@ -10,7 +10,7 @@
 |---|---|---|
 | A | [Frontend](frontend.md) | planned |
 | B | [Backend](backend.md) | planned |
-| C | [Engine](engine.md) | planned |
+| C | [Engine](engine.md) | done |
 | D | [Evaluation](evaluation.md) | planned |
 | I | [Integration](integration.md) | planned (K0 existing) |
 

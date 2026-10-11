@@ -74,3 +74,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **Lead owns integration**: Shared contracts/config/fixtures, checkpoint tags, operator credentials, and overall orchestration.
 
 Do not silently build or rewrite code that belongs to another owner's path. Request dependency/interface changes through the lead rather than editing another package.
+
+## Context files
+
+- [backend/src/engine/AGENTS.md](backend/src/engine/AGENTS.md): Engine baseline, upgrade, verifier, branch/refine, and provider adapters
