@@ -1,0 +1,378 @@
+import {
+  TaskSummary,
+  RunSummary,
+  SearchMode,
+  Mode,
+  APIErrorEnvelope,
+  EventEnvelope,
+  ArtifactKind,
+} from "./contracts";
+
+export interface RepoMedicApiClient {
+  getTasks(): Promise<TaskSummary[]>;
+  startRun(taskId: string, searchMode: SearchMode): Promise<RunSummary>;
+  getRun(runId: string): Promise<RunSummary>;
+  cancelRun(runId: string): Promise<RunSummary>;
+  getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]>;
+  getArtifact(runId: string, kind: ArtifactKind): Promise<string>;
+}
+
+export const CURATED_TASKS: TaskSummary[] = [
+  {
+    task_id: "TASK-084",
+    title: "pydantic v1.10.8 → v2.0.2 migration in fastapi-service",
+    repository_url: "https://github.com/tiangolo/fastapi-service",
+    commit_sha: "8a4f21d",
+    dependency: "pydantic",
+    from_version: "1.10.8",
+    to_version: "2.0.2",
+  },
+  {
+    task_id: "TASK-091",
+    title: "sqlalchemy v1.4.48 → v2.0.19 in backend-core",
+    repository_url: "https://github.com/pallets/backend-core",
+    commit_sha: "c39b104",
+    dependency: "sqlalchemy",
+    from_version: "1.4.48",
+    to_version: "2.0.19",
+  },
+  {
+    task_id: "TASK-097",
+    title: "httpx v0.23.3 → v0.24.1 in scraper-bot",
+    repository_url: "https://github.com/encode/scraper-bot",
+    commit_sha: "f72a110",
+    dependency: "httpx",
+    from_version: "0.23.3",
+    to_version: "0.24.1",
+  },
+];
+
+export const MOCK_PATCH = `--- a/src/app/schemas.py
++++ b/src/app/schemas.py
+@@ -3,9 +3,8 @@
+-from pydantic import BaseModel, Field
++from pydantic import BaseModel, Field, ConfigDict
+ 
+ class AccountPayload(BaseModel):
+     account_id: str
+-    tenant_slug: str = Field(..., regex="^[a-zA-Z0-9]+$")
++    tenant_slug: str = Field(..., pattern="^[a-zA-Z0-9]+$")
+     is_active: bool = True
+-    class Config:
+-        orm_mode = True
++    model_config = ConfigDict(from_attributes=True)
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -20,2 +20,3 @@
+-    "pydantic>=1.10.8,<2.0.0",
++    "pydantic>=2.0.2,<3.0.0",
++    "pydantic-settings>=2.0.0",
+`;
+
+export const MOCK_EVIDENCE = {
+  task_id: "TASK-084",
+  status: "PASSED",
+  ast_hash: "sha256:d8a261f9c09b8841a12e5661c478",
+  tests_passed: 42,
+  tests_failed: 0,
+  execution_time: "24.2s",
+  sandbox_id: "nb-sand-9941a",
+  kernel: "Linux 6.2-cgroup2",
+  contract_assertions: 2,
+  model: "Nemotron-70B",
+  cost_usd: 0.04,
+};
+
+export const MOCK_LOG = `[00:01.12] sandbox: creating isolated container environment (python 3.11, pydantic 2.0.2)
+[00:03.45] agent: generating patch for src/app/schemas.py
+[00:08.20] verifier: applying untrusted patch to clean repo
+[00:09.11] verifier: ast check passed (0 test files modified, source allowlist respected)
+[00:14.30] pytest: running full test suite (42 tests)...
+[00:22.04] pytest: test_users_schema.py::test_validation PASSED
+[00:23.95] pytest: ================= 42 passed in 1.48s =================
+[00:24.20] verifier: candidate A verified successfully`;
+
+export class MockTransport implements RepoMedicApiClient {
+  private activeRuns: Map<string, RunSummary> = new Map();
+
+  async getTasks(): Promise<TaskSummary[]> {
+    return Promise.resolve(CURATED_TASKS);
+  }
+
+  async startRun(taskId: string, searchMode: SearchMode): Promise<RunSummary> {
+    const task = CURATED_TASKS.find((t) => t.task_id === taskId) || CURATED_TASKS[0];
+    const runId = `run_${task.task_id.toLowerCase().replace("-", "_")}_${Date.now()}`;
+    const run: RunSummary = {
+      run_id: runId,
+      task_id: task.task_id,
+      mode: "live" as Mode,
+      search_mode: searchMode,
+      state: "running",
+      reason: null,
+      usage: {
+        model_calls: 3,
+        input_tokens: 14200,
+        output_tokens: 2840,
+        estimated_usd: 0.18,
+      },
+      artifacts: [
+        {
+          artifact_id: "art_patch_01",
+          kind: "patch",
+          filename: "repomedic-fix.patch",
+        },
+        {
+          artifact_id: "art_evidence_01",
+          kind: "evidence",
+          filename: "verification-evidence.json",
+        },
+        {
+          artifact_id: "art_log_01",
+          kind: "log",
+          filename: "container-eval-candidate-a.log",
+        },
+      ],
+    };
+    this.activeRuns.set(runId, run);
+    return Promise.resolve(run);
+  }
+
+  async getRun(runId: string): Promise<RunSummary> {
+    const run = this.activeRuns.get(runId);
+    if (!run) {
+      if (runId === "run-success-1") {
+        return Promise.resolve({
+          run_id: "run-success-1",
+          task_id: "TASK-084",
+          mode: "live" as Mode,
+          search_mode: "branch_refine",
+          state: "succeeded",
+          reason: null,
+          usage: {
+            model_calls: 3,
+            input_tokens: 14200,
+            output_tokens: 2840,
+            estimated_usd: 0.18,
+          },
+          artifacts: [
+            {
+              artifact_id: "art_patch_01",
+              kind: "patch",
+              filename: "repomedic-fix.patch",
+            },
+            {
+              artifact_id: "art_evidence_01",
+              kind: "evidence",
+              filename: "verification-evidence.json",
+            },
+            {
+              artifact_id: "art_log_01",
+              kind: "log",
+              filename: "container-eval-candidate-a.log",
+            },
+          ],
+        });
+      }
+      if (runId === "run-fail-1") {
+        return Promise.resolve({
+          run_id: "run-fail-1",
+          task_id: "TASK-091",
+          mode: "offline" as Mode,
+          search_mode: "sequential",
+          state: "failed",
+          reason: "Verification tests failed on candidate matrix",
+          usage: {
+            model_calls: 2,
+            input_tokens: 9500,
+            output_tokens: 1900,
+            estimated_usd: 0.12,
+          },
+          artifacts: [],
+        });
+      }
+      if (runId === "run-cancel-1") {
+        return Promise.resolve({
+          run_id: "run-cancel-1",
+          task_id: "TASK-097",
+          mode: "live" as Mode,
+          search_mode: "branch_refine",
+          state: "cancelled",
+          reason: "User initiated cancellation",
+          usage: {
+            model_calls: 1,
+            input_tokens: 2100,
+            output_tokens: 350,
+            estimated_usd: 0.02,
+          },
+          artifacts: [],
+        });
+      }
+      return this.startRun("TASK-084", "branch_refine");
+    }
+    return Promise.resolve(run);
+  }
+
+  async cancelRun(runId: string): Promise<RunSummary> {
+    const run = await this.getRun(runId);
+    run.state = "cancelled";
+    run.reason = "User initiated cancellation";
+    this.activeRuns.set(runId, run);
+    return Promise.resolve(run);
+  }
+
+  async getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]> {
+    const now = new Date().toISOString();
+    const allEvents: EventEnvelope[] = [
+      {
+        run_id: runId,
+        seq: 1,
+        ts: now,
+        type: "run.started",
+        payload: { mode: "live", search_mode: "branch_refine", max_run_usd: 0.5 },
+      },
+      {
+        run_id: runId,
+        seq: 2,
+        ts: now,
+        type: "stage.completed",
+        payload: { stage: "baseline", passed: true, summary: "42/42 tests pass on pinned commit" },
+      },
+      {
+        run_id: runId,
+        seq: 3,
+        ts: now,
+        type: "stage.completed",
+        payload: { stage: "upgrade", passed: true, summary: "Expected upgrade failure confirmed" },
+      },
+      {
+        run_id: runId,
+        seq: 4,
+        ts: now,
+        type: "stage.completed",
+        payload: { stage: "repair", passed: true, summary: "Bounded context extracted" },
+      },
+      {
+        run_id: runId,
+        seq: 5,
+        ts: now,
+        type: "candidate.completed",
+        payload: { candidate_id: "cand_a", passed: true, summary: "Candidate A verified successfully" },
+      },
+      {
+        run_id: runId,
+        seq: 6,
+        ts: now,
+        type: "usage.updated",
+        payload: { model_calls: 3, input_tokens: 14200, output_tokens: 2840, estimated_usd: 0.18 },
+      },
+    ];
+
+    if (!lastEventId) {
+      return Promise.resolve(allEvents);
+    }
+    const lastSeq = Number(lastEventId);
+    return Promise.resolve(
+      isNaN(lastSeq) ? allEvents : allEvents.filter((e) => e.seq > lastSeq)
+    );
+  }
+
+  async getArtifact(_runId: string, kind: ArtifactKind): Promise<string> {
+    if (kind === "patch") {
+      return Promise.resolve(MOCK_PATCH);
+    }
+    if (kind === "evidence") {
+      return Promise.resolve(JSON.stringify(MOCK_EVIDENCE, null, 2));
+    }
+    return Promise.resolve(MOCK_LOG);
+  }
+}
+
+export class HttpTransport implements RepoMedicApiClient {
+  private baseUrl: string;
+
+  constructor(baseUrl = "/api") {
+    this.baseUrl = baseUrl;
+  }
+
+  async getTasks(): Promise<TaskSummary[]> {
+    const res = await fetch(`${this.baseUrl}/tasks`);
+    if (!res.ok) {
+      const err: APIErrorEnvelope = await res.json().catch(() => ({
+        error: { code: "unavailable", message: "Failed to fetch tasks" },
+      }));
+      throw new Error(err.error.message);
+    }
+    const data = await res.json();
+    return data.tasks;
+  }
+
+  async startRun(taskId: string, searchMode: SearchMode): Promise<RunSummary> {
+    const res = await fetch(`${this.baseUrl}/runs`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ task_id: taskId, search_mode: searchMode }),
+    });
+    if (!res.ok) {
+      const err: APIErrorEnvelope = await res.json().catch(() => ({
+        error: { code: "unavailable", message: "Failed to start run" },
+      }));
+      throw new Error(err.error.message);
+    }
+    return res.json();
+  }
+
+  async getRun(runId: string): Promise<RunSummary> {
+    const res = await fetch(`${this.baseUrl}/runs/${runId}`);
+    if (!res.ok) {
+      const err: APIErrorEnvelope = await res.json().catch(() => ({
+        error: { code: "not_found", message: "Run not found" },
+      }));
+      throw new Error(err.error.message);
+    }
+    return res.json();
+  }
+
+  async cancelRun(runId: string): Promise<RunSummary> {
+    const res = await fetch(`${this.baseUrl}/runs/${runId}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      const err: APIErrorEnvelope = await res.json().catch(() => ({
+        error: { code: "unavailable", message: "Failed to cancel run" },
+      }));
+      throw new Error(err.error.message);
+    }
+    return res.json();
+  }
+
+  async getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]> {
+    const headers: Record<string, string> = {};
+    if (lastEventId) {
+      headers["Last-Event-ID"] = lastEventId;
+    }
+    const res = await fetch(`${this.baseUrl}/runs/${runId}/events`, { headers });
+    if (!res.ok) {
+      throw new Error("Failed to fetch run events");
+    }
+    const data = await res.json();
+    return data.events || [];
+  }
+
+  async getArtifact(runId: string, kind: ArtifactKind): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/runs/${runId}/artifacts/${kind}`);
+    if (!res.ok) {
+      throw new Error(`Failed to fetch ${kind} artifact`);
+    }
+    return res.text();
+  }
+}
+
+export function createApiClient(): RepoMedicApiClient {
+  const transportType = process.env.NEXT_PUBLIC_API_TRANSPORT || "mock";
+  if (transportType === "http") {
+    return new HttpTransport();
+  }
+  return new MockTransport();
+}
