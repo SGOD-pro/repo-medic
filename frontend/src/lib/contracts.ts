@@ -46,6 +46,8 @@ export interface RunSummary {
   reason: string | null;
   usage: UsageSummary;
   artifacts: ArtifactSummary[];
+  error?: ErrorDetail | null;
+  connection_status?: ConnectionStatus;
 }
 
 export type RunDetail = RunSummary;
@@ -73,7 +75,9 @@ export type EventType =
   | "stage.completed"
   | "candidate.completed"
   | "usage.updated"
-  | "run.finished";
+  | "run.finished"
+  | "run.error"
+  | "run.cancelled";
 
 export interface RunStartedPayload {
   mode: Mode;
@@ -100,6 +104,17 @@ export interface RunFinishedPayload {
   reason: string | null;
 }
 
+export interface RunErrorPayload {
+  code: string;
+  message: string;
+  traceback?: string | null;
+  recoverable?: boolean;
+}
+
+export interface RunCancelledPayload {
+  reason: string | null;
+}
+
 export interface EventEnvelope {
   run_id: string;
   seq: number;
@@ -115,11 +130,29 @@ export interface ReconnectResult {
   events: EventEnvelope[];
 }
 
+export type ConnectionStatus = "connected" | "reconnecting" | "disconnected";
+
+export interface ErrorDetail {
+  code: string;
+  message: string;
+  traceback?: string | null;
+  timestamp: string;
+  recoverable?: boolean;
+}
+
+export interface StreamManagerConfig {
+  max_retries: number;
+  backoff_intervals: number[];
+  last_event_id: string | null;
+}
+
 export interface APIErrorDetail {
   code: string;
   message: string;
+  traceback?: string | null;
 }
 
 export interface APIErrorEnvelope {
   error: APIErrorDetail;
 }
+
