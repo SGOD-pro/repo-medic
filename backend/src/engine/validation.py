@@ -31,7 +31,8 @@ def validate_recipe(recipe: TaskRecipe) -> None:
         if not raw_path or not raw_path.strip():
             raise RecipeValidationError("allowed_source_paths contains an empty path")
 
-        path = Path(raw_path)
+        normalized = raw_path.replace("\\", "/")
+        path = Path(normalized)
         if path.is_absolute() or raw_path.startswith("/") or raw_path.startswith("\\"):
             raise RecipeValidationError(
                 f"allowed_source_paths must be relative, got absolute path: '{raw_path}'"

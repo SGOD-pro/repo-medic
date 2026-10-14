@@ -12,7 +12,7 @@ class RepoMedicDB:
         timeout: float = 10.0,
     ):
         self.base_url = (base_url or settings.repomedic_db_worker_url).rstrip("/")
-        self.api_key = api_key or settings.repo_medic_api_key
+        self.api_key = api_key or settings.db_bridge_token
         self.timeout = timeout
 
     def _request(

@@ -1,6 +1,6 @@
-import os
 from typing import Any, Dict, List, Optional
 import httpx
+from src.config import settings
 from src.engine.adapters import ModelAdapter
 
 
@@ -17,24 +17,12 @@ class TokenFactoryModelAdapter(ModelAdapter):
         model: Optional[str] = None,
         timeout_seconds: float = 60.0,
     ):
-        self.api_key = (
-            api_key
-            or os.getenv("TOKEN_FACTORY_API_KEY")
-            or ""
-        ).strip()
-        raw_base_url = (
-            base_url
-            or os.getenv("TOKEN_FACTORY_BASE_URL")
-            or "https://api.tokenfactory.us-central1.nebius.com/v1/"
-        ).strip()
+        self.api_key = (api_key or settings.nebius_api_key).strip()
+        raw_base_url = (base_url or settings.token_factory_base_url).strip()
         if not raw_base_url.endswith("/"):
             raw_base_url += "/"
         self.base_url = raw_base_url
-        self.model = (
-            model
-            or os.getenv("TOKEN_FACTORY_MODEL")
-            or "nvidia/nemotron-3-super-120b-a12b"
-        ).strip()
+        self.model = (model or settings.token_factory_model).strip()
         self.timeout_seconds = timeout_seconds
 
         self.call_count: int = 0
@@ -58,7 +46,7 @@ class TokenFactoryModelAdapter(ModelAdapter):
         """
         if not self.api_key:
             raise ValueError(
-                "TOKEN_FACTORY_API_KEY is not configured. Provide it in .env or constructor."
+                "NEBIUS_API_KEY is not configured. Provide it in .env or constructor."
             )
 
         self.call_count += 1
