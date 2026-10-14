@@ -74,3 +74,36 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 - **Lead owns integration**: Shared contracts/config/fixtures, checkpoint tags, operator credentials, and overall orchestration.
 
 Do not silently build or rewrite code that belongs to another owner's path. Request dependency/interface changes through the lead rather than editing another package.
+
+## Build approach
+
+Parallel offline slices (Tracer Bullet) integrating at fixed checkpoints (K0-K5).
+
+## Commands
+
+```bash
+# Install dependencies across all packages
+make install
+
+# Run test suites
+make test
+
+# Lint codebases
+make lint
+
+# Static type check
+make typecheck
+
+# Full verification
+make verify
+```
+
+## Specs
+
+Stored in `docs/specs/`. Format: `docs/specs/NNNN-title/`.
+
+## Context files
+
+- [backend/AGENTS.md](backend/AGENTS.md): Python backend service, storage repository, and task orchestration
+- [db-worker/AGENTS.md](db-worker/AGENTS.md): Cloudflare D1 worker bridge and local SQLite migrations
+- [frontend/AGENTS.md](frontend/AGENTS.md): Next.js web application and dashboard UI

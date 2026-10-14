@@ -49,9 +49,10 @@ class RunSummary(BaseModel):
     mode: Mode
     search_mode: SearchMode
     state: RunState
-    reason: Optional[str] = None
+    reason: str | None = None
+    max_run_micro_usd: int | None = 0
     usage: UsageSummary
-    artifacts: List[ArtifactSummary] = Field(default_factory=list)
+    artifacts: list[ArtifactSummary] = Field(default_factory=list)
 
 
 # Backward compatible alias for tests using RunDetail
@@ -153,7 +154,7 @@ class APIErrorEnvelope(BaseModel):
 
 
 class HostPorts(Protocol):
-    async def emit(self, event_type: str, payload: dict) -> None: ...
+    async def emit(self, event_type: str, payload: dict[str, Any]) -> None: ...
     async def save_artifact(self, kind: str, filename: str, content: bytes) -> str: ...
     async def reserve(self, operation_id: str, estimated_usd: float) -> bool: ...
     async def settle(self, operation_id: str, actual_or_estimated_usd: float) -> None: ...
