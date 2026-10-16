@@ -56,29 +56,38 @@ async def generate_candidate_patch(
     Generates a candidate patch from the model with budget reservation and prompt construction.
     """
     # 1. Reserve budget if operation has estimated cost
+    op_id = f"candidate_gen_{candidate_id}"
     if estimated_cost > 0.0:
-        reserved = await host.reserve(f"candidate_gen_{candidate_id}", estimated_cost)
+        reserved = await host.reserve(op_id, estimated_cost)
         if not reserved:
             raise BudgetExceededError(
                 f"Budget reservation of ${estimated_cost:.4f} was denied by host"
             )
 
-    # 2. Extract bounded error context from upgrade test output
-    error_block, error_files = extract_error_context(upgrade.failure_output)
+    try:
+        # 2. Extract bounded error context from upgrade test output
+        error_block, error_files = extract_error_context(upgrade.failure_output)
 
-    # 3. Build prompt and invoke model completion with 2048 token cap
-    prompt = build_repair_prompt(recipe, upgrade, error_block, error_files)
-    raw_response = await model.complete(prompt, max_tokens=2048)
+        # 3. Build prompt and invoke model completion with 2048 token cap
+        prompt = build_repair_prompt(recipe, upgrade, error_block, error_files)
+        raw_response = await model.complete(prompt, max_tokens=2048)
 
-    clean_diff = _strip_code_block(raw_response)
-    modified_files = parse_modified_files(clean_diff)
+        clean_diff = _strip_code_block(raw_response)
+        modified_files = parse_modified_files(clean_diff)
 
-    return CandidatePatch(
-        candidate_id=candidate_id,
-        diff_content=clean_diff,
-        modified_files=modified_files,
-        raw_model_response=raw_response,
-    )
+        if estimated_cost > 0.0:
+            await host.settle(op_id, estimated_cost)
+
+        return CandidatePatch(
+            candidate_id=candidate_id,
+            diff_content=clean_diff,
+            modified_files=modified_files,
+            raw_model_response=raw_response,
+        )
+    except Exception:
+        if estimated_cost > 0.0:
+            await host.settle(op_id, 0.0)
+        raise
 
 
 MAX_PROMPT_FAILURE_CHARS = 1500
@@ -124,22 +133,31 @@ async def generate_refinement_patch(
     """
     Generates a refined patch from the model with budget reservation and prior failure context.
     """
+    op_id = f"candidate_refine_{attempt_id}"
     if estimated_cost > 0.0:
-        reserved = await host.reserve(f"candidate_refine_{attempt_id}", estimated_cost)
+        reserved = await host.reserve(op_id, estimated_cost)
         if not reserved:
             raise BudgetExceededError(
                 f"Budget reservation of ${estimated_cost:.4f} was denied by host"
             )
 
-    prompt = build_refinement_prompt(recipe, candidate, failure_output)
-    raw_response = await model.complete(prompt, max_tokens=2048)
+    try:
+        prompt = build_refinement_prompt(recipe, candidate, failure_output)
+        raw_response = await model.complete(prompt, max_tokens=2048)
 
-    clean_diff = _strip_code_block(raw_response)
-    modified_files = parse_modified_files(clean_diff)
+        clean_diff = _strip_code_block(raw_response)
+        modified_files = parse_modified_files(clean_diff)
 
-    return CandidatePatch(
-        candidate_id=attempt_id,
-        diff_content=clean_diff,
-        modified_files=modified_files,
-        raw_model_response=raw_response,
-    )
+        if estimated_cost > 0.0:
+            await host.settle(op_id, estimated_cost)
+
+        return CandidatePatch(
+            candidate_id=attempt_id,
+            diff_content=clean_diff,
+            modified_files=modified_files,
+            raw_model_response=raw_response,
+        )
+    except Exception:
+        if estimated_cost > 0.0:
+            await host.settle(op_id, 0.0)
+        raise

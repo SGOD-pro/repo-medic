@@ -383,3 +383,32 @@ async def test_full_sequential_repair_pipeline_success(
     cand_events = [e for e in host.events if e["type"] == "candidate.completed"]
     assert len(cand_events) == 1
     assert cand_events[0]["payload"]["passed"] is True
+
+    # Reservations and settlements verified
+    assert "candidate_gen_candidate_1" in host.reservations
+    assert host.reservations["candidate_gen_candidate_1"] == 0.05
+    assert "candidate_gen_candidate_1" in host.settlements
+    assert host.settlements["candidate_gen_candidate_1"] == 0.05
+
+
+@pytest.mark.asyncio
+async def test_sequential_repair_cancels_before_accepting_results(
+    sample_request: RepairRequest, sample_recipe: TaskRecipe
+):
+    host = FakeHost()
+    sandbox = FakeSandboxAdapter(preset=SandboxPreset.SUCCESS)
+    model = FakeModelAdapter()
+
+    check_count = 0
+
+    async def cancel_on_last_check():
+        nonlocal check_count
+        check_count += 1
+        # Cancel right after verification stage (on 5th check)
+        return check_count >= 5
+
+    host.cancelled = cancel_on_last_check  # type: ignore
+
+    res = await repair(sample_request, sample_recipe, host, sandbox=sandbox, model=model)
+    assert res.state == "cancelled"
+    assert "cancelled" in (res.reason or "").lower()

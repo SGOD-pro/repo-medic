@@ -25,7 +25,15 @@ import {
   Wrench,
   RefreshCw,
 } from "lucide-react";
-import { ConnectionStatus, ErrorDetail, RunSummary } from "@/lib/contracts";
+import {
+  ConnectionStatus,
+  ErrorDetail,
+  RunSummary,
+  EventEnvelope,
+  UsageSummary,
+} from "@/lib/contracts";
+import { RepoMedicApiClient, createEventStreamFetcher } from "@/lib/api";
+import { StreamManager } from "@/lib/stream-manager";
 
 interface RunActiveViewProps {
   onInspectResults: () => void;
@@ -33,6 +41,8 @@ interface RunActiveViewProps {
   startedAt?: number;
   activeRun?: RunSummary | null;
   onReturnToTasks?: () => void;
+  apiClient?: RepoMedicApiClient;
+  onUpdateRun?: (run: RunSummary) => void;
 }
 
 export function RunActiveView({
@@ -41,6 +51,8 @@ export function RunActiveView({
   startedAt,
   activeRun,
   onReturnToTasks,
+  apiClient,
+  onUpdateRun,
 }: RunActiveViewProps) {
   const [elapsedSeconds, setElapsedSeconds] = useState(() =>
     startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 105
@@ -56,6 +68,65 @@ export function RunActiveView({
   const [errorDetail, setErrorDetail] = useState<ErrorDetail | null>(null);
   const [showTraceback, setShowTraceback] = useState(false);
   const [copiedTraceback, setCopiedTraceback] = useState(false);
+
+  const managerRef = React.useRef<StreamManager | null>(null);
+  const seenSeqsRef = React.useRef<Set<number>>(new Set());
+  const [liveUsage, setLiveUsage] = useState<UsageSummary | null>(() => activeRun?.usage || null);
+
+  useEffect(() => {
+    if (!activeRun?.run_id || !apiClient) return;
+    const runId = activeRun.run_id;
+
+    if (activeRun.state === "succeeded" || activeRun.state === "failed" || activeRun.state === "cancelled") {
+      return;
+    }
+
+    seenSeqsRef.current.clear();
+    const fetcher = createEventStreamFetcher(apiClient, runId);
+    const manager = new StreamManager({
+      runId,
+      streamFetcher: fetcher,
+      onEvent: (event: EventEnvelope) => {
+        if (seenSeqsRef.current.has(event.seq)) return;
+        seenSeqsRef.current.add(event.seq);
+
+        if (event.type === "usage.updated") {
+          const u = event.payload as unknown as UsageSummary;
+          setLiveUsage(u);
+        } else if (event.type === "run.finished") {
+          apiClient.getRun(runId).then((recovered) => {
+            onUpdateRun?.(recovered);
+          }).catch(() => {});
+        } else if (event.type === "run.cancelled") {
+          setIsCancelled(true);
+          apiClient.getRun(runId).then((recovered) => {
+            onUpdateRun?.(recovered);
+          }).catch(() => {});
+        } else if (event.type === "run.error") {
+          const err = event.payload as unknown as ErrorDetail;
+          setErrorDetail(err);
+          apiClient.getRun(runId).then((recovered) => {
+            onUpdateRun?.(recovered);
+          }).catch(() => {});
+        }
+      },
+      onStatusChange: (status: ConnectionStatus, attempt: number) => {
+        setConnectionStatus(status);
+        setReconnectAttempt(attempt);
+      },
+      onError: (err: ErrorDetail) => {
+        setErrorDetail(err);
+      },
+    });
+
+    managerRef.current = manager;
+    manager.start();
+
+    return () => {
+      manager.stop();
+      managerRef.current = null;
+    };
+  }, [activeRun?.run_id, activeRun?.state, apiClient, onUpdateRun]);
 
   useEffect(() => {
     if (activeRun?.state === "cancelled") {
@@ -137,31 +208,46 @@ export function RunActiveView({
   };
 
   const handleSimulateDisconnect = () => {
-    setConnectionStatus("reconnecting");
-    setReconnectAttempt(1);
-    setTimeout(() => {
-      setReconnectAttempt(2);
+    if (managerRef.current) {
+      managerRef.current.simulateDisconnect();
+    } else {
+      setConnectionStatus("reconnecting");
+      setReconnectAttempt(1);
       setTimeout(() => {
-        setReconnectAttempt(3);
+        setReconnectAttempt(2);
         setTimeout(() => {
-          setConnectionStatus("connected");
-          setReconnectAttempt(0);
-        }, 1200);
+          setReconnectAttempt(3);
+          setTimeout(() => {
+            setConnectionStatus("connected");
+            setReconnectAttempt(0);
+          }, 1200);
+        }, 1000);
       }, 1000);
-    }, 1000);
+    }
   };
 
   const handleSimulateError = () => {
-    setErrorDetail({
-      code: "ENGINE_EXECUTION_FAILURE",
-      message: "Sandbox container exited unexpectedly with exit code 137 (OOM killed) during Candidate B synthesis.",
-      traceback: `EngineError: Process 1420 killed by cgroup memory limit (512MB)
+    if (managerRef.current) {
+      managerRef.current.simulateError(
+        "ENGINE_EXECUTION_FAILURE",
+        "Sandbox container exited unexpectedly with exit code 137 (OOM killed) during Candidate B synthesis.",
+        `EngineError: Process 1420 killed by cgroup memory limit (512MB)
+  at verify_sandbox_execution (engine/sandbox.py:214)
+  at execute_refinement_cycle (engine/repair.py:182)
+  at run_candidate_matrix (engine/orchestrator.py:94)`
+      );
+    } else {
+      setErrorDetail({
+        code: "ENGINE_EXECUTION_FAILURE",
+        message: "Sandbox container exited unexpectedly with exit code 137 (OOM killed) during Candidate B synthesis.",
+        traceback: `EngineError: Process 1420 killed by cgroup memory limit (512MB)
   at verify_sandbox_execution (engine/sandbox.py:214)
   at execute_refinement_cycle (engine/repair.py:182)
   at run_candidate_matrix (engine/orchestrator.py:94)`,
-      timestamp: new Date().toISOString(),
-      recoverable: false,
-    });
+        timestamp: new Date().toISOString(),
+        recoverable: false,
+      });
+    }
   };
 
   const handleSimulateExceededRetries = () => {
@@ -174,12 +260,16 @@ export function RunActiveView({
   };
 
   const handleRetryConnection = () => {
-    setConnectionStatus("reconnecting");
-    setReconnectAttempt(1);
-    setTimeout(() => {
-      setConnectionStatus("connected");
-      setReconnectAttempt(0);
-    }, 800);
+    if (managerRef.current) {
+      managerRef.current.retryManual();
+    } else {
+      setConnectionStatus("reconnecting");
+      setReconnectAttempt(1);
+      setTimeout(() => {
+        setConnectionStatus("connected");
+        setReconnectAttempt(0);
+      }, 800);
+    }
   };
 
   const handleClearSimulation = () => {
@@ -234,7 +324,13 @@ export function RunActiveView({
               className="border-[rgba(183,201,173,0.24)] bg-[#15271F] text-[#A9B8AD] text-xs font-mono px-2 py-0.5 rounded-full"
             >
               <span className="size-1.5 rounded-full bg-[#7FB3D5] mr-1.5" />
-              LIVE SANDBOX (NEBIUS / CONTREE)
+              {activeRun?.mode === "offline"
+                ? "OFFLINE MODE (LOCAL D1 / EMULATION)"
+                : activeRun?.mode === "replay"
+                ? "REPLAY MODE"
+                : (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock"
+                ? "MOCK MODE (SYNTHETIC)"
+                : "LIVE SANDBOX (NEBIUS / CONTREE)"}
             </Badge>
           )}
 
@@ -262,7 +358,9 @@ export function RunActiveView({
           <div className="flex items-center gap-3 font-mono text-xs">
             <div className="rounded-lg bg-[#15271F] border border-[rgba(183,201,173,0.16)] px-3 py-1.5">
               <span className="text-[#A9B8AD] mr-1.5">SPEND MATRIX</span>
-              <span className="text-[#F7F7F2] font-semibold">$0.18</span>
+              <span className="text-[#F7F7F2] font-semibold">
+                ${(liveUsage?.estimated_usd ?? activeRun?.usage?.estimated_usd ?? 0.18).toFixed(2)}
+              </span>
               <span className="text-[#A9B8AD]"> / $0.50 cap</span>
             </div>
 

@@ -81,7 +81,8 @@ def build_evidence_manifest(
         dependency=recipe.dependency,
         from_version=recipe.from_version,
         to_version=recipe.to_version,
-        verified_version=test_res.installed_version or recipe.to_version,
+        verified_version=test_res.installed_version,
+        import_origin=getattr(test_res, "import_origin", ""),
         checkpoint_id=checkpoint_id,
         execution_mode=mode,
         checks=checks,
@@ -120,6 +121,7 @@ async def verify_candidate_patch(
     """
     start_time = time.monotonic()
     candidate_id = candidate.candidate_id
+    test_res = CommandResult(exit_code=1)
 
     # 1. Provision fresh isolated execution handle
     checkpoint_isolated = False
@@ -127,10 +129,40 @@ async def verify_candidate_patch(
         try:
             exec_sandbox = await sandbox.create_execution(checkpoint_id)
             checkpoint_isolated = True
-        except Exception:
-            exec_sandbox = sandbox
+        except Exception as exc:
+            summary = f"Failed to create fresh execution from checkpoint '{checkpoint_id}': {exc}"
+            return await _terminate_verification(
+                host=host,
+                candidate=candidate,
+                recipe=recipe,
+                start_time=start_time,
+                summary=summary,
+                failure_reason="execution_creation_failed",
+                test_res=test_res,
+                checkpoint_id=checkpoint_id,
+                mode=mode,
+                checks=VerificationChecks(checkpoint_isolated=False),
+                test_logs=summary,
+                artifact_prefix=artifact_prefix,
+                emit_stage_event=emit_stage_event,
+            )
     else:
-        exec_sandbox = sandbox
+        summary = f"Sandbox does not support create_execution for checkpoint '{checkpoint_id}'"
+        return await _terminate_verification(
+            host=host,
+            candidate=candidate,
+            recipe=recipe,
+            start_time=start_time,
+            summary=summary,
+            failure_reason="execution_creation_failed",
+            test_res=test_res,
+            checkpoint_id=checkpoint_id,
+            mode=mode,
+            checks=VerificationChecks(checkpoint_isolated=False),
+            test_logs=summary,
+            artifact_prefix=artifact_prefix,
+            emit_stage_event=emit_stage_event,
+        )
 
     pre_patch_hash_match = True
     patch_applied = False
@@ -144,7 +176,6 @@ async def verify_candidate_patch(
     failure_reason: Optional[str] = None
     summary = ""
     test_logs = ""
-    test_res = CommandResult(exit_code=1)
 
     async def _term(
         summary_msg: str,
@@ -368,15 +399,34 @@ async def verify_candidate_patch(
         if reasons and not failure_reason:
             failure_reason = "tests_failed"
 
-        # 9. Check dependency version intact
-        installed_ver = test_res.installed_version or recipe.to_version
-        if test_res.installed_version and test_res.installed_version != recipe.to_version:
+        # 9. Check dependency version intact and import origin evidence
+        installed_ver = test_res.installed_version
+        import_origin = getattr(test_res, "import_origin", "")
+        if not installed_ver:
+            version_intact = False
+            reasons.append("observed dependency version evidence is missing")
+            if not failure_reason:
+                failure_reason = "missing_dependency_evidence"
+        elif installed_ver != recipe.to_version:
             version_intact = False
             reasons.append(
-                f"dependency version changed to {test_res.installed_version} (expected {recipe.to_version})"
+                f"dependency version changed to {installed_ver} (expected {recipe.to_version})"
             )
             if not failure_reason:
                 failure_reason = "dependency_version_mismatch"
+
+        if not import_origin:
+            version_intact = False
+            reasons.append("observed dependency import-origin evidence is missing")
+            if not failure_reason:
+                failure_reason = "missing_import_origin_evidence"
+        elif import_origin not in ("site-packages", "dist-packages", "venv", "system"):
+            version_intact = False
+            reasons.append(
+                f"untrusted or invalid dependency import-origin observed: '{import_origin}'"
+            )
+            if not failure_reason:
+                failure_reason = "invalid_import_origin"
 
         passed = all([
             pre_patch_hash_match,
@@ -503,6 +553,7 @@ async def verify_candidate_patch(
             skipped_count=test_res.skipped_count,
             xfailed_count=test_res.xfailed_count,
             installed_version=installed_ver,
+            import_origin=import_origin,
             summary=summary,
             duration_seconds=time.monotonic() - start_time,
             reason=failure_reason,
@@ -615,7 +666,8 @@ async def _terminate_verification(
         collected_count=test_res.collected_count,
         skipped_count=test_res.skipped_count,
         xfailed_count=test_res.xfailed_count,
-        installed_version=test_res.installed_version or recipe.to_version,
+        installed_version=test_res.installed_version,
+        import_origin=getattr(test_res, "import_origin", ""),
         summary=summary,
         duration_seconds=time.monotonic() - start_time,
         reason=failure_reason,

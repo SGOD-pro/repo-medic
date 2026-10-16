@@ -246,7 +246,8 @@ def create_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Mode disabled",
             )
-        if max_run_usd > total_budget:
+        committed_usage = repo.get_total_committed_usd()
+        if (committed_usage + max_run_usd) > total_budget:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Budget unavailable",

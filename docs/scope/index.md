@@ -1,14 +1,14 @@
 # RepoMedic Scope
 
 **Product:** Repair pinned Python dependency upgrades, preserve pytest tests, export diff and evidence.
-**Build approach:** Parallel offline slices (Tracer Bullet) integrating at fixed checkpoints (K0-K5).
+**Build approach:** Parallel offline slices integrating at fixed checkpoints (K0 to K5).
 **Workflow:** Alpha
 
 ## At a glance
 
 | # | Epic / Area | Status rollup |
 |---|---|---|
-| A | [Frontend](frontend.md) | in progress |
+| A | [Frontend](frontend.md) | done |
 | B | [Backend](backend.md) | done |
 | C | [Engine](engine.md) | done |
 | D | [Evaluation](evaluation.md) | planned |

@@ -14,7 +14,7 @@ export interface RepoMedicApiClient {
   getRun(runId: string): Promise<RunSummary>;
   cancelRun(runId: string): Promise<RunSummary>;
   getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]>;
-  getArtifact(runId: string, kind: ArtifactKind): Promise<string>;
+  getArtifact(runId: string, artifactIdOrKind: ArtifactKind | string): Promise<string>;
 }
 
 export const CURATED_TASKS: TaskSummary[] = [
@@ -276,11 +276,22 @@ export class MockTransport implements RepoMedicApiClient {
     );
   }
 
-  async getArtifact(_runId: string, kind: ArtifactKind): Promise<string> {
-    if (kind === "patch") {
+  async getArtifact(_runId: string, artifactIdOrKind: ArtifactKind | string): Promise<string> {
+    if (
+      artifactIdOrKind === "patch" ||
+      artifactIdOrKind.includes("patch") ||
+      artifactIdOrKind.endsWith(".diff") ||
+      artifactIdOrKind.endsWith(".patch") ||
+      artifactIdOrKind === "art_patch_01"
+    ) {
       return Promise.resolve(MOCK_PATCH);
     }
-    if (kind === "evidence") {
+    if (
+      artifactIdOrKind === "evidence" ||
+      artifactIdOrKind.includes("evidence") ||
+      artifactIdOrKind.endsWith(".json") ||
+      artifactIdOrKind === "art_evidence_01"
+    ) {
       return Promise.resolve(JSON.stringify(MOCK_EVIDENCE, null, 2));
     }
     return Promise.resolve(MOCK_LOG);
@@ -356,17 +367,105 @@ export class HttpTransport implements RepoMedicApiClient {
     if (!res.ok) {
       throw new Error("Failed to fetch run events");
     }
+    const contentType = res.headers.get("content-type") || "";
+    if (contentType.includes("text/event-stream")) {
+      const text = await res.text();
+      const events: EventEnvelope[] = [];
+      const parts = text.split("\n\n");
+      for (const part of parts) {
+        if (!part.trim() || part.startsWith(":")) continue;
+        for (const line of part.split("\n")) {
+          if (line.startsWith("data: ")) {
+            try {
+              events.push(JSON.parse(line.slice(6)));
+            } catch {
+              // ignore
+            }
+          } else if (line.startsWith("data:")) {
+            try {
+              events.push(JSON.parse(line.slice(5)));
+            } catch {
+              // ignore
+            }
+          }
+        }
+      }
+      return events;
+    }
     const data = await res.json();
     return data.events || [];
   }
 
-  async getArtifact(runId: string, kind: ArtifactKind): Promise<string> {
-    const res = await fetch(`${this.baseUrl}/runs/${runId}/artifacts/${kind}`);
+  async getArtifact(runId: string, artifactIdOrKind: ArtifactKind | string): Promise<string> {
+    const res = await fetch(`${this.baseUrl}/runs/${runId}/artifacts/${artifactIdOrKind}`);
     if (!res.ok) {
-      throw new Error(`Failed to fetch ${kind} artifact`);
+      throw new Error(`Failed to fetch ${artifactIdOrKind} artifact`);
     }
     return res.text();
   }
+}
+
+export function createEventStreamFetcher(
+  apiClient: RepoMedicApiClient,
+  runId: string,
+  baseUrl = "/api"
+): (lastEventId: string | null) => AsyncIterable<EventEnvelope> {
+  return async function* (lastEventId: string | null): AsyncIterable<EventEnvelope> {
+    if (typeof window !== "undefined" && typeof fetch === "function") {
+      const transportType = process.env.NEXT_PUBLIC_API_TRANSPORT || "mock";
+      if (transportType === "http") {
+        const headers: Record<string, string> = {
+          Accept: "text/event-stream",
+        };
+        if (lastEventId) {
+          headers["Last-Event-ID"] = lastEventId;
+        }
+        const res = await fetch(`${baseUrl}/runs/${runId}/events`, { headers });
+        if (!res.ok) {
+          throw new Error(`Event stream request failed with status ${res.status}`);
+        }
+        if (res.body && typeof res.body.getReader === "function") {
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              const blocks = buffer.split("\n\n");
+              buffer = blocks.pop() ?? "";
+              for (const block of blocks) {
+                if (!block.trim() || block.startsWith(":")) continue;
+                for (const line of block.split("\n")) {
+                  if (line.startsWith("data: ")) {
+                    try {
+                      yield JSON.parse(line.slice(6));
+                    } catch {
+                      // skip
+                    }
+                  } else if (line.startsWith("data:")) {
+                    try {
+                      yield JSON.parse(line.slice(5));
+                    } catch {
+                      // skip
+                    }
+                  }
+                }
+              }
+            }
+          } finally {
+            reader.releaseLock();
+          }
+          return;
+        }
+      }
+    }
+    const events = await apiClient.getRunEvents(runId, lastEventId);
+    for (const ev of events) {
+      yield ev;
+    }
+  };
 }
 
 export function createApiClient(): RepoMedicApiClient {

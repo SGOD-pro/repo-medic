@@ -555,6 +555,20 @@ export default {
 
       // --- OPERATIONS / BUDGET ENDPOINTS ---
 
+      // GET /api/budget/usage
+      if (method === "GET" && pathname === "/api/budget/usage") {
+        const usage = await env.DB.prepare(
+          `SELECT
+             COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE 0 END), 0) as settled_micro_usd,
+             COALESCE(SUM(CASE WHEN status = 'reserved' THEN reserved_micro_usd ELSE 0 END), 0) as reserved_micro_usd,
+             COALESCE(SUM(CASE WHEN status IN ('reserved', 'settled', 'uncertain') THEN
+               CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END
+             ELSE 0 END), 0) as total_micro_usd
+           FROM operations`
+        ).first<{ settled_micro_usd: number; reserved_micro_usd: number; total_micro_usd: number }>();
+        return jsonResponse(usage || { settled_micro_usd: 0, reserved_micro_usd: 0, total_micro_usd: 0 }, 200);
+      }
+
       // POST /api/runs/:run_id/operations
       const opsMatch = pathname.match(/^\/api\/runs\/([^/]+)\/operations$/);
       if (method === "POST" && opsMatch) {
@@ -563,6 +577,7 @@ export default {
           operation_id?: string;
           kind?: string;
           reserved_micro_usd?: number;
+          global_budget_micro_usd?: number;
         };
 
         if (!body.operation_id || !body.kind || typeof body.reserved_micro_usd !== "number") {
@@ -581,7 +596,11 @@ export default {
           return errorResponse("not_found", "Run not found", 404);
         }
 
-        // Atomic budget reservation check and insert
+        const globalCap = typeof body.global_budget_micro_usd === "number"
+          ? body.global_budget_micro_usd
+          : 25000000;
+
+        // Atomic budget reservation check against both run cap and global budget cap
         const now = new Date().toISOString();
         const insertResult = await env.DB.prepare(
           `INSERT INTO operations (operation_id, run_id, kind, status, reserved_micro_usd, settled_micro_usd, provider_ref, created_at, updated_at)
@@ -590,6 +609,11 @@ export default {
              SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END), 0)
              FROM operations
              WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')
+           ) + ? <= ?
+           AND (
+             SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END), 0)
+             FROM operations
+             WHERE status IN ('reserved', 'settled', 'uncertain')
            ) + ? <= ?`
         ).bind(
           body.operation_id,
@@ -600,11 +624,13 @@ export default {
           now,
           runId,
           body.reserved_micro_usd,
-          run.max_run_micro_usd
+          run.max_run_micro_usd,
+          body.reserved_micro_usd,
+          globalCap
         ).run();
 
         if (!insertResult.meta || insertResult.meta.changes === 0) {
-          return errorResponse("budget_limit_exceeded", "Requested reservation exceeds available run budget cap", 409);
+          return errorResponse("budget_limit_exceeded", "Requested reservation exceeds available budget cap", 409);
         }
 
         return jsonResponse({ ok: true }, 201);

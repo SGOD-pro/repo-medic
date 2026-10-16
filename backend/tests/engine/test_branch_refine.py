@@ -364,6 +364,29 @@ async def test_cancellation_during_branch_search(
     assert "cancelled" in (result.reason or "").lower()
 
 
+@pytest.mark.asyncio
+async def test_branch_search_cancels_before_accepting_results(
+    branch_request: RepairRequest, branch_recipe: TaskRecipe
+):
+    host = FakeHost()
+    sandbox = FakeSandboxAdapter(preset=SandboxPreset.SUCCESS)
+    model = FakeModelAdapter()
+
+    check_count = 0
+
+    async def cancel_on_verification_accept():
+        nonlocal check_count
+        check_count += 1
+        # Cancel right after verification of candidate passes
+        return check_count >= 5
+
+    host.cancelled = cancel_on_verification_accept  # type: ignore
+
+    result = await repair(branch_request, branch_recipe, host, sandbox=sandbox, model=model)
+    assert result.state == "cancelled"
+    assert "cancelled" in (result.reason or "").lower()
+
+
 # --- AC-10: Evidence and Artifact Preservation Per Attempt ---
 @pytest.mark.asyncio
 async def test_attempt_scoped_and_canonical_artifact_saving(

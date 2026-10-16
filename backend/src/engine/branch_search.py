@@ -153,6 +153,14 @@ async def run_branch_refine_search(
 
         # 6. Early stopping on root candidate pass
         if verification.passed:
+            if await host.cancelled():
+                return BranchSearchResult(
+                    state="cancelled",
+                    reason=f"User cancelled before accepting candidate {candidate_id} results",
+                    attempts=attempts,
+                    total_candidates_generated=total_candidates,
+                    total_refinements_generated=total_refinements,
+                )
             await save_canonical_artifacts(host, candidate, verification)
             await host.emit(
                 "stage.completed",
@@ -288,6 +296,14 @@ async def run_branch_refine_search(
 
             # Early stopping on refinement pass
             if refine_verification.passed:
+                if await host.cancelled():
+                    return BranchSearchResult(
+                        state="cancelled",
+                        reason=f"User cancelled before accepting refinement {refine_id} results",
+                        attempts=attempts,
+                        total_candidates_generated=total_candidates,
+                        total_refinements_generated=total_refinements,
+                    )
                 await save_canonical_artifacts(host, refine_patch, refine_verification)
                 await host.emit(
                     "stage.completed",

@@ -40,9 +40,13 @@ class FakeSandboxAdapter(SandboxAdapter):
 
     async def create_execution(self, checkpoint_id: str) -> "FakeSandboxAdapter":
         """Creates an independent execution sandbox instance from the specified checkpoint."""
+        if self.preset == SandboxPreset.EXECUTION_CREATION_FAIL:
+            raise RuntimeError(f"Failed to provision execution container from checkpoint '{checkpoint_id}'")
         child_preset = (
             self.execution_presets.pop(0) if self.execution_presets else self.preset
         )
+        if child_preset == SandboxPreset.EXECUTION_CREATION_FAIL:
+            raise RuntimeError(f"Failed to provision execution container from checkpoint '{checkpoint_id}'")
         child = FakeSandboxAdapter(
             preset=child_preset,
             checkpoint_id=checkpoint_id,
@@ -112,6 +116,7 @@ class FakeSandboxAdapter(SandboxAdapter):
                 stdout="Successfully installed package",
                 stderr="",
                 installed_version="2.0.0",
+                import_origin="site-packages",
             )
 
         # 3. Patch application command
@@ -163,6 +168,29 @@ class FakeSandboxAdapter(SandboxAdapter):
                     collected_count=len(self.node_ids),
                     skipped_count=0,
                     installed_version="0.9.0",  # Mismatch with expected upgrade
+                    import_origin="site-packages",
+                    collected_node_ids=list(self.node_ids),
+                )
+            if self.preset == SandboxPreset.VERIFY_IMPORT_ORIGIN_MISMATCH:
+                return CommandResult(
+                    exit_code=0,
+                    stdout="2 passed in 0.05s",
+                    stderr="",
+                    collected_count=len(self.node_ids),
+                    skipped_count=0,
+                    installed_version="2.0.0",
+                    import_origin="untrusted-local",
+                    collected_node_ids=list(self.node_ids),
+                )
+            if self.preset == SandboxPreset.VERIFY_MISSING_EVIDENCE:
+                return CommandResult(
+                    exit_code=0,
+                    stdout="2 passed in 0.05s",
+                    stderr="",
+                    collected_count=len(self.node_ids),
+                    skipped_count=0,
+                    installed_version="",
+                    import_origin="",
                     collected_node_ids=list(self.node_ids),
                 )
             # Default clean verification
@@ -173,6 +201,7 @@ class FakeSandboxAdapter(SandboxAdapter):
                 collected_count=len(self.node_ids),
                 skipped_count=0,
                 installed_version="2.0.0",
+                import_origin="site-packages",
                 collected_node_ids=list(self.node_ids),
             )
 

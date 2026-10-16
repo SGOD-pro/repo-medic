@@ -19,6 +19,9 @@ class SandboxPreset(str, Enum):
     VERIFY_TEST_TAMPERING = "verify_test_tampering"
     VERIFY_NODE_ID_MISMATCH = "verify_node_id_mismatch"
     VERIFY_VERSION_MISMATCH = "verify_version_mismatch"
+    VERIFY_IMPORT_ORIGIN_MISMATCH = "verify_import_origin_mismatch"
+    VERIFY_MISSING_EVIDENCE = "verify_missing_evidence"
+    EXECUTION_CREATION_FAIL = "execution_creation_fail"
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,7 @@ class CommandResult:
     skipped_count: int = 0
     xfailed_count: int = 0
     installed_version: str = ""
+    import_origin: str = ""
     collected_node_ids: List[str] = field(default_factory=list)
 
 

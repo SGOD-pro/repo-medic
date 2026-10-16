@@ -18,6 +18,7 @@ export interface HistoryRunItem {
   tests_passed?: number | null;
   tests_failed?: number | null;
   cost_usd?: number | null;
+  reason?: string | null;
 }
 
 export const INITIAL_SEEDED_RUNS: HistoryRunItem[] = [

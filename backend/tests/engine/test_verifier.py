@@ -315,3 +315,72 @@ async def test_verifier_timeout_and_resource_cleanup(
     )
     assert timeout_outcome.passed is False
     assert timeout_outcome.reason in ("patch_apply_failed", "tests_failed")
+
+
+@pytest.mark.asyncio
+async def test_verifier_fails_when_fresh_execution_cannot_be_created(
+    test_recipe, valid_candidate, baseline_preservation
+):
+    sandbox = FakeSandboxAdapter(SandboxPreset.EXECUTION_CREATION_FAIL)
+    host = FakeHost()
+
+    outcome = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=test_recipe,
+        sandbox=sandbox,
+        host=host,
+        baseline_collected_count=2,
+        baseline_preservation=baseline_preservation,
+        checkpoint_id="chk_missing",
+    )
+
+    assert outcome.passed is False
+    assert outcome.reason == "execution_creation_failed"
+    assert "Failed to create fresh execution" in outcome.summary
+    assert outcome.manifest is not None
+    assert outcome.manifest.checks.checkpoint_isolated is False
+
+
+@pytest.mark.asyncio
+async def test_verifier_fails_on_missing_installed_version_without_substitution(
+    test_recipe, valid_candidate, baseline_preservation
+):
+    sandbox = FakeSandboxAdapter(SandboxPreset.VERIFY_MISSING_EVIDENCE)
+    host = FakeHost()
+
+    outcome = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=test_recipe,
+        sandbox=sandbox,
+        host=host,
+        baseline_collected_count=2,
+        baseline_preservation=baseline_preservation,
+    )
+
+    assert outcome.passed is False
+    assert outcome.reason == "missing_dependency_evidence"
+    assert outcome.installed_version == ""
+    assert outcome.manifest is not None
+    assert outcome.manifest.verified_version == ""
+    assert outcome.manifest.verified_version != test_recipe.to_version
+
+
+@pytest.mark.asyncio
+async def test_verifier_fails_on_untrusted_import_origin(
+    test_recipe, valid_candidate, baseline_preservation
+):
+    sandbox = FakeSandboxAdapter(SandboxPreset.VERIFY_IMPORT_ORIGIN_MISMATCH)
+    host = FakeHost()
+
+    outcome = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=test_recipe,
+        sandbox=sandbox,
+        host=host,
+        baseline_collected_count=2,
+        baseline_preservation=baseline_preservation,
+    )
+
+    assert outcome.passed is False
+    assert outcome.reason == "invalid_import_origin"
+    assert "untrusted or invalid dependency import-origin" in outcome.summary

@@ -381,6 +381,21 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                 return httpx.Response(404, json={"error": {"code": "not_found", "message": "Not found"}})
             return httpx.Response(200, json=dict(row))
 
+        # GET /api/budget/usage
+        if method == "GET" and path == "/api/budget/usage":
+            row = conn.execute(
+                "SELECT "
+                "COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE 0 END), 0) "
+                "  AS settled_micro_usd, "
+                "COALESCE(SUM(CASE WHEN status = 'reserved' THEN reserved_micro_usd ELSE 0 END), 0) "
+                "  AS reserved_micro_usd, "
+                "COALESCE(SUM(CASE WHEN status IN ('reserved', 'settled', 'uncertain') THEN "
+                "  CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END "
+                "ELSE 0 END), 0) AS total_micro_usd "
+                "FROM operations"
+            ).fetchone()
+            return httpx.Response(200, json=dict(row))
+
         # POST /api/runs/:run_id/operations
         ops_post_match = re.match(r"^/api/runs/([^/]+)/operations$", path)
         if method == "POST" and ops_post_match:
@@ -395,7 +410,14 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                 "WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')",
                 (run_id,)
             ).fetchone()["c"]
-            if comm + body["reserved_micro_usd"] > run["max_run_micro_usd"]:
+            global_cap = body.get("global_budget_micro_usd", 25000000)
+            global_comm = conn.execute(
+                "SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd "
+                "ELSE reserved_micro_usd END), 0) AS c FROM operations "
+                "WHERE status IN ('reserved', 'settled', 'uncertain')"
+            ).fetchone()["c"]
+            res_val = body["reserved_micro_usd"]
+            if comm + res_val > run["max_run_micro_usd"] or global_comm + res_val > global_cap:
                 return httpx.Response(
                     409, json={"error": {"code": "budget_limit_exceeded", "message": "Budget exceeded"}}
                 )
@@ -796,3 +818,35 @@ async def test_d1_hostports_cancelled_error_handling(mock_db):
 
     with pytest.raises(httpx.HTTPStatusError):
         await hp_failing.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_atomic_global_budget_enforcement_across_runs(mock_db):
+    repo = D1StorageRepository(mock_db)
+
+    # Create two concurrent runs
+    mock_db.create_run("run-budget-1", "task-1", "offline", "sequential", max_run_usd=25.0)
+    mock_db.create_run("run-budget-2", "task-2", "offline", "sequential", max_run_usd=25.0)
+
+    hp1 = D1HostPorts("run-budget-1", client=mock_db)
+    hp2 = D1HostPorts("run-budget-2", client=mock_db)
+
+    # Run 1 reserves $20.00 (within $25.00 total) -> success
+    ok1 = await hp1.reserve("model:gen1", 20.00)
+    assert ok1 is True
+
+    # Run 2 tries to reserve $10.00 ($20.00 + $10.00 = $30.00 > $25.00 total) -> denied
+    ok2 = await hp2.reserve("model:gen2", 10.00)
+    assert ok2 is False
+
+    # Check committed usage
+    assert repo.get_total_committed_usd() == 20.00
+
+    # Run 1 settles to actual cost of $5.00
+    await hp1.settle("model:gen1", 5.00)
+    assert repo.get_total_committed_usd() == 5.00
+
+    # Now Run 2 can reserve $10.00 ($5.00 + $10.00 = $15.00 <= $25.00) -> success
+    ok2_retry = await hp2.reserve("model:gen2", 10.00)
+    assert ok2_retry is True
+    assert repo.get_total_committed_usd() == 15.00

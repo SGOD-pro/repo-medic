@@ -87,7 +87,7 @@ async def repair(
             model=active_model,
             host=host,
             candidate_id="candidate_1",
-            estimated_cost=0.0,
+            estimated_cost=0.05,
         )
     except BudgetExceededError as exc:
         return RepairResult(state="failed", reason=str(exc))
@@ -129,7 +129,14 @@ async def repair(
     if not verification.passed:
         return RepairResult(state="failed", reason=verification.summary)
 
-    # 13. Clean sequential repair succeeded
+    # 13. Check cancellation before accepting repair results
+    if await host.cancelled():
+        return RepairResult(
+            state="cancelled",
+            reason="User cancelled after verification before accepting results",
+        )
+
+    # 14. Clean sequential repair succeeded
     return RepairResult(
         state="succeeded",
         reason="Candidate verified cleanly and resolved upgrade regression",

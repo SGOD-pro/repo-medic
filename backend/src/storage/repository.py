@@ -5,6 +5,7 @@ import logging
 import uuid
 from typing import Any, cast
 import httpx
+from src.config import settings
 from src.contracts import (
     ArtifactKind,
     ArtifactSummary,
@@ -25,6 +26,13 @@ class D1StorageRepository:
 
     def __init__(self, client: RepoMedicDB | None = None):
         self.client = client or RepoMedicDB()
+
+    def get_total_committed_usd(self) -> float:
+        try:
+            res = self.client.get_budget_usage()
+            return float(res.get("total_micro_usd", 0)) / 1_000_000.0
+        except Exception:
+            return 0.0
 
     def create_run(
         self,
@@ -248,6 +256,7 @@ class D1HostPorts(HostPorts):
     async def reserve(self, operation_id: str, estimated_usd: float) -> bool:
         scoped_id = self._scoped_op_id(operation_id)
         kind = "sandbox" if operation_id.startswith("sandbox:") else "model"
+        global_budget = getattr(settings, "repomedic_total_budget_usd", 25.0)
         try:
             await asyncio.to_thread(
                 self.client.reserve_budget,
@@ -255,6 +264,7 @@ class D1HostPorts(HostPorts):
                 operation_id=scoped_id,
                 kind=kind,
                 estimated_usd=estimated_usd,
+                global_budget_usd=global_budget,
             )
             return True
         except httpx.HTTPStatusError as e:

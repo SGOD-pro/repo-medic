@@ -66,6 +66,14 @@ class MockD1 {
                 provider_ref: op.provider_ref,
               } : null;
             }
+            if (q.includes("FROM operations") && q.includes("total_micro_usd")) {
+              const settled = mock.operations.filter(o => o.status === "settled").reduce((s, o) => s + (o.settled_micro_usd || 0), 0);
+              const reserved = mock.operations.filter(o => o.status === "reserved").reduce((s, o) => s + (o.reserved_micro_usd || 0), 0);
+              const total = mock.operations.filter(o => ["reserved", "settled", "uncertain"].includes(o.status)).reduce((s, o) => {
+                return s + (o.status === "settled" ? (o.settled_micro_usd || 0) : (o.reserved_micro_usd || 0));
+              }, 0);
+              return { settled_micro_usd: settled, reserved_micro_usd: reserved, total_micro_usd: total };
+            }
             if (q.includes("SELECT operation_id FROM operations WHERE operation_id = ?")) {
               const op = mock.operations.find(o => o.operation_id === args[0]);
               return op ? { operation_id: op.operation_id } : null;
@@ -150,10 +158,14 @@ class MockD1 {
               const runId = args[1];
               const reserved = args[3];
               const maxRun = args[8];
+              const globalCap = args.length > 10 ? args[10] : 25000000;
               const committed = mock.operations.filter(o => o.run_id === runId && ["reserved", "settled", "uncertain"].includes(o.status)).reduce((s, o) => {
                 return s + (o.status === "settled" ? o.settled_micro_usd : o.reserved_micro_usd);
               }, 0);
-              if (committed + reserved > maxRun) {
+              const globalCommitted = mock.operations.filter(o => ["reserved", "settled", "uncertain"].includes(o.status)).reduce((s, o) => {
+                return s + (o.status === "settled" ? o.settled_micro_usd : o.reserved_micro_usd);
+              }, 0);
+              if (committed + reserved > maxRun || globalCommitted + reserved > globalCap) {
                 return { success: true, meta: { changes: 0 } };
               }
               mock.operations.push({
@@ -190,6 +202,15 @@ class MockD1 {
             return { success: true, meta: { changes: 1 } };
           },
         };
+      },
+      first() {
+        return this.bind().first();
+      },
+      all() {
+        return this.bind().all();
+      },
+      run() {
+        return this.bind().run();
       },
     };
   }
@@ -406,6 +427,24 @@ async function runTests() {
     reserved_micro_usd: 600000,
   }), env, ctx);
   assert.strictEqual(resOp2.status, 201);
+
+  // Test GET /api/budget/usage
+  const resUsage = await worker.fetch(req("/api/budget/usage", "GET"), env, ctx);
+  assert.strictEqual(resUsage.status, 200);
+  const usageData = await resUsage.json();
+  assert.strictEqual(usageData.settled_micro_usd, 500000);
+  assert.strictEqual(usageData.reserved_micro_usd, 600000);
+  assert.strictEqual(usageData.total_micro_usd, 1100000);
+
+  // Test global budget denial across runs: request reservation with global_budget_micro_usd = 1,200,000
+  // Current total is 1,100,000. Reserving 200,000 would make 1,300,000 > 1,200,000 -> 409
+  const resGlobalOver = await worker.fetch(req("/api/runs/run-100/operations", "POST", {
+    operation_id: "model:3",
+    kind: "model",
+    reserved_micro_usd: 200000,
+    global_budget_micro_usd: 1200000,
+  }), env, ctx);
+  assert.strictEqual(resGlobalOver.status, 409);
 
   console.log("All Worker bridge tests passed successfully!");
 }

@@ -371,6 +371,15 @@ def test_create_run_budget_and_mode_guards(test_app_and_repo, monkeypatch):
     assert resp_budget.status_code == 409
     assert resp_budget.json()["error"]["message"] == "Budget unavailable"
 
+    # Pre-reserve $24.00 on an existing run
+    monkeypatch.setattr(settings, "repomedic_max_run_usd", 2.0)
+    repo.create_run("run-prior", "example-task-1", "offline", "sequential", max_run_usd=25.0)
+    repo.client.reserve_budget("run-prior", "op:prior", "model", 24.0)
+    # New run asking for $2.00 exceeds $25.00 total ($24.00 + $2.00 = $26.00) -> 409
+    resp_global = client.post("/api/runs", json={"task_id": "example-task-1", "search_mode": "sequential"})
+    assert resp_global.status_code == 409
+    assert resp_global.json()["error"]["message"] == "Budget unavailable"
+
 
 def test_startup_recovery_interrupted_runs(monkeypatch):
     from src.config import settings

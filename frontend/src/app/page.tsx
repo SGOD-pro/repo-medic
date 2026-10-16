@@ -148,14 +148,10 @@ export default function Home() {
 
   const handleInspectResults = () => {
     if (activeRun) {
-      // Mark as completed in history
       updateRun(activeRun.run_id, {
-        state: "succeeded",
-        completed_at: new Date().toISOString(),
-        duration: "24.2s",
-        tests_passed: 42,
-        tests_failed: 0,
-        cost_usd: 0.04,
+        state: activeRun.state,
+        reason: activeRun.reason,
+        cost_usd: activeRun.usage?.estimated_usd,
       });
     }
     setActiveTab("verification");
@@ -167,16 +163,17 @@ export default function Home() {
         const cancelled = await apiClient.cancelRun(activeRun.run_id);
         const elapsedSec = runStartedAt
           ? Math.max(0, Math.floor((Date.now() - runStartedAt) / 1000))
-          : 105;
+          : 0;
         const m = Math.floor(elapsedSec / 60);
         const s = elapsedSec % 60;
         const formattedDuration = `${m}m ${s}s`;
 
         updateRun(activeRun.run_id, {
-          state: "cancelled",
+          state: cancelled.state,
+          reason: cancelled.reason,
           completed_at: new Date().toISOString(),
           duration: formattedDuration,
-          cost_usd: 0.18,
+          cost_usd: cancelled.usage?.estimated_usd ?? 0,
         });
         setActiveRun(cancelled);
       } catch (err) {
@@ -195,6 +192,29 @@ export default function Home() {
     setSelectedTaskId(runItem.task_id);
     setStrategy(runItem.search_mode);
     updateUrlParam(runItem.run_id);
+
+    apiClient
+      .getRun(runItem.run_id)
+      .then((run) => {
+        setActiveRun(run);
+      })
+      .catch(() => {
+        setActiveRun({
+          run_id: runItem.run_id,
+          task_id: runItem.task_id,
+          mode: runItem.mode,
+          search_mode: runItem.search_mode,
+          state: runItem.state,
+          reason: runItem.reason || null,
+          usage: {
+            model_calls: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            estimated_usd: runItem.cost_usd || 0,
+          },
+          artifacts: [],
+        });
+      });
 
     // Smart route: terminal runs load verification, active resume in run_active
     if (
@@ -246,11 +266,24 @@ export default function Home() {
             startedAt={runStartedAt}
             activeRun={activeRun}
             onReturnToTasks={handleRunAnotherTask}
+            apiClient={apiClient}
+            onUpdateRun={(updated) => {
+              setActiveRun(updated);
+              updateRun(updated.run_id, {
+                state: updated.state,
+                reason: updated.reason,
+                cost_usd: updated.usage?.estimated_usd,
+              });
+            }}
           />
         )}
 
         {activeTab === "verification" && (
-          <VerificationView onRunAnotherTask={handleRunAnotherTask} />
+          <VerificationView
+            activeRun={activeRun}
+            apiClient={apiClient}
+            onRunAnotherTask={handleRunAnotherTask}
+          />
         )}
       </main>
 

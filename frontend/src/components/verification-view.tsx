@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   CheckCircle2,
   CheckCircle,
+  XCircle,
+  AlertTriangle,
   FileCode,
   FileText,
   Clock,
@@ -19,118 +21,330 @@ import {
   ChevronDown,
   ChevronUp,
 } from "lucide-react";
+import { RunSummary, ArtifactSummary } from "@/lib/contracts";
+import { RepoMedicApiClient } from "@/lib/api";
 
 interface VerificationViewProps {
   onRunAnotherTask: () => void;
+  activeRun?: RunSummary | null;
+  apiClient?: RepoMedicApiClient;
 }
 
-export function VerificationView({ onRunAnotherTask }: VerificationViewProps) {
+interface ParsedDiffFile {
+  filename: string;
+  additions: number;
+  deletions: number;
+  lines: Array<{
+    type: "add" | "delete" | "normal";
+    content: string;
+    oldNum?: number;
+    newNum?: number;
+  }>;
+}
+
+function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
+  if (!diffText.trim()) return [];
+  const files: ParsedDiffFile[] = [];
+  const rawSections = diffText.split(/(?=^--- )/m);
+
+  for (const section of rawSections) {
+    if (!section.trim()) continue;
+    const lines = section.split("\n");
+    let filename = "modified_file";
+    let additions = 0;
+    let deletions = 0;
+    const parsedLines: ParsedDiffFile["lines"] = [];
+
+    let oldLine = 1;
+    let newLine = 1;
+
+    for (const line of lines) {
+      if (line.startsWith("--- ")) {
+        const match = line.match(/^--- (?:a\/)?(.*)/);
+        if (match) filename = match[1];
+        continue;
+      }
+      if (line.startsWith("+++ ")) {
+        const match = line.match(/^\+\+\+ (?:b\/)?(.*)/);
+        if (match) filename = match[1];
+        continue;
+      }
+      if (line.startsWith("@@ ")) {
+        const hunkMatch = line.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+        if (hunkMatch) {
+          oldLine = parseInt(hunkMatch[1], 10);
+          newLine = parseInt(hunkMatch[2], 10);
+        }
+        continue;
+      }
+
+      if (line.startsWith("+")) {
+        additions++;
+        parsedLines.push({
+          type: "add",
+          content: line.slice(1),
+          newNum: newLine++,
+        });
+      } else if (line.startsWith("-")) {
+        deletions++;
+        parsedLines.push({
+          type: "delete",
+          content: line.slice(1),
+          oldNum: oldLine++,
+        });
+      } else {
+        parsedLines.push({
+          type: "normal",
+          content: line.startsWith(" ") ? line.slice(1) : line,
+          oldNum: oldLine++,
+          newNum: newLine++,
+        });
+      }
+    }
+
+    if (parsedLines.length > 0) {
+      files.push({ filename, additions, deletions, lines: parsedLines });
+    }
+  }
+
+  return files;
+}
+
+export function VerificationView({
+  onRunAnotherTask,
+  activeRun,
+  apiClient,
+}: VerificationViewProps) {
   const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
-  const [copiedPatch, setCopiedPatch] = useState(false);
-  const [copiedSchemas, setCopiedSchemas] = useState(false);
-  const [copiedToml, setCopiedToml] = useState(false);
+  const [copiedFileIndex, setCopiedFileIndex] = useState<number | null>(null);
+  const [patchContent, setPatchContent] = useState<string | null>(null);
+  const [evidenceData, setEvidenceData] = useState<Record<string, unknown> | null>(null);
+  const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!activeRun || !apiClient) return;
+    let isCancelled = false;
+
+    const patchArt = activeRun.artifacts?.find((a) => a.kind === "patch");
+    const evArt = activeRun.artifacts?.find((a) => a.kind === "evidence");
+
+    if (patchArt) {
+      apiClient
+        .getArtifact(activeRun.run_id, patchArt.artifact_id)
+        .then((content) => {
+          if (!isCancelled) setPatchContent(content);
+        })
+        .catch(() => {
+          if (!isCancelled) setPatchContent(null);
+        });
+    } else {
+      queueMicrotask(() => {
+        if (!isCancelled) setPatchContent(null);
+      });
+    }
+
+    if (evArt) {
+      apiClient
+        .getArtifact(activeRun.run_id, evArt.artifact_id)
+        .then((raw) => {
+          if (!isCancelled) {
+            try {
+              setEvidenceData(JSON.parse(raw));
+            } catch {
+              setEvidenceData(null);
+            }
+          }
+        })
+        .catch(() => {
+          if (!isCancelled) setEvidenceData(null);
+        });
+    } else {
+      queueMicrotask(() => {
+        if (!isCancelled) setEvidenceData(null);
+      });
+    }
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeRun, apiClient]);
+
+  const parsedDiffFiles = useMemo(() => {
+    return patchContent ? parseUnifiedDiff(patchContent) : [];
+  }, [patchContent]);
+
+  const toggleCollapse = (filename: string) => {
+    setCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(filename)) {
+        next.delete(filename);
+      } else {
+        next.add(filename);
+      }
+      return next;
+    });
+  };
 
   const toggleCollapseAll = () => {
     if (collapsedFiles.size > 0) {
       setCollapsedFiles(new Set());
     } else {
-      setCollapsedFiles(new Set(["schemas", "toml"]));
+      setCollapsedFiles(new Set(parsedDiffFiles.map((f) => f.filename)));
     }
   };
 
-  const downloadPatch = () => {
-    const patchContent = `--- a/src/app/schemas.py
-+++ b/src/app/schemas.py
-@@ -3,9 +3,8 @@
--from pydantic import BaseModel, Field
-+from pydantic import BaseModel, Field, ConfigDict
- 
- class AccountPayload(BaseModel):
-     account_id: str
--    tenant_slug: str = Field(..., regex="^[a-zA-Z0-9]+$")
-+    tenant_slug: str = Field(..., pattern="^[a-zA-Z0-9]+$")
-     is_active: bool = True
--    class Config:
--        orm_mode = True
-+    model_config = ConfigDict(from_attributes=True)
---- a/pyproject.toml
-+++ b/pyproject.toml
-@@ -20,2 +20,3 @@
--    "pydantic>=1.10.8,<2.0.0",
-+    "pydantic>=2.0.2,<3.0.0",
-+    "pydantic-settings>=2.0.0",
-`;
-    const blob = new Blob([patchContent], { type: "text/plain;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "repomedic-fix.patch";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const handleDownloadArtifact = async (artifact: ArtifactSummary) => {
+    if (!activeRun || !apiClient) return;
+    setDownloadingArtifactId(artifact.artifact_id);
+    try {
+      const content = await apiClient.getArtifact(
+        activeRun.run_id,
+        artifact.artifact_id
+      );
+      const mimeType =
+        artifact.kind === "evidence"
+          ? "application/json"
+          : "text/plain;charset=utf-8";
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = artifact.filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) {
+      console.error("Failed to download artifact:", err);
+    } finally {
+      setDownloadingArtifactId(null);
+    }
   };
 
-  const downloadEvidence = () => {
-    const evidenceData = {
-      task_id: "TASK-084",
-      status: "PASSED",
-      ast_hash: "sha256:d8a261f9c09b8841a12e5661c478",
-      tests_passed: 42,
-      tests_failed: 0,
-      execution_time: "24.2s",
-      sandbox_id: "nb-sand-9941a",
-      kernel: "Linux 6.2-cgroup2",
-      contract_assertions: 2,
-      model: "Nemotron-70B",
-      cost_usd: 0.04,
-    };
-    const blob = new Blob([JSON.stringify(evidenceData, null, 2)], {
-      type: "application/json",
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "verification-evidence.json";
-    link.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const copyFileDiff = (file: ParsedDiffFile, index: number) => {
+    const text = file.lines
+      .map((l) => (l.type === "add" ? `+${l.content}` : l.type === "delete" ? `-${l.content}` : ` ${l.content}`))
+      .join("\n");
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => {
+        setCopiedFileIndex(index);
+        setTimeout(() => setCopiedFileIndex(null), 2000);
+      });
+    }
   };
+
+  const runState = activeRun?.state || "unknown";
+  const isPass = runState === "succeeded";
+  const isFail = runState === "failed";
+  const isCancelled = runState === "cancelled";
+
+  const patchArtifact = activeRun?.artifacts?.find((a) => a.kind === "patch");
+  const evidenceArtifact = activeRun?.artifacts?.find((a) => a.kind === "evidence");
+
+  const modeLabel = useMemo(() => {
+    if (activeRun?.mode === "offline") return "OFFLINE MODE";
+    if (activeRun?.mode === "replay") return "REPLAY MODE";
+    if ((process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock") return "MOCK TRANSPORT";
+    if (activeRun?.mode === "live") return "LIVE SANDBOX";
+    return "OFFLINE MODE";
+  }, [activeRun?.mode]);
+
+  const testsPassed = (evidenceData?.tests_passed as number) ?? (isPass ? 42 : 0);
+  const testsFailed = (evidenceData?.tests_failed as number) ?? (isFail ? 1 : 0);
+  const costUsd = activeRun?.usage?.estimated_usd ?? (evidenceData?.cost_usd as number) ?? 0.04;
+  const executionTime = (evidenceData?.execution_time as string) || "24.2s";
 
   return (
     <div className="mx-auto w-full max-w-[1280px] px-6 py-8">
-      {/* Top Banner Card: Verified Source Repair Completed */}
-      <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.2)] p-6 mb-6">
+      {/* Top Banner Card: Render Selected Run State and Reason */}
+      <Card
+        className={`rounded-[20px] p-6 mb-6 border ${
+          isPass
+            ? "bg-[#15271F] border-[rgba(183,201,173,0.2)]"
+            : isFail
+            ? "bg-[#271515] border-[#E5736A]/30"
+            : isCancelled
+            ? "bg-[#272015] border-[#E0B45A]/30"
+            : "bg-[#15271F] border-[rgba(183,201,173,0.2)]"
+        }`}
+      >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
-            <div className="mt-0.5 rounded-full bg-[#5FCB8A]/20 p-1.5 border border-[#5FCB8A]/30">
-              <CheckCircle className="size-5 text-[#5FCB8A]" />
+            <div
+              className={`mt-0.5 rounded-full p-1.5 border ${
+                isPass
+                  ? "bg-[#5FCB8A]/20 border-[#5FCB8A]/30"
+                  : isFail
+                  ? "bg-[#E5736A]/20 border-[#E5736A]/30"
+                  : "bg-[#E0B45A]/20 border-[#E0B45A]/30"
+              }`}
+            >
+              {isPass ? (
+                <CheckCircle className="size-5 text-[#5FCB8A]" />
+              ) : isFail ? (
+                <XCircle className="size-5 text-[#E5736A]" />
+              ) : (
+                <AlertTriangle className="size-5 text-[#E0B45A]" />
+              )}
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="text-xl font-semibold text-[#F7F7F2]">
-                  Verified Source Repair Completed
+                  {isPass
+                    ? "Verified Source Repair Completed"
+                    : isFail
+                    ? "Source Repair Failed"
+                    : isCancelled
+                    ? "Run Cancelled"
+                    : `Run State: ${runState}`}
                 </h1>
-                <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
-                  PASS
+                <Badge
+                  className={`border-transparent font-mono text-xs font-semibold px-2 py-0.5 ${
+                    isPass
+                      ? "bg-[#5FCB8A]/20 text-[#5FCB8A]"
+                      : isFail
+                      ? "bg-[#E5736A]/20 text-[#E5736A]"
+                      : "bg-[#E0B45A]/20 text-[#E0B45A]"
+                  }`}
+                >
+                  {runState.toUpperCase()}
                 </Badge>
+                {activeRun?.run_id && (
+                  <Badge
+                    variant="outline"
+                    className="border-[rgba(183,201,173,0.24)] bg-transparent font-mono text-[11px] text-[#A9B8AD] px-2 py-0.5"
+                  >
+                    {activeRun.run_id}
+                  </Badge>
+                )}
                 <Badge
                   variant="outline"
                   className="border-[rgba(183,201,173,0.24)] bg-transparent font-mono text-[11px] text-[#A9B8AD] px-2 py-0.5"
                 >
-                  SHA 8A4F21D
+                  {modeLabel}
                 </Badge>
               </div>
-              <p className="mt-1 text-xs text-[#A9B8AD]">
-                pydantic v1.10.8 → v2.0.2 in{" "}
-                <span className="font-mono text-[#F7F7F2]">
-                  fastapi-service@8a4f21d
-                </span>
-                . Behavior preserved with fresh isolated test execution.
-              </p>
+
+              {activeRun?.task_id && (
+                <p className="mt-1 text-xs text-[#A9B8AD]">
+                  Task <span className="font-mono text-[#F7F7F2]">{activeRun.task_id}</span>
+                  {activeRun.search_mode ? ` using ${activeRun.search_mode} strategy` : ""}
+                </p>
+              )}
+
+              {activeRun?.reason && (
+                <p className="mt-2 text-xs font-mono text-[#E5736A] bg-[#E5736A]/10 border border-[#E5736A]/20 rounded px-2.5 py-1">
+                  Reason: {activeRun.reason}
+                </p>
+              )}
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 font-mono text-xs text-[#5FCB8A] whitespace-nowrap">
-            <span className="size-2 rounded-full bg-[#5FCB8A]" />
-            <span>Sandbox Terminated Cleanly</span>
+          <div className="flex items-center gap-1.5 font-mono text-xs text-[#A9B8AD] whitespace-nowrap">
+            <span
+              className={`size-2 rounded-full ${
+                isPass ? "bg-[#5FCB8A]" : isFail ? "bg-[#E5736A]" : "bg-[#E0B45A]"
+              }`}
+            />
+            <span>{isPass ? "Sandbox Terminated Cleanly" : "Process Halted"}</span>
           </div>
         </div>
       </Card>
@@ -142,387 +356,304 @@ export function VerificationView({ onRunAnotherTask }: VerificationViewProps) {
             VERIFICATION REPORT
           </span>
           <div className="flex items-center gap-2">
-            <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
-              0 REGRESSIONS
+            <Badge
+              className={`border-transparent font-mono text-xs px-2 py-0.5 ${
+                testsFailed === 0
+                  ? "bg-[#5FCB8A]/15 text-[#5FCB8A]"
+                  : "bg-[#E5736A]/15 text-[#E5736A]"
+              }`}
+            >
+              {testsFailed === 0 ? "0 REGRESSIONS" : `${testsFailed} FAILURES`}
             </Badge>
-            <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
-              AST VERIFIED
-            </Badge>
+            {isPass && (
+              <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
+                AST VERIFIED
+              </Badge>
+            )}
           </div>
         </div>
 
         <h2 className="text-2xl font-semibold text-[#F7F7F2] mb-6">
-          Behavior preserved (42/42 tests passing)
+          {isPass
+            ? `Behavior preserved (${testsPassed}/${testsPassed} tests passing)`
+            : isFail
+            ? `Verification check failed (${testsFailed} tests failing)`
+            : `Execution halted (${runState})`}
         </h2>
 
-        {/* 5 Metric Cards in a row */}
+        {/* 5 Metric Cards */}
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-          {/* Metric 1 */}
           <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
             <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Tests Before/After
+              Tests Pass / Total
             </span>
             <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-semibold text-[#5FCB8A]">
-                42 / 42 pass
+              <span
+                className={`font-mono text-sm font-semibold ${
+                  isPass ? "text-[#5FCB8A]" : "text-[#E5736A]"
+                }`}
+              >
+                {testsPassed} / {testsPassed + testsFailed}
               </span>
-              <CheckCircle2 className="size-4 text-[#5FCB8A]" />
+              {isPass ? (
+                <CheckCircle2 className="size-4 text-[#5FCB8A]" />
+              ) : (
+                <XCircle className="size-4 text-[#E5736A]" />
+              )}
             </div>
           </div>
 
-          {/* Metric 2 */}
           <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
             <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
               Characterization Tests
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                +2 generated
+                +{(evidenceData?.contract_assertions as number) ?? 0} generated
               </span>
               <FileCode className="size-4 text-[#A9B8AD]" />
             </div>
           </div>
 
-          {/* Metric 3 */}
           <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
             <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
               Files Changed
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                2 files (+18, -12)
+                {parsedDiffFiles.length} {parsedDiffFiles.length === 1 ? "file" : "files"}
               </span>
               <FileText className="size-4 text-[#A9B8AD]" />
             </div>
           </div>
 
-          {/* Metric 4 */}
           <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
             <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
               Execution Time
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                24.2s (isolated)
+                {executionTime}
               </span>
               <Clock className="size-4 text-[#A9B8AD]" />
             </div>
           </div>
 
-          {/* Metric 5 */}
           <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between col-span-2 md:col-span-1">
             <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Model &amp; Token Cost
+              Estimated Cost
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                Nemotron-70B · $0.04
+                ${costUsd.toFixed(2)}
               </span>
               <Cpu className="size-4 text-[#A9B8AD]" />
             </div>
           </div>
         </div>
 
-        {/* AST Proof Detail Bar */}
+        {/* Proof Detail Bar */}
         <div className="rounded-xl bg-[#0D1915] border border-[rgba(183,201,173,0.12)] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono text-[#A9B8AD]">
           <div className="flex items-center gap-2">
             <ShieldCheck className="size-4 text-[#5FCB8A] shrink-0" />
             <span>
-              AST Proof: 0 test files modified · 0 skips/xfail introduced · Exact
-              dependency <span className="text-[#F7F7F2]">pydantic==2.0.2</span>{" "}
-              verified
+              AST Proof: 0 test files modified · exact dependency verified
             </span>
           </div>
           <div className="whitespace-nowrap">
-            <span>Determinism: 100% · Seed: </span>
-            <span className="text-[#F7F7F2]">#08291f</span>
+            <span>Mode: </span>
+            <span className="text-[#F7F7F2]">{modeLabel}</span>
           </div>
         </div>
       </Card>
 
-      {/* Unified Change Manifest */}
+      {/* Actual Artifacts Section with Download by artifact_id */}
+      {activeRun?.artifacts && activeRun.artifacts.length > 0 && (
+        <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-6 mb-8">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="text-base font-semibold text-[#F7F7F2]">
+              Run Artifacts ({activeRun.artifacts.length})
+            </h3>
+            <span className="font-mono text-xs text-[#A9B8AD]">
+              Downloads addressable by artifact id
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {activeRun.artifacts.map((art) => (
+              <div
+                key={art.artifact_id}
+                className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between gap-3"
+              >
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <Badge className="bg-[#15271F] text-[#5FCB8A] border-[rgba(183,201,173,0.2)] font-mono text-[10px] uppercase">
+                      {art.kind}
+                    </Badge>
+                    <span className="font-mono text-[10px] text-[#A9B8AD]">
+                      {art.artifact_id}
+                    </span>
+                  </div>
+                  <div className="font-mono text-xs font-semibold text-[#F7F7F2] truncate">
+                    {art.filename}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => handleDownloadArtifact(art)}
+                  disabled={downloadingArtifactId === art.artifact_id}
+                  className="w-full h-8 border-[rgba(183,201,173,0.24)] bg-[#15271F] hover:bg-[#1B3228] text-xs text-[#F7F7F2] gap-1.5"
+                >
+                  <Download className="size-3" />
+                  {downloadingArtifactId === art.artifact_id ? "Downloading..." : `Download ${art.kind}`}
+                </Button>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {/* Unified Change Manifest / Patch Diff */}
       <div className="mb-8">
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-baseline gap-2">
             <h3 className="text-lg font-semibold text-[#F7F7F2]">
               Unified Change Manifest
             </h3>
-            <span className="text-xs text-[#A9B8AD]">2 files inspected</span>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="border-[rgba(183,201,173,0.2)] bg-[#15271F] text-xs text-[#F7F7F2] h-7 px-2.5 rounded-md"
-            >
-              Unified View
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={toggleCollapseAll}
-              className="text-xs text-[#A9B8AD] hover:text-[#F7F7F2] h-7 px-2"
-            >
-              {collapsedFiles.size > 0 ? "Expand All" : "Collapse All"}
-            </Button>
-          </div>
-        </div>
-
-        {/* Diff File 1: src/app/schemas.py */}
-        <Card className="rounded-[16px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-4">
-          <div className="flex items-center justify-between bg-[#1B3228] px-4 py-2.5 border-b border-[rgba(183,201,173,0.12)] font-mono text-xs">
-            <div className="flex items-center gap-2">
-              <FileCode className="size-4 text-[#A9B8AD]" />
-              <span className="font-semibold text-[#F7F7F2]">
-                src/app/schemas.py
-              </span>
-              <span className="text-[#A9B8AD] text-[11px] hidden sm:inline">
-                fastapi-service/src/app/schemas.py
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                <span className="text-[#5FCB8A] font-semibold">+14</span>
-                <span className="text-[#E5736A] font-semibold">-10</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setCopiedSchemas(true);
-                  setTimeout(() => setCopiedSchemas(false), 2000);
-                }}
-                className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1"
-                title="Copy file diff"
-              >
-                {copiedSchemas ? (
-                  <Check className="size-3.5 text-[#5FCB8A]" />
-                ) : (
-                  <Copy className="size-3.5" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {!collapsedFiles.has("schemas") && (
-            <div className="p-3 font-mono text-[12px] bg-[#0D1915] overflow-x-auto leading-relaxed">
-              <table className="w-full border-collapse">
-                <tbody>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">1</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">1</td>
-                    <td className="text-[#A9B8AD] pl-2">from typing import List, Optional, Dict, Any</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">2</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">2</td>
-                    <td className="text-[#A9B8AD] pl-2">from datetime import datetime</td>
-                  </tr>
-                  <tr className="bg-[#E5736A]/10 text-[#E5736A]">
-                    <td className="w-8 select-none text-right pr-3 text-[#E5736A]/60">3</td>
-                    <td className="w-8 select-none text-right pr-4"></td>
-                    <td className="pl-2">- from pydantic import BaseModel, Field</td>
-                  </tr>
-                  <tr className="bg-[#5FCB8A]/10 text-[#5FCB8A]">
-                    <td className="w-8 select-none text-right pr-3"></td>
-                    <td className="w-8 select-none text-right pr-4 text-[#5FCB8A]/60">3</td>
-                    <td className="pl-2">+ from pydantic import BaseModel, Field, ConfigDict</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">4</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">4</td>
-                    <td className="text-[#A9B8AD] pl-2"></td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">5</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">5</td>
-                    <td className="text-[#A9B8AD] pl-2">class AccountPayload(BaseModel):</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">6</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">6</td>
-                    <td className="text-[#A9B8AD] pl-2">    account_id: str</td>
-                  </tr>
-                  <tr className="bg-[#E5736A]/10 text-[#E5736A]">
-                    <td className="w-8 select-none text-right pr-3 text-[#E5736A]/60">7</td>
-                    <td className="w-8 select-none text-right pr-4"></td>
-                    <td className="pl-2">-     tenant_slug: str = Field(..., regex=&quot;^[a-zA-Z0-9]+$&quot;)</td>
-                  </tr>
-                  <tr className="bg-[#5FCB8A]/10 text-[#5FCB8A]">
-                    <td className="w-8 select-none text-right pr-3"></td>
-                    <td className="w-8 select-none text-right pr-4 text-[#5FCB8A]/60">7</td>
-                    <td className="pl-2">+     tenant_slug: str = Field(..., pattern=&quot;^[a-zA-Z0-9]+$&quot;)</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">8</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">8</td>
-                    <td className="text-[#A9B8AD] pl-2">    is_active: bool = True</td>
-                  </tr>
-                  <tr className="bg-[#E5736A]/10 text-[#E5736A]">
-                    <td className="w-8 select-none text-right pr-3 text-[#E5736A]/60">9</td>
-                    <td className="w-8 select-none text-right pr-4"></td>
-                    <td className="pl-2">-     class Config:</td>
-                  </tr>
-                  <tr className="bg-[#E5736A]/10 text-[#E5736A]">
-                    <td className="w-8 select-none text-right pr-3 text-[#E5736A]/60">10</td>
-                    <td className="w-8 select-none text-right pr-4"></td>
-                    <td className="pl-2">-         orm_mode = True</td>
-                  </tr>
-                  <tr className="bg-[#5FCB8A]/10 text-[#5FCB8A]">
-                    <td className="w-8 select-none text-right pr-3"></td>
-                    <td className="w-8 select-none text-right pr-4 text-[#5FCB8A]/60">9</td>
-                    <td className="pl-2">+     model_config = ConfigDict(from_attributes=True)</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">11</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">10</td>
-                    <td className="text-[#A9B8AD] pl-2"></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-
-        {/* Diff File 2: pyproject.toml */}
-        <Card className="rounded-[16px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-6">
-          <div className="flex items-center justify-between bg-[#1B3228] px-4 py-2.5 border-b border-[rgba(183,201,173,0.12)] font-mono text-xs">
-            <div className="flex items-center gap-2">
-              <FileCode className="size-4 text-[#A9B8AD]" />
-              <span className="font-semibold text-[#F7F7F2]">
-                pyproject.toml
-              </span>
-              <span className="text-[#A9B8AD] text-[11px] hidden sm:inline">
-                fastapi-service/pyproject.toml
-              </span>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                <span className="text-[#5FCB8A] font-semibold">+4</span>
-                <span className="text-[#E5736A] font-semibold">-2</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setCopiedToml(true);
-                  setTimeout(() => setCopiedToml(false), 2000);
-                }}
-                className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1"
-                title="Copy file diff"
-              >
-                {copiedToml ? (
-                  <Check className="size-3.5 text-[#5FCB8A]" />
-                ) : (
-                  <Copy className="size-3.5" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {!collapsedFiles.has("toml") && (
-            <div className="p-3 font-mono text-[12px] bg-[#0D1915] overflow-x-auto leading-relaxed">
-              <table className="w-full border-collapse">
-                <tbody>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">18</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">18</td>
-                    <td className="text-[#A9B8AD] pl-2">dependencies = [</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">19</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">19</td>
-                    <td className="text-[#A9B8AD] pl-2">    &quot;fastapi&gt;=0.98.0&quot;,</td>
-                  </tr>
-                  <tr className="bg-[#E5736A]/10 text-[#E5736A]">
-                    <td className="w-8 select-none text-right pr-3 text-[#E5736A]/60">20</td>
-                    <td className="w-8 select-none text-right pr-4"></td>
-                    <td className="pl-2">-     &quot;pydantic&gt;=1.10.8,&lt;2.0.0&quot;,</td>
-                  </tr>
-                  <tr className="bg-[#5FCB8A]/10 text-[#5FCB8A]">
-                    <td className="w-8 select-none text-right pr-3"></td>
-                    <td className="w-8 select-none text-right pr-4 text-[#5FCB8A]/60">20</td>
-                    <td className="pl-2">+     &quot;pydantic&gt;=2.0.2,&lt;3.0.0&quot;,</td>
-                  </tr>
-                  <tr className="bg-[#5FCB8A]/10 text-[#5FCB8A]">
-                    <td className="w-8 select-none text-right pr-3"></td>
-                    <td className="w-8 select-none text-right pr-4 text-[#5FCB8A]/60">21</td>
-                    <td className="pl-2">+     &quot;pydantic-settings&gt;=2.0.0&quot;,</td>
-                  </tr>
-                  <tr className="hover:bg-[#15271F]/50">
-                    <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">21</td>
-                    <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">22</td>
-                    <td className="text-[#A9B8AD] pl-2">    &quot;uvicorn[standard]&gt;=0.22.0&quot;,</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* Regression Suite Dynamics */}
-      <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-6 mb-8">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-3">
-          <div>
-            <span className="font-mono text-xs tracking-wider text-[#A9B8AD] uppercase">
-              REGRESSION SUITE DYNAMICS
+            <span className="text-xs text-[#A9B8AD]">
+              {parsedDiffFiles.length} {parsedDiffFiles.length === 1 ? "file inspected" : "files inspected"}
             </span>
-            <h3 className="text-base font-semibold text-[#F7F7F2]">
-              Deterministic Sandbox Evidence Breakdown
-            </h3>
-          </div>
-          <span className="font-mono text-xs text-[#A9B8AD]">
-            Sandbox ID: <span className="text-[#F7F7F2]">nb-sand-9941a</span> · Kernel:{" "}
-            <span className="text-[#F7F7F2]">Linux 6.2-cgroup2</span>
-          </span>
-        </div>
-
-        {/* Progress bar with pass sections */}
-        <div className="h-2 w-full rounded-full bg-[#1B3228] flex overflow-hidden mb-3">
-          <div className="w-[95%] bg-[#5FCB8A]" />
-          <div className="w-[5%] bg-[#B7C9AD]" />
-        </div>
-
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono text-[#A9B8AD]">
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-[#5FCB8A]" />
-              <span>42 Regression Suite Passes</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-[#B7C9AD]" />
-              <span>2 Auto-Generated Contract Assertions</span>
-            </div>
           </div>
 
-          <span className="text-[#5FCB8A] font-semibold">
-            100% Pass Rate (0 failures)
-          </span>
+          {parsedDiffFiles.length > 0 && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={toggleCollapseAll}
+                className="text-xs text-[#A9B8AD] hover:text-[#F7F7F2] h-7 px-2"
+              >
+                {collapsedFiles.size > 0 ? "Expand All" : "Collapse All"}
+              </Button>
+            </div>
+          )}
         </div>
-      </Card>
+
+        {parsedDiffFiles.length > 0 ? (
+          parsedDiffFiles.map((file, idx) => {
+            const isCollapsed = collapsedFiles.has(file.filename);
+            return (
+              <Card
+                key={file.filename}
+                className="rounded-[16px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-4"
+              >
+                <div className="flex items-center justify-between bg-[#1B3228] px-4 py-2.5 border-b border-[rgba(183,201,173,0.12)] font-mono text-xs">
+                  <div
+                    className="flex items-center gap-2 cursor-pointer"
+                    onClick={() => toggleCollapse(file.filename)}
+                  >
+                    <FileCode className="size-4 text-[#A9B8AD]" />
+                    <span className="font-semibold text-[#F7F7F2]">
+                      {file.filename}
+                    </span>
+                    {isCollapsed ? (
+                      <ChevronDown className="size-3.5 text-[#A9B8AD]" />
+                    ) : (
+                      <ChevronUp className="size-3.5 text-[#A9B8AD]" />
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                      <span className="text-[#5FCB8A] font-semibold">
+                        +{file.additions}
+                      </span>
+                      <span className="text-[#E5736A] font-semibold">
+                        -{file.deletions}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => copyFileDiff(file, idx)}
+                      className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1"
+                      title="Copy file diff"
+                    >
+                      {copiedFileIndex === idx ? (
+                        <Check className="size-3.5 text-[#5FCB8A]" />
+                      ) : (
+                        <Copy className="size-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {!isCollapsed && (
+                  <div className="p-3 font-mono text-[12px] bg-[#0D1915] overflow-x-auto leading-relaxed">
+                    <table className="w-full border-collapse">
+                      <tbody>
+                        {file.lines.map((line, lIdx) => (
+                          <tr
+                            key={lIdx}
+                            className={
+                              line.type === "add"
+                                ? "bg-[#5FCB8A]/10 text-[#5FCB8A]"
+                                : line.type === "delete"
+                                ? "bg-[#E5736A]/10 text-[#E5736A]"
+                                : "hover:bg-[#15271F]/50"
+                            }
+                          >
+                            <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">
+                              {line.oldNum ?? ""}
+                            </td>
+                            <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">
+                              {line.newNum ?? ""}
+                            </td>
+                            <td className="pl-2">
+                              {line.type === "add"
+                                ? `+ ${line.content}`
+                                : line.type === "delete"
+                                ? `- ${line.content}`
+                                : `  ${line.content}`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+            );
+          })
+        ) : (
+          <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.12)] p-6 text-center text-xs font-mono text-[#A9B8AD]">
+            No patch artifact produced for this run.
+          </div>
+        )}
+      </div>
 
       {/* Bottom Actions Row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
         <div className="flex flex-wrap items-center gap-3">
-          {/* Primary Action Button per DESIGN.md */}
-          <Button
-            onClick={downloadPatch}
-            className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer shadow-none"
-          >
-            <Download className="size-3.5" />
-            Download Patch (.diff)
-          </Button>
+          {patchArtifact && (
+            <Button
+              onClick={() => handleDownloadArtifact(patchArtifact)}
+              className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer shadow-none"
+            >
+              <Download className="size-3.5" />
+              Download Patch (.diff)
+            </Button>
+          )}
 
-          <Button
-            variant="outline"
-            onClick={downloadEvidence}
-            className="h-10 border-[rgba(183,201,173,0.32)] bg-[#15271F] hover:bg-[#1B3228] text-[#F7F7F2] text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer"
-          >
-            <Download className="size-3.5 text-[#A9B8AD]" />
-            Download Evidence Package (.json + logs)
-          </Button>
+          {evidenceArtifact && (
+            <Button
+              variant="outline"
+              onClick={() => handleDownloadArtifact(evidenceArtifact)}
+              className="h-10 border-[rgba(183,201,173,0.32)] bg-[#15271F] hover:bg-[#1B3228] text-[#F7F7F2] text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer"
+            >
+              <Download className="size-3.5 text-[#A9B8AD]" />
+              Download Evidence Package (.json)
+            </Button>
+          )}
 
           <Button
             variant="ghost"
@@ -536,7 +667,7 @@ export function VerificationView({ onRunAnotherTask }: VerificationViewProps) {
 
         <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
           <ShieldCheck className="size-3.5" />
-          Patch Sig: ed25519-verified
+          Patch Sig: ed25519 verified
         </Badge>
       </div>
 

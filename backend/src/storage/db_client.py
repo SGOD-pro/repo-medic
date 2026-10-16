@@ -167,22 +167,30 @@ class RepoMedicDB:
 
     # --- Budgets / Operations ---
 
+    def get_budget_usage(self) -> Dict[str, Any]:
+        """Fetch total settled, reserved, and committed micro-USD across all operations."""
+        return self._request("GET", "/api/budget/usage")
+
     def reserve_budget(
         self,
         run_id: str,
         operation_id: str,
         kind: str,
         estimated_usd: float,
+        global_budget_usd: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Reserve budget for an operation with atomic capacity check."""
+        payload: Dict[str, Any] = {
+            "operation_id": operation_id,
+            "kind": kind,
+            "reserved_micro_usd": int(estimated_usd * 1_000_000),
+        }
+        if global_budget_usd is not None:
+            payload["global_budget_micro_usd"] = int(global_budget_usd * 1_000_000)
         return self._request(
             "POST",
             f"/api/runs/{run_id}/operations",
-            json={
-                "operation_id": operation_id,
-                "kind": kind,
-                "reserved_micro_usd": int(estimated_usd * 1_000_000),
-            },
+            json=payload,
         )
 
     def settle_budget(

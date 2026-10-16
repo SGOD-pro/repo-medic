@@ -46,7 +46,23 @@ async def run_upgrade_stage(
         )
         return UpgradeResult(success=False, summary=summary, exit_code=upgrade_res.exit_code)
 
-    installed_ver = upgrade_res.installed_version or recipe.to_version
+    installed_ver = upgrade_res.installed_version
+    if not installed_ver:
+        summary = "Package upgrade failed: missing observed dependency version evidence"
+        await host.emit(
+            "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
+        )
+        return UpgradeResult(success=False, summary=summary, exit_code=1)
+    if installed_ver != recipe.to_version:
+        summary = (
+            f"Package upgrade installed version '{installed_ver}' does not match requested '{recipe.to_version}'"
+        )
+        await host.emit(
+            "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
+        )
+        return UpgradeResult(
+            success=False, installed_version=installed_ver, summary=summary, exit_code=1
+        )
 
     # 2. Run test suite to reproduce expected failure
     try:

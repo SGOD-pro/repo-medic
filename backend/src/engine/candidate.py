@@ -74,6 +74,7 @@ class EvidenceManifest:
     from_version: str = ""
     to_version: str = ""
     verified_version: str = ""
+    import_origin: str = ""
     checkpoint_id: str = ""
     execution_mode: str = "offline"  # "offline" | "live"
     checks: VerificationChecks = field(default_factory=VerificationChecks)
@@ -99,6 +100,7 @@ class CandidateVerification:
     skipped_count: int = 0
     xfailed_count: int = 0
     installed_version: str = ""
+    import_origin: str = ""
     summary: str = ""
     duration_seconds: float = 0.0
     reason: Optional[str] = None
