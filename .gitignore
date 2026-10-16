@@ -1,2 +1,7 @@
 .agents
-db-worker
+
+# Cloudflare Wrangler generated state, node_modules, and secrets
+db-worker/.wrangler/
+db-worker/node_modules/
+db-worker/.dev.vars*
+*.sqlite

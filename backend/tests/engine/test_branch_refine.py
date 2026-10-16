@@ -521,4 +521,3 @@ def test_engine_package_exports_refinement_functions():
     assert callable(engine.build_refinement_prompt)
     assert "generate_refinement_patch" in engine.__all__
     assert "build_refinement_prompt" in engine.__all__
-

@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import uuid
@@ -9,7 +10,7 @@ from typing import Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 import httpx
 from pydantic import BaseModel, ConfigDict
 
@@ -60,6 +61,24 @@ def sync_task_fixtures(repo: D1StorageRepository) -> None:
             logger.warning("Failed to synchronize task fixture %s: %s", json_file.name, e)
 
 
+def recover_interrupted_runs(repo: D1StorageRepository) -> None:
+    """Transition any runs left in 'running' state on restart to 'failed'."""
+    try:
+        interrupted = repo.list_runs(limit=100, state="running")
+        for r in interrupted:
+            try:
+                repo.finish_run(
+                    r.run_id,
+                    state="failed",
+                    reason="Backend process restarted while run was in progress",
+                )
+                logger.info("Marked interrupted run %s as failed", r.run_id)
+            except Exception as e:
+                logger.warning("Failed to mark interrupted run %s: %s", r.run_id, e)
+    except Exception as e:
+        logger.warning("Could not query interrupted runs during startup recovery: %s", e)
+
+
 def get_repository(request: Request) -> D1StorageRepository:
     repo = getattr(request.app.state, "repository", None)
     if repo is not None:
@@ -77,6 +96,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sync_task_fixtures(repo)
     except Exception as e:
         logger.warning("Error during startup task sync: %s", e)
+    try:
+        recover_interrupted_runs(repo)
+    except Exception as e:
+        logger.warning("Error during startup run recovery: %s", e)
 
     worker = getattr(app.state, "worker", None)
     if worker is None and getattr(settings, "repomedic_worker_enabled", True):
@@ -214,10 +237,22 @@ def create_app(
                 detail=f"Task '{payload.task_id}' not found",
             )
 
-        run_id = f"run_{uuid.uuid4().hex}"
         mode = getattr(settings, "repomedic_mode", "offline")
         max_run_usd = getattr(settings, "repomedic_max_run_usd", 2.0)
+        total_budget = getattr(settings, "repomedic_total_budget_usd", 25.0)
 
+        if mode == "disabled":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Mode disabled",
+            )
+        if max_run_usd > total_budget:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Budget unavailable",
+            )
+
+        run_id = f"run_{uuid.uuid4().hex}"
         run = repo.create_run(
             run_id=run_id,
             task_id=payload.task_id,
@@ -233,6 +268,140 @@ def create_app(
         repo: D1StorageRepository = Depends(get_repository),
     ) -> RunSummary:
         return repo.get_run(id)
+
+    @app.get("/api/runs/{id}/events")
+    async def stream_run_events(
+        id: str,
+        request: Request,
+        after: int = Query(default=0, ge=0),
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> StreamingResponse:
+        run = repo.get_run(id)
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run '{id}' not found",
+            )
+
+        last_event_id_header = request.headers.get("last-event-id")
+        start_cursor = after
+        if last_event_id_header and last_event_id_header.isdigit():
+            start_cursor = max(start_cursor, int(last_event_id_header))
+
+        async def event_generator() -> AsyncIterator[str]:
+            cursor = start_cursor
+            loop = asyncio.get_running_loop()
+            last_heartbeat = loop.time()
+
+            while True:
+                if await request.is_disconnected():
+                    break
+
+                events = await asyncio.to_thread(repo.list_events, id, after=cursor)
+                for ev in events:
+                    yield f"id: {ev.seq}\nevent: {ev.type}\ndata: {ev.model_dump_json()}\n\n"
+                    if ev.seq > cursor:
+                        cursor = ev.seq
+
+                current_run = await asyncio.to_thread(repo.get_run, id)
+                if current_run and current_run.state in ("succeeded", "failed", "cancelled"):
+                    trailing = await asyncio.to_thread(repo.list_events, id, after=cursor)
+                    for ev in trailing:
+                        yield f"id: {ev.seq}\nevent: {ev.type}\ndata: {ev.model_dump_json()}\n\n"
+                        if ev.seq > cursor:
+                            cursor = ev.seq
+                    break
+
+                now = loop.time()
+                if now - last_heartbeat >= 15.0:
+                    yield ": heartbeat\n\n"
+                    last_heartbeat = now
+
+                await asyncio.sleep(0.5)
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    @app.post("/api/runs/{id}/cancel", response_model=RunSummary)
+    def cancel_run(
+        id: str,
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> RunSummary:
+        run = repo.get_run(id)
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run '{id}' not found",
+            )
+
+        # Idempotent: terminal runs return unchanged summary
+        if run.state in ("succeeded", "failed", "cancelled"):
+            return run
+
+        try:
+            repo.finish_run(id, state="cancelled", reason="user cancelled")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                pass
+            else:
+                raise
+
+        updated = repo.get_run(id)
+        return updated or run
+
+    @app.get("/api/runs/{id}/artifacts/{artifact_id}")
+    def get_artifact(
+        id: str,
+        artifact_id: str,
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> Response:
+        run = repo.get_run(id)
+        if run is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Run '{id}' not found",
+            )
+
+        matching = next((a for a in run.artifacts if a.artifact_id == artifact_id), None)
+        if matching is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Artifact '{artifact_id}' not found for run '{id}'",
+            )
+
+        try:
+            content = repo.get_artifact_content(id, artifact_id)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Artifact '{artifact_id}' not found",
+                )
+            raise
+
+        if matching.kind == "patch":
+            media_type = "text/x-diff; charset=utf-8"
+        elif matching.kind == "evidence":
+            media_type = "application/json"
+        elif matching.kind == "log":
+            media_type = "text/plain; charset=utf-8"
+        else:
+            media_type = "application/octet-stream"
+
+        return Response(
+            content=content,
+            media_type=media_type,
+            headers={
+                "Content-Disposition": f'attachment; filename="{matching.filename}"',
+            },
+        )
 
     @app.get("/api/runs", response_model=RunsResponse)
     def list_runs(

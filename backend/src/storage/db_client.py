@@ -15,7 +15,7 @@ class RepoMedicDB:
         transport: Optional[httpx.BaseTransport] = None,
     ):
         self.base_url = (base_url or settings.repomedic_db_worker_url).rstrip("/")
-        self.api_key = api_key or settings.db_bridge_token
+        self.api_key = api_key or settings.db_bridge_token or settings.repomedic_db_worker_token
         self.timeout = timeout
         self.transport = transport
 

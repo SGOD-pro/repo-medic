@@ -59,7 +59,9 @@ export function RunActiveView({
 
   useEffect(() => {
     if (activeRun?.state === "cancelled") {
-      setIsCancelled(true);
+      queueMicrotask(() => {
+        setIsCancelled(true);
+      });
     }
   }, [activeRun?.state]);
 

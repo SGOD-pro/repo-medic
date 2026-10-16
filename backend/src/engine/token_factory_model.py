@@ -17,7 +17,7 @@ class TokenFactoryModelAdapter(ModelAdapter):
         model: Optional[str] = None,
         timeout_seconds: float = 60.0,
     ):
-        self.api_key = (api_key or settings.nebius_api_key).strip()
+        self.api_key = (api_key or settings.token_factory_api_key or settings.nebius_api_key).strip()
         raw_base_url = (base_url or settings.token_factory_base_url).strip()
         if not raw_base_url.endswith("/"):
             raw_base_url += "/"

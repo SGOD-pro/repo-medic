@@ -53,17 +53,21 @@ export default function Home() {
       }
 
       if (existing) {
-        setSelectedTaskId(existing.task_id);
-        setStrategy(existing.search_mode);
-        if (
-          existing.state === "succeeded" ||
-          existing.state === "failed" ||
-          existing.state === "cancelled"
-        ) {
-          setActiveTab("verification");
-        } else {
-          setActiveTab("run_active");
-        }
+        const item = existing;
+        queueMicrotask(() => {
+          if (!isMounted) return;
+          setSelectedTaskId(item.task_id);
+          setStrategy(item.search_mode);
+          if (
+            item.state === "succeeded" ||
+            item.state === "failed" ||
+            item.state === "cancelled"
+          ) {
+            setActiveTab("verification");
+          } else {
+            setActiveTab("run_active");
+          }
+        });
       } else {
         // Fallback: hydrate from API client
         apiClient

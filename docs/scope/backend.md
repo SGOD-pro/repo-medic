@@ -39,12 +39,17 @@ One worker claiming queued runs and passing them to FakeEngine.
 - [x] Verify it: `/check verify fakeengine queue worker`
 - [x] Review it: `/check review` — findings in [docs/reviews/2026-10-12-backend.md](../reviews/2026-10-12-backend.md); holistic branch review in [docs/reviews/2026-10-14-backend.md](../reviews/2026-10-14-backend.md)
 
-### 4. SSE, cancel, and artifacts · needs a decision
-Server-Sent Events for run progress, cancellation endpoint, and artifact downloads.
+### 4. SSE, cancel, and artifacts · done
+Server Sent Events for run progress, cancellation endpoint, and artifact downloads.
 **Done when:** Clients receive ordered events, can cancel, and download patches.
-- [ ] Design it (spec): `/architect sse cancel artifacts`
+- [x] Stream run events via GET /api/runs/{id}/events with cursor replay and heartbeats
+- [x] Cancel queued or active runs via POST /api/runs/{id}/cancel
+- [x] Download stored patch and log artifacts via GET /api/runs/{id}/artifacts/{artifact_id}
+code in backend/src/main.py
 
-### 5. Budget enforcement and restart · needs a decision
+### 5. Budget enforcement and restart · done
 Atomic budget checks and worker restart recovery.
 **Done when:** Overruns are rejected, and restarts fail interrupted runs gracefully.
-- [ ] Design it (spec): `/architect budget enforcement and restart`
+- [x] Enforce total budget cap and rejection of invalid runs
+- [x] Startup lifespan recovery of interrupted runs left in running state
+code in backend/src/main.py

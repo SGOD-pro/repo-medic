@@ -239,3 +239,166 @@ def test_cors_headers_present(test_app_and_repo):
     )
     assert response.status_code == 200
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+
+def test_cancel_run(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-cancel",
+        "title": "Cancel test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+    run = repo.create_run("run-cancel-1", "task-cancel", "offline", "sequential", state="running")
+    client = TestClient(app)
+
+    # 1. Cancel running run
+    resp = client.post(f"/api/runs/{run.run_id}/cancel")
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "cancelled"
+
+    # 2. Idempotent cancel on already terminal run
+    resp2 = client.post(f"/api/runs/{run.run_id}/cancel")
+    assert resp2.status_code == 200
+    assert resp2.json()["state"] == "cancelled"
+
+    # 3. 404 on missing run
+    resp_missing = client.post("/api/runs/run-missing/cancel")
+    assert resp_missing.status_code == 404
+    assert resp_missing.json()["error"]["code"] == "not_found"
+
+
+def test_get_artifact_content_and_media_types(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-art",
+        "title": "Artifact test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+    repo.create_run("run-art-1", "task-art", "offline", "sequential")
+    art_patch = repo.store_artifact("run-art-1", kind="patch", filename="fix.patch", content=b"--- diff ---")
+    art_ev = repo.store_artifact("run-art-1", kind="evidence", filename="evidence.json", content=b'{"passed": true}')
+
+    client = TestClient(app)
+
+    # 1. Fetch patch artifact
+    resp_patch = client.get(f"/api/runs/run-art-1/artifacts/{art_patch.artifact_id}")
+    assert resp_patch.status_code == 200
+    assert resp_patch.content == b"--- diff ---"
+    assert "text/x-diff" in resp_patch.headers.get("content-type", "")
+    assert 'attachment; filename="fix.patch"' in resp_patch.headers.get("content-disposition", "")
+
+    # 2. Fetch evidence artifact
+    resp_ev = client.get(f"/api/runs/run-art-1/artifacts/{art_ev.artifact_id}")
+    assert resp_ev.status_code == 200
+    assert resp_ev.content == b'{"passed": true}'
+    assert "application/json" in resp_ev.headers.get("content-type", "")
+
+    # 3. 404 on missing artifact
+    resp_missing = client.get("/api/runs/run-art-1/artifacts/nonexistent")
+    assert resp_missing.status_code == 404
+
+    # 4. 404 on missing run
+    resp_missing_run = client.get("/api/runs/run-nonexistent/artifacts/patch")
+    assert resp_missing_run.status_code == 404
+
+
+def test_stream_run_events(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-stream",
+        "title": "Stream test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+    repo.create_run("run-stream-1", "task-stream", "offline", "sequential", state="running")
+    repo.append_event(
+        "run-stream-1",
+        event_type="stage.completed",
+        payload={"stage": "baseline", "passed": True, "summary": "ok"},
+    )
+    repo.finish_run("run-stream-1", state="succeeded", reason="Done")
+
+    client = TestClient(app)
+
+    # Stream events
+    resp = client.get("/api/runs/run-stream-1/events")
+    assert resp.status_code == 200
+    assert "text/event-stream" in resp.headers.get("content-type", "")
+    body = resp.text
+    assert "event: stage.completed" in body
+    assert "event: run.finished" in body
+    assert "id: 1" in body
+
+    # Missing run returns 404
+    resp_missing = client.get("/api/runs/run-nonexistent/events")
+    assert resp_missing.status_code == 404
+
+
+def test_create_run_budget_and_mode_guards(test_app_and_repo, monkeypatch):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "example-task-1",
+        "title": "Upgrade pytest-mock",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest-mock",
+        "from_version": "3.10.0",
+        "to_version": "3.11.1",
+    })
+    client = TestClient(app)
+
+    from src.config import settings
+    monkeypatch.setattr(settings, "repomedic_mode", "disabled")
+    resp_disabled = client.post("/api/runs", json={"task_id": "example-task-1", "search_mode": "sequential"})
+    assert resp_disabled.status_code == 409
+    assert resp_disabled.json()["error"]["message"] == "Mode disabled"
+
+    monkeypatch.setattr(settings, "repomedic_mode", "offline")
+    monkeypatch.setattr(settings, "repomedic_max_run_usd", 50.0)
+    monkeypatch.setattr(settings, "repomedic_total_budget_usd", 25.0)
+    resp_budget = client.post("/api/runs", json={"task_id": "example-task-1", "search_mode": "sequential"})
+    assert resp_budget.status_code == 409
+    assert resp_budget.json()["error"]["message"] == "Budget unavailable"
+
+
+def test_startup_recovery_interrupted_runs(monkeypatch):
+    from src.config import settings
+    monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+
+    transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
+    mock_db = RepoMedicDB(
+        base_url="http://test-bridge",
+        api_key="test-bridge-token",
+        transport=transport,
+    )
+    repo = D1StorageRepository(mock_db)
+    repo.upsert_task({
+        "task_id": "task-interrupted",
+        "title": "Interrupted test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+    repo.create_run("run-interrupted-1", "task-interrupted", "offline", "sequential", state="running")
+    repo.create_run("run-queued-1", "task-interrupted", "offline", "sequential", state="queued")
+
+    app = create_app(repository=repo)
+    with TestClient(app):
+        r1 = repo.get_run("run-interrupted-1")
+        assert r1.state == "failed"
+        assert "restarted" in (r1.reason or "")
+        r2 = repo.get_run("run-queued-1")
+        assert r2.state == "queued"

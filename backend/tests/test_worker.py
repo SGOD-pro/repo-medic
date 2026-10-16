@@ -540,3 +540,38 @@ async def test_process_one_terminal_state_conflict_handled_gracefully(
     # State remains cancelled (terminal state was not overwritten, and no unhandled 409)
     run = test_repo.get_run(run_id)
     assert run.state == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_queue_worker_wires_engine_repair(test_repo: D1StorageRepository) -> None:
+    test_repo.upsert_task({
+        "task_id": "example-task-1",
+        "title": "Upgrade pytest-mock",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest-mock",
+        "from_version": "3.10.0",
+        "to_version": "3.11.1",
+    })
+
+    run_id = "run-engine-wired"
+    test_repo.create_run(
+        run_id=run_id,
+        task_id="example-task-1",
+        mode="offline",
+        search_mode="sequential",
+        state="queued",
+    )
+
+    calls = []
+
+    async def mock_engine_repair(req, recipe, host):
+        calls.append(req.run_id)
+        return RepairResult(state="succeeded", reason="Engine repair verified")
+
+    worker = QueueWorker(repo=test_repo, use_real_engine=True, repair_fn=mock_engine_repair)
+    processed = await worker.process_one()
+    assert processed is True
+    assert calls == ["run-engine-wired"]
+    run = test_repo.get_run(run_id)
+    assert run.state == "succeeded"

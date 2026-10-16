@@ -3,12 +3,16 @@ import json
 import logging
 from pathlib import Path
 
+from collections.abc import Awaitable, Callable
+from typing import Any
+
 import httpx
 from pydantic import ValidationError
 
 from src.config import settings
-from src.contracts import RepairRequest, TaskRecipe
+from src.contracts import HostPorts, RepairRequest, RepairResult, TaskRecipe
 from src.engine import fake_engine
+from src.engine.repair import repair as engine_repair
 from src.fixtures import find_task_fixture_dir
 from src.storage.repository import D1HostPorts, D1StorageRepository
 
@@ -83,9 +87,16 @@ class QueueWorker:
         self,
         repo: D1StorageRepository | None = None,
         poll_interval_seconds: float = 1.0,
+        repair_fn: Callable[[RepairRequest, TaskRecipe, HostPorts], Awaitable[RepairResult]] | None = None,
+        use_real_engine: bool | None = None,
     ) -> None:
         self.repo = repo or D1StorageRepository()
         self.poll_interval_seconds = poll_interval_seconds
+        self.repair_fn = repair_fn
+        if use_real_engine is not None:
+            self.use_real_engine = use_real_engine
+        else:
+            self.use_real_engine = getattr(settings, "repomedic_use_real_engine", False)
         self._running: bool = False
         self._loop_task: asyncio.Task[None] | None = None
 
@@ -148,8 +159,15 @@ class QueueWorker:
         recipe = load_task_recipe(run.task_id, self.repo)
         host = D1HostPorts(run_id=run_id, repo=self.repo)
 
+        if self.repair_fn is not None:
+            repair_callable = self.repair_fn
+        elif self.use_real_engine:
+            repair_callable = engine_repair
+        else:
+            repair_callable = fake_engine.repair
+
         try:
-            result = await fake_engine.repair(request, recipe, host)
+            result = await repair_callable(request, recipe, host)
         except Exception as e:
             logger.exception("Run %s failed with exception: %s", run_id, e)
             error_reason = f"Unhandled error: {repr(e)}"
@@ -200,13 +218,20 @@ class QueueWorker:
 async def run_standalone(
     repo: D1StorageRepository | None = None,
     max_runs: int | None = None,
+    repair_fn: Callable[[RepairRequest, TaskRecipe, HostPorts], Awaitable[RepairResult]] | None = None,
+    use_real_engine: bool | None = None,
 ) -> None:
     """Run worker in standalone mode until stopped or max_runs is reached.
 
     Pass max_runs=0 to exit immediately without processing any runs.
     """
     poll_interval = settings.repomedic_worker_poll_interval_seconds
-    worker = QueueWorker(repo=repo, poll_interval_seconds=poll_interval)
+    worker = QueueWorker(
+        repo=repo,
+        poll_interval_seconds=poll_interval,
+        repair_fn=repair_fn,
+        use_real_engine=use_real_engine,
+    )
     runs_processed = 0
 
     try:
