@@ -12,6 +12,6 @@
 | B | [Backend](backend.md) | done |
 | C | [Engine](engine.md) | done |
 | D | [Evaluation](evaluation.md) | planned |
-| I | [Integration](integration.md) | in progress (K1 done, K2 in progress) |
+| I | [Integration](integration.md) | in progress (K1 and K2 done, K3 planned) |
 
 See individual epic files for detailed task status and progression.

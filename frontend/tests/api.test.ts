@@ -4,9 +4,7 @@ import {
   MockTransport,
   HttpTransport,
   createApiClient,
-  CURATED_TASKS,
   MOCK_PATCH,
-  MOCK_EVIDENCE,
   MOCK_LOG,
 } from "../src/lib/api";
 

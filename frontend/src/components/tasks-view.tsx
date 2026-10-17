@@ -1,7 +1,6 @@
 "use client";
-
-import React, { useState } from "react";
-import { Card, CardContent } from "@/components/ui/card";
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +26,8 @@ import {
   Circle,
   CheckCircle,
 } from "lucide-react";
-import { SearchMode } from "@/lib/contracts";
+import { SearchMode, TaskSummary } from "@/lib/contracts";
+import { RepoMedicApiClient, createApiClient } from "@/lib/api";
 
 interface TaskItem {
   id: string;
@@ -42,47 +42,37 @@ interface TaskItem {
   allowlist: string;
 }
 
-const TASKS_DATA: TaskItem[] = [
-  {
-    id: "TASK-084",
-    repo: "tiangolo/fastapi-service",
-    title: "pydantic v1.10.8 → v2.0.2 migration in fastapi-service",
-    commitSha: "8a4f21d",
-    dependency: "pydantic",
-    targetVersion: "2.0.2",
-    testsCount: 42,
-    expectedFailure:
-      "ValidationError: 'regex' replaced by 'pattern' in Field(), Config class replaced by ConfigDict",
-    baselineTime: "1.48s (Python 3.10.12)",
-    allowlist: "src/app/schemas.py, src/app/config.py",
-  },
-  {
-    id: "TASK-091",
-    repo: "pallets/backend-core",
-    title: "sqlalchemy v1.4.48 → v2.0.19 in backend-core",
-    commitSha: "c39b104",
-    dependency: "sqlalchemy",
-    targetVersion: "2.0.19",
-    testsCount: 128,
-    expectedFailure:
-      "RemovedIn20Warning escalated to error: engine.execute() removed in 2.0",
-    baselineTime: "3.12s (Python 3.11.4)",
-    allowlist: "src/backend/database.py, src/backend/models.py",
-  },
-  {
-    id: "TASK-097",
-    repo: "encode/scraper-bot",
-    title: "httpx v0.23.3 → v0.24.1 in scraper-bot",
-    commitSha: "f72a110",
-    dependency: "httpx",
-    targetVersion: "0.24.1",
-    testsCount: 34,
-    expectedFailure:
-      "TypeError: Client.__init__() got unexpected keyword argument 'proxies'",
-    baselineTime: "0.95s (Python 3.10.8)",
-    allowlist: "scraper/client.py, scraper/session.py",
-  },
-];
+function mapSummaryToTaskItem(s: TaskSummary): TaskItem {
+  const repoName = s.repository_url
+    ? s.repository_url.replace(/^https?:\/\/github\.com\//, "")
+    : "python/repo";
+  const extra = s as unknown as Record<string, unknown>;
+  const expectedFailure =
+    typeof extra.expected_failure === "string"
+      ? extra.expected_failure
+      : `Upgrade regression on ${s.dependency}==${s.to_version}`;
+  const allowlist = Array.isArray(extra.allowed_source_paths)
+    ? (extra.allowed_source_paths as string[]).join(", ")
+    : "src/";
+  const testsCount = typeof extra.tests_count === "number" ? extra.tests_count : 42;
+  const baselineTime =
+    typeof extra.baseline_time === "string"
+      ? extra.baseline_time
+      : "1.48s (Python 3.11)";
+
+  return {
+    id: s.task_id,
+    repo: repoName,
+    title: s.title,
+    commitSha: s.commit_sha,
+    dependency: s.dependency,
+    targetVersion: s.to_version,
+    testsCount,
+    expectedFailure,
+    baselineTime,
+    allowlist,
+  };
+}
 
 interface TasksViewProps {
   onStartRun: (taskId: string, strategy: SearchMode) => void;
@@ -90,6 +80,7 @@ interface TasksViewProps {
   setSelectedTaskId: (taskId: string) => void;
   strategy: SearchMode;
   setStrategy: (strategy: SearchMode) => void;
+  apiClient?: RepoMedicApiClient;
 }
 
 export function TasksView({
@@ -98,14 +89,69 @@ export function TasksView({
   setSelectedTaskId,
   strategy,
   setStrategy,
+  apiClient,
 }: TasksViewProps) {
   const [executionMode, setExecutionMode] = useState<string>("sandbox_live");
+  const [tasks, setTasks] = useState<TaskItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const selectedTaskIdRef = useRef(selectedTaskId);
+  useEffect(() => {
+    selectedTaskIdRef.current = selectedTaskId;
+  }, [selectedTaskId]);
+
+  const fetchTasks = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const client = apiClient || createApiClient();
+      const rawTasks = await client.getTasks();
+      const items = rawTasks.map(mapSummaryToTaskItem);
+      setTasks(items);
+      if (items.length > 0) {
+        const currentSelected = selectedTaskIdRef.current;
+        if (!currentSelected || !items.some((t) => t.id === currentSelected)) {
+          setSelectedTaskId(items[0].id);
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load tasks";
+      setLoadError(msg);
+    } finally {
+      setLoading(false);
+    }
+  }, [apiClient, setSelectedTaskId]);
+
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (active) {
+        void fetchTasks();
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchTasks]);
 
   const selectedTask =
-    TASKS_DATA.find((t) => t.id === selectedTaskId) || TASKS_DATA[0];
+    tasks.find((t) => t.id === selectedTaskId) ||
+    tasks[0] || {
+      id: selectedTaskId || "TASK-084",
+      repo: "fastapi-service",
+      title: "Loading task...",
+      commitSha: "0000000",
+      dependency: "pydantic",
+      targetVersion: "2.0.2",
+      testsCount: 42,
+      expectedFailure: "Loading failure details...",
+      baselineTime: "1.48s",
+      allowlist: "src/",
+    };
 
   return (
-    <div className="mx-auto w-full max-w-[1280px] px-6 py-8">
+    <div data-testid="tasks-view" className="mx-auto w-full max-w-[1280px] px-6 py-8">
       {/* Top Header & Stats */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-6 pb-6">
         <div>
@@ -125,10 +171,10 @@ export function TasksView({
         <div className="flex items-center gap-3">
           <div className="rounded-xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] px-4 py-2 text-left">
             <div className="text-[11px] font-mono text-[#A9B8AD] uppercase tracking-wider">
-              Total Fixtures
+              Total Tasks
             </div>
             <div className="text-sm font-semibold text-[#F7F7F2]">
-              18 Validated
+              {tasks.length} Available
             </div>
           </div>
           <div className="rounded-xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] px-4 py-2 text-left">
@@ -137,7 +183,9 @@ export function TasksView({
             </div>
             <div className="flex items-center gap-1.5 text-sm font-semibold text-[#F7F7F2]">
               <span className="size-2 rounded-full bg-[#5FCB8A]" />
-              Nebius D1-a
+              {(process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock"
+                ? "Mock Runtime"
+                : "Local D1 / Worker Bridge"}
             </div>
           </div>
         </div>
@@ -216,7 +264,67 @@ export function TasksView({
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* Left Column: Task Cards (7 cols) */}
         <div className="lg:col-span-7 flex flex-col gap-4">
-          {TASKS_DATA.map((task) => {
+          {loading && (
+            <div
+              data-testid="tasks-loading"
+              className="rounded-2xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] p-10 text-center"
+            >
+              <RotateCw className="size-6 animate-spin mx-auto mb-2 text-[#5FCB8A]" />
+              <p className="text-sm font-medium text-[#F7F7F2]">
+                Loading available repair tasks...
+              </p>
+              <p className="text-xs text-[#A9B8AD] mt-1 font-mono">
+                Fetching tasks from backend API
+              </p>
+            </div>
+          )}
+
+          {loadError && (
+            <div
+              data-testid="tasks-error"
+              className="rounded-2xl border border-[#E5736A]/30 bg-[#241414] p-6 text-left"
+            >
+              <div className="flex items-center gap-2.5 mb-2">
+                <AlertCircle className="size-5 text-[#E5736A]" />
+                <h4 className="text-sm font-semibold text-[#F7F7F2]">
+                  Failed to load tasks
+                </h4>
+              </div>
+              <p className="text-xs font-mono text-[#A9B8AD] mb-4">
+                {loadError}
+              </p>
+              <Button
+                onClick={fetchTasks}
+                className="h-8 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs rounded-md px-3 cursor-pointer"
+              >
+                Retry
+              </Button>
+            </div>
+          )}
+
+          {!loading && !loadError && tasks.length === 0 && (
+            <div
+              data-testid="tasks-empty"
+              className="rounded-2xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] p-10 text-center"
+            >
+              <Layers className="size-6 mx-auto mb-2 text-[#A9B8AD]" />
+              <p className="text-sm font-medium text-[#F7F7F2]">
+                No repair tasks found
+              </p>
+              <p className="text-xs text-[#A9B8AD] mt-1">
+                No tasks registered in the system database.
+              </p>
+              <Button
+                onClick={fetchTasks}
+                variant="outline"
+                className="mt-4 border-[rgba(183,201,173,0.24)] text-xs text-[#F7F7F2] h-8 cursor-pointer"
+              >
+                Reload
+              </Button>
+            </div>
+          )}
+
+          {!loading && !loadError && tasks.map((task) => {
             const isSelected = task.id === selectedTaskId;
             return (
               <Card

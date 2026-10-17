@@ -143,30 +143,30 @@ class QueueWorker:
             logger.warning("Failed to claim run %s: %s", run_id, e)
             return False
 
-        max_run_usd = settings.repomedic_max_run_usd
-        run_budget = getattr(run, "max_run_micro_usd", None)
-        # Per-run budget overrides the global default when set on the run record.
-        if run_budget is not None and run_budget > 0:
-            max_run_usd = run_budget / 1_000_000.0
-
-        request = RepairRequest(
-            run_id=run_id,
-            task_id=run.task_id,
-            mode=run.mode,
-            search_mode=run.search_mode,
-            max_run_usd=max_run_usd,
-        )
-        recipe = load_task_recipe(run.task_id, self.repo)
-        host = D1HostPorts(run_id=run_id, repo=self.repo)
-
-        if self.repair_fn is not None:
-            repair_callable = self.repair_fn
-        elif self.use_real_engine:
-            repair_callable = engine_repair
-        else:
-            repair_callable = fake_engine.repair
-
         try:
+            max_run_usd = settings.repomedic_max_run_usd
+            run_budget = getattr(run, "max_run_micro_usd", None)
+            # Per-run budget overrides the global default when set on the run record.
+            if run_budget is not None and run_budget > 0:
+                max_run_usd = run_budget / 1_000_000.0
+
+            request = RepairRequest(
+                run_id=run_id,
+                task_id=run.task_id,
+                mode=run.mode,
+                search_mode=run.search_mode,
+                max_run_usd=max_run_usd,
+            )
+            recipe = load_task_recipe(run.task_id, self.repo)
+            host = D1HostPorts(run_id=run_id, repo=self.repo)
+
+            if self.repair_fn is not None:
+                repair_callable = self.repair_fn
+            elif self.use_real_engine:
+                repair_callable = engine_repair
+            else:
+                repair_callable = fake_engine.repair
+
             result = await repair_callable(request, recipe, host)
         except Exception as e:
             logger.exception("Run %s failed with exception: %s", run_id, e)
@@ -209,9 +209,9 @@ class QueueWorker:
                     await asyncio.sleep(self.poll_interval_seconds)
             except asyncio.CancelledError:
                 break
-            except (httpx.RequestError, httpx.HTTPStatusError) as e:
-                # Expected transient network or bridge errors: log and retry after backoff.
-                logger.warning("Transient error in QueueWorker polling cycle: %s", e)
+            except Exception as e:
+                # Log any unexpected error and retry after interval to preserve worker liveness
+                logger.warning("Error in QueueWorker polling cycle: %s", e)
                 await asyncio.sleep(self.poll_interval_seconds)
 
 

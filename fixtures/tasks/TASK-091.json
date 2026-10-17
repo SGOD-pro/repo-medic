@@ -1,0 +1,21 @@
+{
+  "task_id": "TASK-091",
+  "title": "sqlalchemy v1.4.48 → v2.0.19 in backend-core",
+  "repository_url": "https://github.com/pallets/backend-core",
+  "commit_sha": "c39b104",
+  "dependency": "sqlalchemy",
+  "from_version": "1.4.48",
+  "to_version": "2.0.19",
+  "test_command": [
+    "pytest",
+    "tests/"
+  ],
+  "allowed_source_paths": [
+    "src/backend/database.py",
+    "src/backend/models.py"
+  ],
+  "expected_failure": "RemovedIn20Warning escalated to error: engine.execute() removed in 2.0",
+  "timeout_seconds": 600,
+  "max_candidates": 3,
+  "max_refinements": 1
+}

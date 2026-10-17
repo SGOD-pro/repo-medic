@@ -5,11 +5,6 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
   CheckCircle2,
   XCircle,
   AlertTriangle,
@@ -32,7 +27,7 @@ import {
   EventEnvelope,
   UsageSummary,
 } from "@/lib/contracts";
-import { RepoMedicApiClient, createEventStreamFetcher } from "@/lib/api";
+import { RepoMedicApiClient, createEventStreamFetcher, CURATED_TASKS } from "@/lib/api";
 import { StreamManager } from "@/lib/stream-manager";
 
 interface RunActiveViewProps {
@@ -43,6 +38,15 @@ interface RunActiveViewProps {
   onReturnToTasks?: () => void;
   apiClient?: RepoMedicApiClient;
   onUpdateRun?: (run: RunSummary) => void;
+}
+
+type StageKey = "baseline" | "upgrade" | "repair" | "verification";
+
+interface LiveCandidate {
+  id: string;
+  passed: boolean;
+  summary: string;
+  timestamp: string;
 }
 
 export function RunActiveView({
@@ -60,6 +64,20 @@ export function RunActiveView({
   const [copiedLog, setCopiedLog] = useState(false);
   const [showStackB, setShowStackB] = useState(false);
 
+  const isHttpMode =
+    (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "http" ||
+    Boolean(apiClient && apiClient.constructor.name === "HttpTransport");
+
+  // Dynamic task details
+  const currentTaskId = activeRun?.task_id || "TASK-084";
+  const matchedTask = CURATED_TASKS.find((t) => t.task_id === currentTaskId);
+  const displayRepo = matchedTask
+    ? matchedTask.repository_url.replace(/^https?:\/\/github\.com\//, "")
+    : currentTaskId;
+  const displayDependency = matchedTask
+    ? `(${matchedTask.dependency} ${matchedTask.from_version} → ${matchedTask.to_version})`
+    : "";
+
   // Connection, Cancellation & Error States (AC-1..AC-8)
   const [isCancelling, setIsCancelling] = useState(false);
   const [isCancelled, setIsCancelled] = useState(() => activeRun?.state === "cancelled");
@@ -72,6 +90,46 @@ export function RunActiveView({
   const managerRef = React.useRef<StreamManager | null>(null);
   const seenSeqsRef = React.useRef<Set<number>>(new Set());
   const [liveUsage, setLiveUsage] = useState<UsageSummary | null>(() => activeRun?.usage || null);
+
+  // Dynamic stage and candidate states driven by documented events
+  const [stageResults, setStageResults] = useState<
+    Record<StageKey, { passed: boolean; summary: string } | null>
+  >({
+    baseline: null,
+    upgrade: null,
+    repair: null,
+    verification: null,
+  });
+  const [liveCandidates, setLiveCandidates] = useState<LiveCandidate[]>([]);
+  const [streamLogs, setStreamLogs] = useState<string[]>([]);
+
+  const httpStages: Array<{ key: StageKey; title: string; defaultDetail: string }> = [
+    {
+      key: "baseline",
+      title: "1. Baseline Check",
+      defaultDetail: "Verify pinned commit passes tests before upgrade",
+    },
+    {
+      key: "upgrade",
+      title: "2. Dependency Bump",
+      defaultDetail: "Install target version and capture initial breakage",
+    },
+    {
+      key: "repair",
+      title: "3. Candidate Synthesis",
+      defaultDetail: "Synthesize and rank migration candidates",
+    },
+    {
+      key: "verification",
+      title: "4. Post Upgrade Verification",
+      defaultDetail: "Verify candidate in clean container and inspect evidence",
+    },
+  ];
+
+  const completedHttpCount = httpStages.filter((s) => {
+    const res = stageResults[s.key];
+    return res?.passed || (activeRun?.state === "succeeded" && res !== null ? res?.passed : activeRun?.state === "succeeded");
+  }).length;
 
   useEffect(() => {
     if (!activeRun?.run_id || !apiClient) return;
@@ -90,21 +148,83 @@ export function RunActiveView({
         if (seenSeqsRef.current.has(event.seq)) return;
         seenSeqsRef.current.add(event.seq);
 
+        const elapsedNow = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0;
+        const m = Math.floor(elapsedNow / 60);
+        const s = elapsedNow % 60;
+        const timeTag = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+
         if (event.type === "usage.updated") {
           const u = event.payload as unknown as UsageSummary;
           setLiveUsage(u);
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} usage: ${u.model_calls} calls, tokens=${u.input_tokens}+${u.output_tokens}, spend=$${Number(u.estimated_usd).toFixed(4)}`,
+          ]);
+        } else if (event.type === "stage.completed") {
+          const p = event.payload as { stage: StageKey; passed: boolean; summary: string };
+          if (p.stage) {
+            setStageResults((prev) => ({
+              ...prev,
+              [p.stage]: { passed: p.passed, summary: p.summary },
+            }));
+          }
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} stage.${p.stage}: ${p.passed ? "PASSED" : "FAILED"} - ${p.summary}`,
+          ]);
+        } else if (event.type === "candidate.completed") {
+          const c = event.payload as { candidate_id: string; passed: boolean; summary: string };
+          setLiveCandidates((prev) => {
+            const idx = prev.findIndex((item) => item.id === c.candidate_id);
+            const entry: LiveCandidate = {
+              id: c.candidate_id,
+              passed: c.passed,
+              summary: c.summary,
+              timestamp: event.ts || new Date().toISOString(),
+            };
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = entry;
+              return updated;
+            }
+            return [...prev, entry];
+          });
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} candidate.${c.candidate_id}: ${c.passed ? "VERIFIED" : "FAILED"} - ${c.summary}`,
+          ]);
+        } else if (event.type === "run.started") {
+          const startedPayload = event.payload as Record<string, unknown> | undefined;
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} run.started: mode=${startedPayload?.mode} search_mode=${startedPayload?.search_mode}`,
+          ]);
         } else if (event.type === "run.finished") {
+          const f = event.payload as { state: string; reason: string | null };
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} run.finished: state=${f.state} (${f.reason || "clean completion"})`,
+          ]);
           apiClient.getRun(runId).then((recovered) => {
             onUpdateRun?.(recovered);
           }).catch(() => {});
         } else if (event.type === "run.cancelled") {
           setIsCancelled(true);
+          const cancelledPayload = event.payload as Record<string, unknown> | undefined;
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} run.cancelled: ${(cancelledPayload?.reason as string) || "User initiated cancellation"}`,
+          ]);
           apiClient.getRun(runId).then((recovered) => {
             onUpdateRun?.(recovered);
           }).catch(() => {});
         } else if (event.type === "run.error") {
           const err = event.payload as unknown as ErrorDetail;
           setErrorDetail(err);
+          setStreamLogs((prev) => [
+            ...prev,
+            `${timeTag} run.error: ${err.code} - ${err.message}`,
+          ]);
           apiClient.getRun(runId).then((recovered) => {
             onUpdateRun?.(recovered);
           }).catch(() => {});
@@ -113,6 +233,17 @@ export function RunActiveView({
       onStatusChange: (status: ConnectionStatus, attempt: number) => {
         setConnectionStatus(status);
         setReconnectAttempt(attempt);
+        if (status === "connected") {
+          apiClient.getRun(runId).then((recovered) => {
+            onUpdateRun?.(recovered);
+            if (recovered.state === "succeeded" || recovered.state === "failed" || recovered.state === "cancelled") {
+              if (recovered.state === "cancelled") {
+                setIsCancelled(true);
+              }
+              managerRef.current?.stop();
+            }
+          }).catch(() => {});
+        }
       },
       onError: (err: ErrorDetail) => {
         setErrorDetail(err);
@@ -126,7 +257,7 @@ export function RunActiveView({
       manager.stop();
       managerRef.current = null;
     };
-  }, [activeRun?.run_id, activeRun?.state, apiClient, onUpdateRun]);
+  }, [activeRun?.run_id, activeRun?.state, apiClient, onUpdateRun, startedAt]);
 
   useEffect(() => {
     if (activeRun?.state === "cancelled") {
@@ -164,10 +295,16 @@ export function RunActiveView({
 [00:23.95] pytest: ================= 42 passed in 1.48s =================
 [00:24.20] verifier: candidate A verified successfully`;
 
+  const currentLogText = isHttpMode
+    ? streamLogs.length > 0
+      ? streamLogs.join("\n")
+      : `[${formatElapsed(elapsedSeconds)}] Connecting to event stream for ${activeRun?.run_id || "active run"}...\nAwaiting stage and candidate execution events...`
+    : candidateALog;
+
   const fallbackCopy = () => {
     try {
       const textarea = document.createElement("textarea");
-      textarea.value = candidateALog;
+      textarea.value = currentLogText;
       textarea.style.position = "fixed";
       textarea.style.opacity = "0";
       document.body.appendChild(textarea);
@@ -184,7 +321,7 @@ export function RunActiveView({
   const copyLogToClipboard = () => {
     if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
       navigator.clipboard
-        .writeText(candidateALog)
+        .writeText(currentLogText)
         .then(() => {
           setCopiedLog(true);
           setTimeout(() => setCopiedLog(false), 2000);
@@ -312,11 +449,13 @@ export function RunActiveView({
           )}
 
           <span className="text-lg font-semibold text-[#F7F7F2]">
-            fastapi-service
+            {displayRepo}
           </span>
-          <span className="text-sm font-mono text-[#A9B8AD]">
-            (pydantic 1.10.8 → 2.0.2)
-          </span>
+          {displayDependency && (
+            <span className="text-sm font-mono text-[#A9B8AD]">
+              {displayDependency}
+            </span>
+          )}
 
           {connectionStatus === "connected" && !isCancelled && (
             <Badge
@@ -446,7 +585,7 @@ export function RunActiveView({
       )}
 
       {/* Disconnection Banner (AC-5) */}
-      {connectionStatus === "disconnected" && !isCancelled && (
+      {connectionStatus === "disconnected" && !isCancelled && activeRun?.state !== "succeeded" && activeRun?.state !== "failed" && (
         <div className="rounded-xl bg-[#261E14] border border-[#E0B45A]/40 p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <AlertTriangle className="size-5 text-[#E0B45A] shrink-0" />
@@ -539,107 +678,193 @@ export function RunActiveView({
                 </h3>
               </div>
               <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-[11px] px-2 py-0.5">
-                4/6 Complete
+                {isHttpMode
+                  ? `${completedHttpCount}/4 Complete`
+                  : "4/6 Complete (Mock)"}
               </Badge>
             </div>
 
-            <div className="flex flex-col gap-3">
-              {/* Stage 1 */}
-              <div className="rounded-xl bg-[#1B3228]/50 border border-[rgba(183,201,173,0.1)] p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
-                    <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
-                    <span>1. Baseline Check</span>
-                  </div>
-                  <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent text-[10px] font-mono px-1.5 py-0">
-                    PASS
-                  </Badge>
-                </div>
-                <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
-                  42/42 tests pass on pinned commit 8a4f21d
-                </p>
-              </div>
+            {isHttpMode ? (
+              <div className="flex flex-col gap-3">
+                {httpStages.map((s, index) => {
+                  const res = stageResults[s.key];
+                  const isPassed =
+                    res?.passed ||
+                    (activeRun?.state === "succeeded" && !res);
+                  const isFailed = res
+                    ? !res.passed
+                    : activeRun?.state === "failed" &&
+                      index ===
+                        (httpStages.findIndex((x) => !stageResults[x.key]) ===
+                        -1
+                          ? 0
+                          : httpStages.findIndex(
+                              (x) => !stageResults[x.key]
+                            ));
+                  const isRunning =
+                    !res &&
+                    !isPassed &&
+                    !isFailed &&
+                    !isCancelled &&
+                    (index === 0 ||
+                      !!(httpStages[index - 1] && stageResults[httpStages[index - 1].key]?.passed));
+                  const isQueued = !res && !isPassed && !isFailed && !isRunning;
 
-              {/* Stage 2 */}
-              <div className="rounded-xl bg-[#1B3228]/50 border border-[rgba(183,201,173,0.1)] p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
-                    <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
-                    <span>2. Upgrade Reproduction</span>
-                  </div>
-                  <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent text-[10px] font-mono px-1.5 py-0">
-                    PASS
-                  </Badge>
-                </div>
-                <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
-                  Expected failure confirmed: ValidationError regex removed
-                </p>
+                  return (
+                    <div
+                      key={s.key}
+                      className={`rounded-xl p-3 border transition-colors ${
+                        isRunning
+                          ? "bg-[#1B3228] border-[#7FB3D5]/40 ring-1 ring-[#7FB3D5]/20"
+                          : isQueued
+                          ? "bg-[#1B3228]/25 border-[rgba(183,201,173,0.06)] opacity-60"
+                          : "bg-[#1B3228]/50 border-[rgba(183,201,173,0.1)]"
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
+                          {isPassed ? (
+                            <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+                          ) : isFailed ? (
+                            <XCircle className="size-3.5 text-[#E5736A]" />
+                          ) : isRunning ? (
+                            <RotateCw className="size-3.5 text-[#7FB3D5] animate-spin" />
+                          ) : (
+                            <Clock className="size-3.5 text-[#A9B8AD]" />
+                          )}
+                          <span>{s.title}</span>
+                        </div>
+                        <Badge
+                          className={`text-[10px] font-mono px-1.5 py-0 border-transparent ${
+                            isPassed
+                              ? "bg-[#5FCB8A]/20 text-[#5FCB8A]"
+                              : isFailed
+                              ? "bg-[#E5736A]/20 text-[#E5736A]"
+                              : isRunning
+                              ? "bg-[#7FB3D5]/20 text-[#7FB3D5]"
+                              : "bg-[#15271F] text-[#A9B8AD] border-[rgba(183,201,173,0.16)]"
+                          }`}
+                        >
+                          {isPassed
+                            ? "PASS"
+                            : isFailed
+                            ? "FAIL"
+                            : isRunning
+                            ? "RUNNING"
+                            : "QUEUED"}
+                        </Badge>
+                      </div>
+                      <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                        {res?.summary ||
+                          (isPassed
+                            ? "Completed cleanly"
+                            : isFailed
+                            ? activeRun?.reason || "Execution failed"
+                            : s.defaultDetail)}
+                      </p>
+                    </div>
+                  );
+                })}
               </div>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {/* Stage 1 */}
+                <div className="rounded-xl bg-[#1B3228]/50 border border-[rgba(183,201,173,0.1)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
+                      <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+                      <span>1. Baseline Check</span>
+                    </div>
+                    <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent text-[10px] font-mono px-1.5 py-0">
+                      PASS
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                    42/42 tests pass on pinned commit 8a4f21d
+                  </p>
+                </div>
 
-              {/* Stage 3 */}
-              <div className="rounded-xl bg-[#1B3228]/50 border border-[rgba(183,201,173,0.1)] p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
-                    <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
-                    <span>3. Allowlist Context</span>
+                {/* Stage 2 */}
+                <div className="rounded-xl bg-[#1B3228]/50 border border-[rgba(183,201,173,0.1)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
+                      <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+                      <span>2. Upgrade Reproduction</span>
+                    </div>
+                    <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent text-[10px] font-mono px-1.5 py-0">
+                      PASS
+                    </Badge>
                   </div>
-                  <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent text-[10px] font-mono px-1.5 py-0">
-                    PASS
-                  </Badge>
+                  <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                    Expected failure confirmed: ValidationError regex removed
+                  </p>
                 </div>
-                <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
-                  Bounded context: schemas.py:14-48, config.py:22-38
-                </p>
-              </div>
 
-              {/* Stage 4 - Active */}
-              <div className="rounded-xl bg-[#1B3228] border border-[#7FB3D5]/40 p-3 ring-1 ring-[#7FB3D5]/20">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
-                    <RotateCw className="size-3.5 text-[#7FB3D5] animate-spin" />
-                    <span>4. Candidate Gen</span>
+                {/* Stage 3 */}
+                <div className="rounded-xl bg-[#1B3228]/50 border border-[rgba(183,201,173,0.1)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
+                      <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+                      <span>3. Allowlist Context</span>
+                    </div>
+                    <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent text-[10px] font-mono px-1.5 py-0">
+                      PASS
+                    </Badge>
                   </div>
-                  <Badge className="bg-[#7FB3D5]/20 text-[#7FB3D5] border-transparent text-[10px] font-mono px-1.5 py-0">
-                    RUNNING
-                  </Badge>
+                  <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                    Bounded context: schemas.py:14-48, config.py:22-38
+                  </p>
                 </div>
-                <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
-                  NVIDIA Nemotron 70B via Nebius Token Factory (3 parallel shards)
-                </p>
-              </div>
 
-              {/* Stage 5 - Queued */}
-              <div className="rounded-xl bg-[#1B3228]/25 border border-[rgba(183,201,173,0.06)] p-3 opacity-60">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs font-medium text-[#A9B8AD]">
-                    <Hourglass className="size-3.5" />
-                    <span>5. Sandbox Verify</span>
+                {/* Stage 4 - Active */}
+                <div className="rounded-xl bg-[#1B3228] border border-[#7FB3D5]/40 p-3 ring-1 ring-[#7FB3D5]/20">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#F7F7F2]">
+                      <RotateCw className="size-3.5 text-[#7FB3D5] animate-spin" />
+                      <span>4. Candidate Gen</span>
+                    </div>
+                    <Badge className="bg-[#7FB3D5]/20 text-[#7FB3D5] border-transparent text-[10px] font-mono px-1.5 py-0">
+                      RUNNING
+                    </Badge>
                   </div>
-                  <Badge className="bg-[#15271F] text-[#A9B8AD] border-[rgba(183,201,173,0.16)] text-[10px] font-mono px-1.5 py-0">
-                    QUEUED
-                  </Badge>
+                  <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                    NVIDIA Nemotron 70B via Nebius Token Factory (3 parallel shards)
+                  </p>
                 </div>
-                <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
-                  ConTree Pytest container (ephemeral mount)
-                </p>
-              </div>
 
-              {/* Stage 6 - Queued */}
-              <div className="rounded-xl bg-[#1B3228]/25 border border-[rgba(183,201,173,0.06)] p-3 opacity-60">
-                <div className="flex items-center justify-between mb-1">
-                  <div className="flex items-center gap-2 text-xs font-medium text-[#A9B8AD]">
-                    <Clock className="size-3.5" />
-                    <span>6. Preservation Proof</span>
+                {/* Stage 5 - Queued */}
+                <div className="rounded-xl bg-[#1B3228]/25 border border-[rgba(183,201,173,0.06)] p-3 opacity-60">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#A9B8AD]">
+                      <Hourglass className="size-3.5" />
+                      <span>5. Sandbox Verify</span>
+                    </div>
+                    <Badge className="bg-[#15271F] text-[#A9B8AD] border-[rgba(183,201,173,0.16)] text-[10px] font-mono px-1.5 py-0">
+                      QUEUED
+                    </Badge>
                   </div>
-                  <Badge className="bg-[#15271F] text-[#A9B8AD] border-[rgba(183,201,173,0.16)] text-[10px] font-mono px-1.5 py-0">
-                    QUEUED
-                  </Badge>
+                  <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                    ConTree Pytest container (ephemeral mount)
+                  </p>
                 </div>
-                <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
-                  AST check invariant: 0 test files modified
-                </p>
+
+                {/* Stage 6 - Queued */}
+                <div className="rounded-xl bg-[#1B3228]/25 border border-[rgba(183,201,173,0.06)] p-3 opacity-60">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center gap-2 text-xs font-medium text-[#A9B8AD]">
+                      <Clock className="size-3.5" />
+                      <span>6. Preservation Proof</span>
+                    </div>
+                    <Badge className="bg-[#15271F] text-[#A9B8AD] border-[rgba(183,201,173,0.16)] text-[10px] font-mono px-1.5 py-0">
+                      QUEUED
+                    </Badge>
+                  </div>
+                  <p className="text-[11px] font-mono text-[#A9B8AD] pl-5.5">
+                    AST check invariant: 0 test files modified
+                  </p>
+                </div>
               </div>
-            </div>
+            )}
           </Card>
 
           {/* Sandbox Host Health Card */}
@@ -655,11 +880,15 @@ export function RunActiveView({
             <div className="flex flex-col gap-1.5 text-[#A9B8AD]">
               <div className="flex justify-between">
                 <span>Cluster:</span>
-                <span className="text-[#F7F7F2]">nebius-eu-west-1a</span>
+                <span className="text-[#F7F7F2]">
+                  {isHttpMode ? "local-sandbox-bridge" : "nebius-eu-west-1a"}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span>Runtime:</span>
-                <span className="text-[#F7F7F2]">firecracker-microvm</span>
+                <span className="text-[#F7F7F2]">
+                  {isHttpMode ? "python-microcontainer" : "firecracker-microvm"}
+                </span>
               </div>
               <div className="flex justify-between">
                 <span>Memory Cgroup:</span>
@@ -678,261 +907,420 @@ export function RunActiveView({
                 Active Candidate Matrices
               </h2>
               <p className="text-xs text-[#A9B8AD] mt-0.5">
-                Three parallel migration strategies executing in ephemeral clean
-                containers.
+                {isHttpMode
+                  ? "Real-time candidate patch evaluation from Python repair engine."
+                  : "Three parallel migration strategies executing in ephemeral clean containers."}
               </p>
             </div>
             <div className="text-xs font-mono text-[#A9B8AD]">
-              STRATEGY SORT:{" "}
-              <span className="text-[#F7F7F2]">Confidence Metric</span>
+              TRANSPORT:{" "}
+              <span className="text-[#F7F7F2]">
+                {isHttpMode ? "HTTP / SSE" : "Synthetic Mock"}
+              </span>
             </div>
           </div>
 
-          {/* Candidate A - Selected & Winning */}
-          <Card className="rounded-[20px] bg-[#15271F] border-l-4 border-l-[#5FCB8A] border-y border-r border-[rgba(183,201,173,0.3)] p-5">
-            {/* Header: Badge, Title, Time, Test Count */}
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
-                  SELECTED / PASS
-                </Badge>
-                <h3 className="text-sm font-semibold text-[#F7F7F2]">
-                  Candidate A{" "}
-                  <span className="font-normal text-[#A9B8AD]">
-                    (Direct ConfigDict &amp; Field(pattern=...))
-                  </span>
-                </h3>
-              </div>
+          {isHttpMode ? (
+            <>
+              {liveCandidates.length > 0 ? (
+                liveCandidates.map((c, idx) => {
+                  const isWinner = c.passed;
+                  return (
+                    <Card
+                      key={c.id || idx}
+                      className={`rounded-[20px] p-5 border text-left ${
+                        isWinner
+                          ? "bg-[#15271F] border-l-4 border-l-[#5FCB8A] border-y border-r border-[rgba(183,201,173,0.3)]"
+                          : "bg-[#15271F]/80 border border-[rgba(183,201,173,0.12)] opacity-85"
+                      }`}
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                        <div className="flex items-center gap-2">
+                          <Badge
+                            className={`${
+                              isWinner
+                                ? "bg-[#5FCB8A]/20 text-[#5FCB8A]"
+                                : "bg-[#E5736A]/20 text-[#E5736A]"
+                            } border-transparent font-mono text-xs font-semibold px-2 py-0.5`}
+                          >
+                            {isWinner ? "SELECTED / PASS" : "REJECTED / FAILED"}
+                          </Badge>
+                          <h3 className="text-sm font-semibold text-[#F7F7F2]">
+                            Candidate {c.id}
+                          </h3>
+                        </div>
+                      </div>
 
-              <div className="flex items-center gap-3 font-mono text-xs text-[#A9B8AD]">
-                <div className="flex items-center gap-1">
-                  <Clock className="size-3.5" />
-                  <span>24.2s</span>
-                </div>
-                <div className="flex items-center gap-1 text-[#5FCB8A]">
-                  <CheckCircle2 className="size-3.5" />
-                  <span>42 passed · 0 failed</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Strategy description & diff summary */}
-            <div className="flex flex-wrap items-center justify-between gap-2 text-xs mb-3 text-[#A9B8AD]">
-              <div className="flex items-center gap-1.5 text-[#F7F7F2]">
-                <CheckCircle2 className="size-3.5 text-[#5FCB8A] shrink-0" />
-                <span>
-                  Direct schema transformation using native Pydantic V2{" "}
-                  <code className="text-[#5FCB8A] font-mono text-[11px]">
-                    model_config = ConfigDict(populate_by_name=True)
-                  </code>
-                </span>
-              </div>
-              <span className="font-mono text-[#5FCB8A]">
-                Delta: +18 lines -14 lines
-              </span>
-            </div>
-
-            {/* Terminal Log Box */}
-            <div className="rounded-xl bg-[#0D1915] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-4">
-              {/* Terminal header */}
-              <div className="flex items-center justify-between bg-[#11221B] px-3.5 py-2 border-b border-[rgba(183,201,173,0.12)]">
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-[#E5736A]" />
-                    <span className="size-2 rounded-full bg-[#E0B45A]" />
-                    <span className="size-2 rounded-full bg-[#5FCB8A]" />
+                      <div className="rounded-lg bg-[#0D1915] p-3 text-xs border border-[rgba(183,201,173,0.12)]">
+                        <span className="font-mono text-[#A9B8AD] leading-relaxed">
+                          {c.summary}
+                        </span>
+                      </div>
+                    </Card>
+                  );
+                })
+              ) : (
+                <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.2)] p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <Badge className="bg-[#7FB3D5]/20 text-[#7FB3D5] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
+                      {activeRun?.state === "running" || activeRun?.state === "queued"
+                        ? "SEARCHING"
+                        : activeRun?.state?.toUpperCase() || "READY"}
+                    </Badge>
+                    <h3 className="text-sm font-semibold text-[#F7F7F2]">
+                      Candidate Search Matrix
+                    </h3>
                   </div>
-                  <span className="font-mono text-xs text-[#A9B8AD] ml-1">
-                    container-eval-candidate-a.log
+                  <p className="text-xs text-[#A9B8AD] leading-relaxed">
+                    {activeRun?.state === "failed"
+                      ? `Execution finished: ${activeRun.reason || "Verification failed"}`
+                      : activeRun?.state === "cancelled"
+                      ? "Execution was cancelled by the user."
+                      : "Generating and verifying candidate patches with offline providers in clean isolated sandbox..."}
+                  </p>
+                </Card>
+              )}
+
+              {/* Monospace Terminal Log Box */}
+              <div className="rounded-xl bg-[#0D1915] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-2">
+                <div className="flex items-center justify-between bg-[#11221B] px-3.5 py-2 border-b border-[rgba(183,201,173,0.12)]">
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="size-2 rounded-full bg-[#E5736A]" />
+                      <span className="size-2 rounded-full bg-[#E0B45A]" />
+                      <span className="size-2 rounded-full bg-[#5FCB8A]" />
+                    </div>
+                    <span className="font-mono text-xs text-[#A9B8AD] ml-1">
+                      repomedic-stream.log
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1 text-[11px] font-mono text-[#5FCB8A]">
+                      <span className="size-1.5 rounded-full bg-[#5FCB8A]" />
+                      {connectionStatus === "connected" ? "STREAM CONNECTED" : connectionStatus.toUpperCase()}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={copyLogToClipboard}
+                      className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1 cursor-pointer"
+                      title="Copy logs"
+                      aria-label="Copy logs"
+                    >
+                      {copiedLog ? (
+                        <Check className="size-3.5 text-[#5FCB8A]" />
+                      ) : (
+                        <Copy className="size-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-4 font-mono text-[12px] leading-relaxed text-[#A9B8AD] overflow-x-auto whitespace-pre max-h-[360px]">
+                  {currentLogText.split("\n").map((line, idx) => {
+                    const isPass =
+                      line.includes("PASSED") ||
+                      line.includes("VERIFIED") ||
+                      line.includes("succeeded") ||
+                      line.includes("successfully");
+                    const isFail =
+                      line.includes("FAILED") ||
+                      line.includes("error") ||
+                      line.includes("cancelled");
+                    return (
+                      <div
+                        key={idx}
+                        className={
+                          isPass
+                            ? "text-[#5FCB8A] font-medium"
+                            : isFail
+                            ? "text-[#E5736A] font-medium"
+                            : ""
+                        }
+                      >
+                        {line}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Bottom Action Row: Status + Primary Button */}
+              <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
+                <div className="font-mono text-xs text-[#A9B8AD]">
+                  <span>Status: </span>
+                  <span data-testid="active-run-status" className="text-[#5FCB8A] font-medium">
+                    {activeRun?.state?.toUpperCase() || "RUNNING"}
+                  </span>
+                  {activeRun?.reason && (
+                    <>
+                      <span className="mx-2">·</span>
+                      <span className="text-[#F7F7F2]">{activeRun.reason}</span>
+                    </>
+                  )}
+                </div>
+
+                <Button
+                  onClick={onInspectResults}
+                  className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer shadow-none"
+                >
+                  <span>Inspect Results &amp; Diff</span>
+                  <ArrowRight className="size-4" />
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Candidate A - Selected & Winning */}
+              <Card className="rounded-[20px] bg-[#15271F] border-l-4 border-l-[#5FCB8A] border-y border-r border-[rgba(183,201,173,0.3)] p-5">
+                {/* Header: Badge, Title, Time, Test Count */}
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
+                      SELECTED / PASS (MOCK)
+                    </Badge>
+                    <h3 className="text-sm font-semibold text-[#F7F7F2]">
+                      Candidate A{" "}
+                      <span className="font-normal text-[#A9B8AD]">
+                        (Direct ConfigDict &amp; Field(pattern=...))
+                      </span>
+                    </h3>
+                  </div>
+
+                  <div className="flex items-center gap-3 font-mono text-xs text-[#A9B8AD]">
+                    <div className="flex items-center gap-1">
+                      <Clock className="size-3.5" />
+                      <span>24.2s</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[#5FCB8A]">
+                      <CheckCircle2 className="size-3.5" />
+                      <span>42 passed · 0 failed</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Strategy description & diff summary */}
+                <div className="flex flex-wrap items-center justify-between gap-2 text-xs mb-3 text-[#A9B8AD]">
+                  <div className="flex items-center gap-1.5 text-[#F7F7F2]">
+                    <CheckCircle2 className="size-3.5 text-[#5FCB8A] shrink-0" />
+                    <span>
+                      Direct schema transformation using native Pydantic V2{" "}
+                      <code className="text-[#5FCB8A] font-mono text-[11px]">
+                        model_config = ConfigDict(populate_by_name=True)
+                      </code>
+                    </span>
+                  </div>
+                  <span className="font-mono text-[#5FCB8A]">
+                    Delta: +18 lines -14 lines
                   </span>
                 </div>
 
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center gap-1 text-[11px] font-mono text-[#5FCB8A]">
-                    <span className="size-1.5 rounded-full bg-[#5FCB8A]" />
-                    STREAM COMPLETED
+                {/* Terminal Log Box */}
+                <div className="rounded-xl bg-[#0D1915] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-4">
+                  {/* Terminal header */}
+                  <div className="flex items-center justify-between bg-[#11221B] px-3.5 py-2 border-b border-[rgba(183,201,173,0.12)]">
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1.5">
+                        <span className="size-2 rounded-full bg-[#E5736A]" />
+                        <span className="size-2 rounded-full bg-[#E0B45A]" />
+                        <span className="size-2 rounded-full bg-[#5FCB8A]" />
+                      </div>
+                      <span className="font-mono text-xs text-[#A9B8AD] ml-1">
+                        container-eval-candidate-a.log
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1 text-[11px] font-mono text-[#5FCB8A]">
+                        <span className="size-1.5 rounded-full bg-[#5FCB8A]" />
+                        STREAM COMPLETED
+                      </div>
+                      <button
+                        type="button"
+                        onClick={copyLogToClipboard}
+                        className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1 cursor-pointer"
+                        title="Copy logs"
+                        aria-label="Copy logs"
+                      >
+                        {copiedLog ? (
+                          <Check className="size-3.5 text-[#5FCB8A]" />
+                        ) : (
+                          <Copy className="size-3.5" />
+                        )}
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Terminal log text */}
+                  <div className="p-4 font-mono text-[12px] leading-relaxed text-[#A9B8AD] overflow-x-auto whitespace-pre">
+                    {candidateALog.split("\n").map((line, idx) => {
+                      const isPass =
+                        line.includes("PASSED") ||
+                        line.includes("successfully") ||
+                        line.includes("42 passed");
+                      return (
+                        <div
+                          key={idx}
+                          className={isPass ? "text-[#5FCB8A] font-medium" : ""}
+                        >
+                          {line}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Candidate A Bottom Action Row: Readiness + Primary Button */}
+                <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
+                  <div className="font-mono text-xs text-[#A9B8AD]">
+                    <span>Commit Readiness: </span>
+                    <span className="text-[#5FCB8A] font-medium">100%</span>
+                    <span className="mx-2">·</span>
+                    <span>AST Preservation Hash: </span>
+                    <span className="text-[#F7F7F2]">sha256:d8a2...3f</span>
+                  </div>
+
+                  {/* The single primary Sage button for this view per DESIGN.md */}
+                  <Button
+                    onClick={onInspectResults}
+                    className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer shadow-none"
+                  >
+                    <span>Inspect Results &amp; Diff</span>
+                    <ArrowRight className="size-4" />
+                  </Button>
+                </div>
+              </Card>
+
+              {/* Candidate B - Flaky / Rejected */}
+              <Card className="rounded-[20px] bg-[#15271F]/80 border border-[rgba(183,201,173,0.12)] p-5 opacity-85">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-[#E0B45A]/20 text-[#E0B45A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
+                      FLAKY / REJECTED (MOCK)
+                    </Badge>
+                    <h3 className="text-sm font-semibold text-[#F7F7F2]">
+                      Candidate B{" "}
+                      <span className="font-normal text-[#A9B8AD]">
+                        (pydantic.v1 compatibility shim)
+                      </span>
+                    </h3>
+                  </div>
+
+                  <div className="flex items-center gap-3 font-mono text-xs text-[#A9B8AD]">
+                    <div className="flex items-center gap-1">
+                      <Clock className="size-3.5" />
+                      <span>19.8s</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[#E0B45A]">
+                      <AlertTriangle className="size-3.5" />
+                      <span>38 passed · 4 failed</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Warning summary box */}
+                <div className="rounded-lg bg-[#0D1915] p-3 border border-[rgba(224,180,90,0.2)] text-xs mb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[#A9B8AD]">
+                      <AlertTriangle className="size-3.5 text-[#E0B45A]" />
+                      <span>
+                        Summary: 38 passed · 4 failed (
+                        <span className="text-[#E0B45A]">DeprecationWarning</span>{" "}
+                        treated as error by pytest flags)
+                      </span>
+                    </div>
+                    <span className="font-mono text-[#E5736A] font-semibold text-[11px]">
+                      FAILED ASSERTION IN STRICT CI
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-[#A9B8AD]">
+                  <span>
+                    Strategy rejected: Temporary bridge creates technical debt and
+                    triggers runtime warnings
+                  </span>
                   <button
                     type="button"
-                    onClick={copyLogToClipboard}
-                    className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1"
-                    title="Copy logs"
-                    aria-label="Copy logs"
+                    onClick={() => setShowStackB(!showStackB)}
+                    className="flex items-center gap-1 text-[#F7F7F2] hover:text-[#B7C9AD] font-mono text-[11px]"
                   >
-                    {copiedLog ? (
-                      <Check className="size-3.5 text-[#5FCB8A]" />
+                    <span>View Error Stack</span>
+                    {showStackB ? (
+                      <ChevronUp className="size-3.5" />
                     ) : (
-                      <Copy className="size-3.5" />
+                      <ChevronDown className="size-3.5" />
                     )}
                   </button>
                 </div>
-              </div>
 
-              {/* Terminal log text */}
-              <div className="p-4 font-mono text-[12px] leading-relaxed text-[#A9B8AD] overflow-x-auto whitespace-pre">
-                {candidateALog.split("\n").map((line, idx) => {
-                  const isPass = line.includes("PASSED") || line.includes("successfully") || line.includes("42 passed");
-                  return (
-                    <div
-                      key={idx}
-                      className={isPass ? "text-[#5FCB8A] font-medium" : ""}
-                    >
-                      {line}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Candidate A Bottom Action Row: Readiness + Primary Button */}
-            <div className="flex flex-wrap items-center justify-between gap-4 pt-1">
-              <div className="font-mono text-xs text-[#A9B8AD]">
-                <span>Commit Readiness: </span>
-                <span className="text-[#5FCB8A] font-medium">100%</span>
-                <span className="mx-2">·</span>
-                <span>AST Preservation Hash: </span>
-                <span className="text-[#F7F7F2]">sha256:d8a2...3f</span>
-              </div>
-
-              {/* The single primary Sage button for this view per DESIGN.md */}
-              <Button
-                onClick={onInspectResults}
-                className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer shadow-none"
-              >
-                <span>Inspect Results &amp; Diff</span>
-                <ArrowRight className="size-4" />
-              </Button>
-            </div>
-          </Card>
-
-          {/* Candidate B - Flaky / Rejected */}
-          <Card className="rounded-[20px] bg-[#15271F]/80 border border-[rgba(183,201,173,0.12)] p-5 opacity-85">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-[#E0B45A]/20 text-[#E0B45A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
-                  FLAKY / REJECTED
-                </Badge>
-                <h3 className="text-sm font-semibold text-[#F7F7F2]">
-                  Candidate B{" "}
-                  <span className="font-normal text-[#A9B8AD]">
-                    (pydantic.v1 compatibility shim)
-                  </span>
-                </h3>
-              </div>
-
-              <div className="flex items-center gap-3 font-mono text-xs text-[#A9B8AD]">
-                <div className="flex items-center gap-1">
-                  <Clock className="size-3.5" />
-                  <span>19.8s</span>
-                </div>
-                <div className="flex items-center gap-1 text-[#E0B45A]">
-                  <AlertTriangle className="size-3.5" />
-                  <span>38 passed · 4 failed</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Warning summary box */}
-            <div className="rounded-lg bg-[#0D1915] p-3 border border-[rgba(224,180,90,0.2)] text-xs mb-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-[#A9B8AD]">
-                  <AlertTriangle className="size-3.5 text-[#E0B45A]" />
-                  <span>
-                    Summary: 38 passed · 4 failed (
-                    <span className="text-[#E0B45A]">DeprecationWarning</span>{" "}
-                    treated as error by pytest flags)
-                  </span>
-                </div>
-                <span className="font-mono text-[#E5736A] font-semibold text-[11px]">
-                  FAILED ASSERTION IN STRICT CI
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-[#A9B8AD]">
-              <span>
-                Strategy rejected: Temporary bridge creates technical debt and
-                triggers runtime warnings
-              </span>
-              <button
-                type="button"
-                onClick={() => setShowStackB(!showStackB)}
-                className="flex items-center gap-1 text-[#F7F7F2] hover:text-[#B7C9AD] font-mono text-[11px]"
-              >
-                <span>View Error Stack</span>
-                {showStackB ? (
-                  <ChevronUp className="size-3.5" />
-                ) : (
-                  <ChevronDown className="size-3.5" />
+                {showStackB && (
+                  <div className="mt-3 rounded-lg bg-[#0D1915] p-3 font-mono text-[11px] text-[#E5736A] border border-[rgba(229,115,106,0.2)]">
+                    <code>
+                      tests/test_api.py:44: PydanticDeprecatedSince20: The
+                      `pydantic.v1` module is deprecated. Use Pydantic V2 core models
+                      instead. PytestConfigError: warnings are treated as errors
+                      (-W error).
+                    </code>
+                  </div>
                 )}
-              </button>
-            </div>
+              </Card>
 
-            {showStackB && (
-              <div className="mt-3 rounded-lg bg-[#0D1915] p-3 font-mono text-[11px] text-[#E5736A] border border-[rgba(229,115,106,0.2)]">
-                <code>
-                  tests/test_api.py:44: PydanticDeprecatedSince20: The
-                  `pydantic.v1` module is deprecated. Use Pydantic V2 core models
-                  instead. PytestConfigError: warnings are treated as errors
-                  (-W error).
-                </code>
-              </div>
-            )}
-          </Card>
+              {/* Candidate C - Fail */}
+              <Card className="rounded-[20px] bg-[#15271F]/60 border border-[rgba(183,201,173,0.08)] p-5 opacity-70">
+                <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <Badge className="bg-[#E5736A]/20 text-[#E5736A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
+                      FAIL (MOCK)
+                    </Badge>
+                    <h3 className="text-sm font-semibold text-[#F7F7F2]">
+                      Candidate C{" "}
+                      <span className="font-normal text-[#A9B8AD]">
+                        (Pydantic V2 Migration Codegen)
+                      </span>
+                    </h3>
+                  </div>
 
-          {/* Candidate C - Fail */}
-          <Card className="rounded-[20px] bg-[#15271F]/60 border border-[rgba(183,201,173,0.08)] p-5 opacity-70">
-            <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <Badge className="bg-[#E5736A]/20 text-[#E5736A] border-transparent font-mono text-xs font-semibold px-2 py-0.5">
-                  FAIL
-                </Badge>
-                <h3 className="text-sm font-semibold text-[#F7F7F2]">
-                  Candidate C{" "}
-                  <span className="font-normal text-[#A9B8AD]">
-                    (Pydantic V2 Migration Codegen)
-                  </span>
-                </h3>
-              </div>
-
-              <div className="flex items-center gap-3 font-mono text-xs text-[#A9B8AD]">
-                <div className="flex items-center gap-1">
-                  <Clock className="size-3.5" />
-                  <span>31.1s</span>
+                  <div className="flex items-center gap-3 font-mono text-xs text-[#A9B8AD]">
+                    <div className="flex items-center gap-1">
+                      <Clock className="size-3.5" />
+                      <span>31.1s</span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[#E5736A]">
+                      <XCircle className="size-3.5" />
+                      <span>0 passed · 1 SyntaxError</span>
+                    </div>
+                  </div>
                 </div>
-                <div className="flex items-center gap-1 text-[#E5736A]">
-                  <XCircle className="size-3.5" />
-                  <span>0 passed · 1 SyntaxError</span>
-                </div>
-              </div>
-            </div>
 
-            {/* Error box */}
-            <div className="rounded-lg bg-[#0D1915] p-3 border border-[rgba(229,115,106,0.2)] text-xs mb-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 text-[#A9B8AD]">
-                  <XCircle className="size-3.5 text-[#E5736A]" />
+                {/* Error box */}
+                <div className="rounded-lg bg-[#0D1915] p-3 border border-[rgba(229,115,106,0.2)] text-xs mb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-[#A9B8AD]">
+                      <XCircle className="size-3.5 text-[#E5736A]" />
+                      <span>
+                        Summary: SyntaxError in generated schema patch at{" "}
+                        <code className="text-[#E5736A]">schemas.py:34</code>
+                      </span>
+                    </div>
+                    <span className="font-mono text-[#E5736A] font-semibold text-[11px]">
+                      ABORTED AT VERIFICATION
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between text-xs text-[#A9B8AD]">
                   <span>
-                    Summary: SyntaxError in generated schema patch at{" "}
-                    <code className="text-[#E5736A]">schemas.py:34</code>
+                    Strategy rejected: Automated codegen generated malformed
+                    trailing comma in ModelConfig tuple
+                  </span>
+                  <span className="font-mono text-[11px] text-[#A9B8AD]">
+                    Discarded from ranking pool
                   </span>
                 </div>
-                <span className="font-mono text-[#E5736A] font-semibold text-[11px]">
-                  ABORTED AT VERIFICATION
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center justify-between text-xs text-[#A9B8AD]">
-              <span>
-                Strategy rejected: Automated codegen generated malformed
-                trailing comma in ModelConfig tuple
-              </span>
-              <span className="font-mono text-[11px] text-[#A9B8AD]">
-                Discarded from ranking pool
-              </span>
-            </div>
-          </Card>
+              </Card>
+            </>
+          )}
 
           {/* Proof of Invariant Preservation Card */}
           <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4 flex flex-col md:flex-row md:items-center justify-between gap-4">

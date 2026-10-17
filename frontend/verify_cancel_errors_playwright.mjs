@@ -11,7 +11,7 @@ async function runCancelErrorsVerification() {
   let browser;
   try {
     browser = await chromium.launch({ channel: "chrome", headless: true });
-  } catch (err) {
+  } catch {
     browser = await chromium.launch({ channel: "msedge", headless: true });
   }
 

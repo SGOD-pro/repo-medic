@@ -1,6 +1,5 @@
 import { chromium } from "playwright";
 import path from "path";
-import fs from "fs";
 
 async function runVerification() {
   const artifactDir = "C:\\Users\\KIIT\\.gemini\\antigravity-ide\\brain\\2d656c98-0d4f-44bb-b446-b085b26d5dd6";

@@ -17,6 +17,8 @@ interface NavbarProps {
 
 export function Navbar({ activeTab, onTabChange, onOpenDocs }: NavbarProps) {
   const { runs, setHistoryOpen } = useHistoryStore();
+  const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock";
+
   return (
     <header className="sticky top-0 z-40 w-full border-b border-[rgba(183,201,173,0.16)] bg-[#0D1915]/95 backdrop-blur-none px-6 py-3">
       <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-4">
@@ -35,12 +37,21 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs }: NavbarProps) {
           </div>
 
           <div className="hidden sm:flex items-center gap-2 text-xs">
-            <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-medium gap-1.5 px-2 py-0.5 rounded-full">
-              <span className="size-1.5 rounded-full bg-[#5FCB8A] animate-pulse" />
-              LIVE DEMO
-            </Badge>
+            {isMock ? (
+              <Badge className="bg-[#7FB3D5]/15 text-[#7FB3D5] border-transparent font-medium gap-1.5 px-2.5 py-0.5 rounded-full">
+                <span className="size-1.5 rounded-full bg-[#7FB3D5]" />
+                MOCK TRANSPORT (SYNTHETIC)
+              </Badge>
+            ) : (
+              <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-medium gap-1.5 px-2.5 py-0.5 rounded-full">
+                <span className="size-1.5 rounded-full bg-[#5FCB8A] animate-pulse" />
+                LOCAL D1 / OFFLINE MODE
+              </Badge>
+            )}
             <span className="font-mono text-[#A9B8AD] text-[12px]">
-              D1 · Nebius Sandboxes · 42ms
+              {isMock
+                ? "Offline Fixtures · Client In-Memory"
+                : "Cloudflare D1 Bridge · Python Engine"}
             </span>
           </div>
         </div>

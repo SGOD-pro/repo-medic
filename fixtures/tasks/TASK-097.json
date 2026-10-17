@@ -1,0 +1,21 @@
+{
+  "task_id": "TASK-097",
+  "title": "httpx v0.23.3 → v0.24.1 in scraper-bot",
+  "repository_url": "https://github.com/encode/scraper-bot",
+  "commit_sha": "f72a110",
+  "dependency": "httpx",
+  "from_version": "0.23.3",
+  "to_version": "0.24.1",
+  "test_command": [
+    "pytest",
+    "tests/"
+  ],
+  "allowed_source_paths": [
+    "scraper/client.py",
+    "scraper/session.py"
+  ],
+  "expected_failure": "TypeError: Client.__init__() got unexpected keyword argument 'proxies'",
+  "timeout_seconds": 600,
+  "max_candidates": 3,
+  "max_refinements": 1
+}

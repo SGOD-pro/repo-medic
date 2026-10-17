@@ -68,35 +68,43 @@ export default function Home() {
             setActiveTab("run_active");
           }
         });
-      } else {
-        // Fallback: hydrate from API client
-        apiClient
-          .getRun(runIdFromUrl)
-          .then((run) => {
-            if (!isMounted) return;
-            setActiveRun(run);
-            setSelectedTaskId(run.task_id);
-            if (
-              run.state === "succeeded" ||
-              run.state === "failed" ||
-              run.state === "cancelled"
-            ) {
-              setActiveTab("verification");
-            } else {
-              setActiveTab("run_active");
-            }
-          })
-          .catch(() => {
-            if (!isMounted) return;
-            window.history.replaceState(null, "", window.location.pathname);
-          });
       }
+
+      // Hydrate activeRun from getRun() on reload
+      apiClient
+        .getRun(runIdFromUrl)
+        .then((run) => {
+          if (!isMounted) return;
+          setActiveRun(run);
+          setSelectedTaskId(run.task_id);
+          setStrategy(run.search_mode);
+          updateRun(run.run_id, {
+            state: run.state,
+            reason: run.reason,
+            cost_usd: run.usage?.estimated_usd,
+          });
+          if (
+            run.state === "succeeded" ||
+            run.state === "failed" ||
+            run.state === "cancelled"
+          ) {
+            setActiveTab("verification");
+          } else {
+            setActiveTab("run_active");
+          }
+        })
+        .catch(() => {
+          if (!isMounted) return;
+          if (!existing) {
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+        });
     }
 
     return () => {
       isMounted = false;
     };
-  }, [apiClient]);
+  }, [apiClient, updateRun]);
 
   const updateUrlParam = (runId: string | null) => {
     if (typeof window === "undefined") return;
@@ -146,13 +154,23 @@ export default function Home() {
     }
   };
 
-  const handleInspectResults = () => {
+  const handleInspectResults = async () => {
     if (activeRun) {
-      updateRun(activeRun.run_id, {
-        state: activeRun.state,
-        reason: activeRun.reason,
-        cost_usd: activeRun.usage?.estimated_usd,
-      });
+      try {
+        const fresh = await apiClient.getRun(activeRun.run_id);
+        setActiveRun(fresh);
+        updateRun(fresh.run_id, {
+          state: fresh.state,
+          reason: fresh.reason,
+          cost_usd: fresh.usage?.estimated_usd,
+        });
+      } catch {
+        updateRun(activeRun.run_id, {
+          state: activeRun.state,
+          reason: activeRun.reason,
+          cost_usd: activeRun.usage?.estimated_usd,
+        });
+      }
     }
     setActiveTab("verification");
   };
@@ -256,6 +274,7 @@ export default function Home() {
             setSelectedTaskId={setSelectedTaskId}
             strategy={strategy}
             setStrategy={setStrategy}
+            apiClient={apiClient}
           />
         )}
 

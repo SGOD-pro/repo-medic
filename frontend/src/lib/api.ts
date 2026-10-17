@@ -20,12 +20,12 @@ export interface RepoMedicApiClient {
 export const CURATED_TASKS: TaskSummary[] = [
   {
     task_id: "TASK-084",
-    title: "pydantic v1.10.8 → v2.0.2 migration in fastapi-service",
+    title: "pydantic v1.10.8 → v2.0.0 migration in fastapi-service",
     repository_url: "https://github.com/tiangolo/fastapi-service",
     commit_sha: "8a4f21d",
     dependency: "pydantic",
     from_version: "1.10.8",
-    to_version: "2.0.2",
+    to_version: "2.0.0",
   },
   {
     task_id: "TASK-091",

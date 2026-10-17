@@ -40,7 +40,7 @@ async def repair(
         return RepairResult(state="cancelled", reason="User cancelled before execution")
 
     # 3. Resolve adapters (default to deterministic fakes in offline mode)
-    active_sandbox = sandbox or FakeSandboxAdapter()
+    active_sandbox = sandbox or FakeSandboxAdapter(reproduced_failure_stderr=recipe.expected_failure)
     active_model = model or FakeModelAdapter()
 
     # 4. Run baseline verification stage

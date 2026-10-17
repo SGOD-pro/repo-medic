@@ -2,7 +2,6 @@ import {
   EventEnvelope,
   ConnectionStatus,
   ErrorDetail,
-  StreamManagerConfig,
 } from "./contracts";
 
 export interface StreamManagerOptions {

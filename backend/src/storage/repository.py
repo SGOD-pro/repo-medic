@@ -12,7 +12,9 @@ from src.contracts import (
     EventEnvelope,
     EventType,
     HostPorts,
+    Mode,
     RunSummary,
+    SearchMode,
     TaskSummary,
     UsageSummary,
 )
@@ -72,11 +74,23 @@ class D1StorageRepository:
             )
             for a in raw_artifacts
         ]
+        raw_mode = data.get("mode", "offline")
+        if raw_mode not in ("offline", "replay", "live"):
+            mode: Mode = "offline"
+        else:
+            mode = cast(Mode, raw_mode)
+
+        raw_search = data.get("search_mode", "sequential")
+        if raw_search in ("depth_first", "df", "branch_refine"):
+            search_mode: SearchMode = "branch_refine"
+        else:
+            search_mode = "sequential"
+
         return RunSummary(
             run_id=data["run_id"],
             task_id=data["task_id"],
-            mode=data["mode"],
-            search_mode=data["search_mode"],
+            mode=mode,
+            search_mode=search_mode,
             state=data["state"],
             reason=data.get("reason"),
             max_run_micro_usd=data.get("max_run_micro_usd", 0),

@@ -17,12 +17,12 @@ Teammates build against shared contracts.
 
 ## Slice I: Checkpoints K2 to K5
 
-### 3. K2: Connect real app and offline providers · in progress
+### 3. K2: Connect real app and offline providers · done
 Merge B and C, connect real Engine repair to QueueWorker with HostPorts, switch A to HTTP.
 **Done when:** All K2 integration tests (success, failure, restart, cancel) pass offline.
 - [x] Replace FakeEngine in QueueWorker with C real repair function and real HostPorts
 - [x] Complete B slices 4 and 5 (SSE, cancel, artifacts, budgets, restart)
-- [ ] Verify K2 end to end scenarios offline
+- [x] Verify K2 end to end scenarios offline
 
 ### 4. K3: Connect remote Cloudflare D1 · planned
 Deploy D1 bridge, apply migrations, set tokens.

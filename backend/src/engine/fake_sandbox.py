@@ -21,6 +21,7 @@ class FakeSandboxAdapter(SandboxAdapter):
         checkpoint_id: str = "",
         is_execution_handle: bool = False,
         execution_presets: Optional[List[SandboxPreset]] = None,
+        reproduced_failure_stderr: Optional[str] = None,
     ):
         self.preset = preset
         self.checkpoint_id = checkpoint_id
@@ -28,6 +29,7 @@ class FakeSandboxAdapter(SandboxAdapter):
         self.execution_presets: List[SandboxPreset] = (
             list(execution_presets) if execution_presets else []
         )
+        self.reproduced_failure_stderr = reproduced_failure_stderr
         self.execution_handles: List["FakeSandboxAdapter"] = []
         self.cleaned_up: bool = False
         self.call_count: int = 0
@@ -51,6 +53,7 @@ class FakeSandboxAdapter(SandboxAdapter):
             preset=child_preset,
             checkpoint_id=checkpoint_id,
             is_execution_handle=True,
+            reproduced_failure_stderr=self.reproduced_failure_stderr,
         )
         child._upgrade_installed = True
         child._tampered = (child_preset == SandboxPreset.VERIFY_TEST_TAMPERING)
@@ -111,11 +114,15 @@ class FakeSandboxAdapter(SandboxAdapter):
                     stderr="ERROR: Could not find a version that satisfies requirement",
                 )
             self._upgrade_installed = True
+            version = "2.0.0"
+            for arg in command:
+                if "==" in arg:
+                    version = arg.split("==")[-1]
             return CommandResult(
                 exit_code=0,
                 stdout="Successfully installed package",
                 stderr="",
-                installed_version="2.0.0",
+                installed_version=version,
                 import_origin="site-packages",
             )
 
@@ -223,11 +230,11 @@ class FakeSandboxAdapter(SandboxAdapter):
                     collected_count=len(self.node_ids),
                     collected_node_ids=list(self.node_ids),
                 )
-            # Default: reproduce expected failure with AssertionError
+            # Default: reproduce expected failure with AssertionError or configured expected failure
             return CommandResult(
                 exit_code=1,
                 stdout=f"collected {len(self.node_ids)} items",
-                stderr="AssertionError: target dependency upgrade broke tests",
+                stderr=self.reproduced_failure_stderr or "AssertionError: target dependency upgrade broke tests",
                 collected_count=len(self.node_ids),
                 collected_node_ids=list(self.node_ids),
             )

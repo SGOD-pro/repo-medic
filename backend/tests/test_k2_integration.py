@@ -1,3 +1,5 @@
+"""Integration tests running against in memory Python SQLite simulation of D1 transport."""
+
 import asyncio
 import json
 import pytest
@@ -17,7 +19,7 @@ from tests.test_storage import create_sqlite_d1_transport
 
 @pytest.fixture
 def k2_env(monkeypatch):
-    """Sets up an integrated K2 test harness with local D1 and real engine repair."""
+    """Sets up an integrated K2 test harness using Python SQLite simulation of D1 and real engine repair."""
     monkeypatch.setattr(settings, "repomedic_mode", "offline")
     monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
     monkeypatch.setattr(settings, "repomedic_max_run_usd", 2.0)
