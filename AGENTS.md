@@ -75,6 +75,13 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 Do not silently build or rewrite code that belongs to another owner's path. Request dependency/interface changes through the lead rather than editing another package.
 
+## Build approach
+
+Parallel offline slices integrating at fixed checkpoints (K0 to K5).
+
 ## Context files
 
 - [backend/src/engine/AGENTS.md](backend/src/engine/AGENTS.md): Engine baseline, upgrade, verifier, branch/refine, and provider adapters
+- [frontend/AGENTS.md](frontend/AGENTS.md): Package A frontend UI, dashboard, and browser checks
+- [backend/AGENTS.md](backend/AGENTS.md): Package B backend service, D1 repository, and worker queue
+- [db-worker/AGENTS.md](db-worker/AGENTS.md): Cloudflare Worker D1 database bridge

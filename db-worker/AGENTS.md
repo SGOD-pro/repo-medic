@@ -43,5 +43,6 @@ node test_worker.mjs
 ## Related specs
 
 * [0001. Local D1 migrations and bridge](../docs/specs/0001-local-d1-migrations-and-bridge/index.md)
+* [0005. Remote Cloudflare D1 integration](../docs/specs/0005-remote-cloudflare-d1-integration/index.md)
 
 _Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._

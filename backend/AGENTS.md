@@ -14,6 +14,7 @@ Package B provides the Python backend service, database storage abstractions, an
 | `src/storage/repository.py` | High level repository mapping D1 responses to domain contracts |
 | `src/storage/fake_host.py` | In memory host adapter for tests |
 | `src/engine/fake_engine.py` | Stub engine for testing task execution |
+| `src/worker.py` | Queue worker claiming loop, repair execution, and host ports |
 | `tests/test_storage.py` | Storage, budget, and event integration tests |
 
 ## Commands
@@ -47,5 +48,8 @@ uv run mypy src
 ## Related specs
 
 * [0001. Local D1 migrations and bridge](../docs/specs/0001-local-d1-migrations-and-bridge/index.md)
+* [0002. Task, run, and history API](../docs/specs/0002-task-run-history-api/index.md)
+* [0003. FakeEngine queue worker](../docs/specs/0003-fakeengine-queue-worker/index.md)
+* [0005. Remote Cloudflare D1 integration](../docs/specs/0005-remote-cloudflare-d1-integration/index.md)
 
 _Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._

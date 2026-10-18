@@ -12,7 +12,10 @@ Package A provides the user interface for RepoMedic built with Next.js App Route
 | `src/app/layout.tsx` | Root HTML layout and font setup |
 | `src/lib/contracts.ts` | TypeScript contracts mirroring backend domain models |
 | `src/lib/validation.ts` | Runtime schema validation helpers |
+| `src/lib/stream-manager.ts` | Event stream manager with backoff and reconnection |
 | `smoke_test.ts` | Smoke test runner for frontend validation |
+| `tests/browser_acceptance.mjs` | Playwright browser acceptance test suite |
+| `tests/process_control.mjs` | Process termination helper with signal handling |
 
 ## Commands
 
@@ -32,8 +35,11 @@ npm run lint
 # Run type checks
 npm run typecheck
 
-# Run smoke tests
+# Run smoke and unit tests
 npm run test
+
+# Run browser acceptance test suite
+npm run test:acceptance
 ```
 
 ## Conventions
