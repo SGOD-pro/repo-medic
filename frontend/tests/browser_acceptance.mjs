@@ -4,6 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { stopProcess } from "./process_control.mjs";
+
+export { stopProcess };
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -426,22 +429,6 @@ async function runAcceptanceSuite() {
     const testBackendUrl = `http://127.0.0.1:${testPort}`;
 
     let testProc = null;
-    const stopProcess = async (proc) => {
-      if (!proc || proc.killed) return;
-      await new Promise((resolve) => {
-        let timer = null;
-        proc.once("exit", () => {
-          if (timer) clearTimeout(timer);
-          resolve();
-        });
-        proc.kill("SIGTERM");
-        timer = setTimeout(() => {
-          if (!proc.killed) proc.kill("SIGKILL");
-          resolve();
-        }, 3000);
-      });
-    };
-
     const cleanTestProc = async () => {
       if (testProc) {
         await stopProcess(testProc);
@@ -478,12 +465,13 @@ async function runAcceptanceSuite() {
           cwd: backendCwd,
           env: {
             ...process.env,
-            REPOMEDIC_D1_WORKER_URL: D1_WORKER_URL,
-            REPOMEDIC_D1_AUTH_TOKEN: "local-bridge-token",
+            REPOMEDIC_DB_WORKER_URL: D1_WORKER_URL,
+            REPOMEDIC_DB_WORKER_TOKEN: "local-bridge-token",
             REPOMEDIC_MODE: "offline",
             PORT: String(testPort),
           },
           stdio: ["ignore", "pipe", "pipe"],
+          detached: process.platform !== "win32",
         });
       }
 
@@ -573,7 +561,9 @@ async function runAcceptanceSuite() {
   }
 }
 
-runAcceptanceSuite().catch((err) => {
-  console.error("ACCEPTANCE SUITE FAILED:", err);
-  process.exit(1);
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+  runAcceptanceSuite().catch((err) => {
+    console.error("ACCEPTANCE SUITE FAILED:", err);
+    process.exit(1);
+  });
+}
