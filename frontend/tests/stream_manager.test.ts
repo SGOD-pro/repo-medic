@@ -294,4 +294,104 @@ describe("stream manager and resilience (AC-1..AC-8)", () => {
     assert.equal(filteredEvents[1].seq, 5);
     assert.equal(filteredEvents[2].seq, 6);
   });
+
+  it("stream cleanup stops manager and terminates active streaming cleanly", async () => {
+    let streamClosed = false;
+    let eventsReceived = 0;
+
+    async function* slowStream(): AsyncIterable<EventEnvelope> {
+      try {
+        for (let i = 1; i <= 10; i++) {
+          yield {
+            run_id: "run-cleanup-1",
+            seq: i,
+            ts: new Date().toISOString(),
+            type: "usage.updated",
+            payload: { model_calls: i },
+          };
+          await new Promise((res) => setTimeout(res, 30));
+        }
+      } finally {
+        streamClosed = true;
+      }
+    }
+
+    const manager = new StreamManager({
+      runId: "run-cleanup-1",
+      streamFetcher: () => slowStream(),
+      onEvent: () => {
+        eventsReceived++;
+      },
+      onStatusChange: () => {},
+    });
+
+    manager.start();
+    // Allow first couple of events to yield
+    await new Promise((res) => setTimeout(res, 50));
+    assert.ok(eventsReceived >= 1, "Should have received at least 1 event");
+
+    // Stop manager (simulating effect cleanup / unmount)
+    manager.stop();
+    const countAtStop = eventsReceived;
+
+    // Wait more time to verify no more events are delivered
+    await new Promise((res) => setTimeout(res, 80));
+    assert.equal(manager.getStatus(), "disconnected");
+    assert.equal(eventsReceived, countAtStop, "No more events should be delivered after stop");
+    assert.equal(streamClosed, true, "Underlying stream generator should be closed via finally");
+  });
+
+  it("maintains exactly one active stream connection during prolonged running task and summary recovery", async () => {
+    let fetchCount = 0;
+    const events: EventEnvelope[] = [];
+    let summaryUpdateCalls = 0;
+
+    // Simulated callback like onUpdateRun that updates component state
+    const onUpdateRun = () => {
+      summaryUpdateCalls++;
+    };
+
+    async function* prolongedStream(): AsyncIterable<EventEnvelope> {
+      for (let i = 1; i <= 5; i++) {
+        yield {
+          run_id: "run-prolonged-1",
+          seq: i,
+          ts: new Date().toISOString(),
+          type: i === 1 ? "run.started" : "usage.updated",
+          payload: { count: i },
+        };
+        await new Promise((res) => setTimeout(res, 20));
+      }
+    }
+
+    const manager = new StreamManager({
+      runId: "run-prolonged-1",
+      streamFetcher: () => {
+        fetchCount++;
+        return prolongedStream();
+      },
+      onEvent: (event) => {
+        events.push(event);
+        // Simulate summary recovery triggered during event handling
+        onUpdateRun();
+      },
+      onStatusChange: (status) => {
+        if (status === "connected") {
+          onUpdateRun();
+        }
+      },
+    });
+
+    manager.start();
+    await new Promise((res) => setTimeout(res, 150));
+
+    // Must have only initiated a single connection
+    assert.equal(fetchCount, 1, "Must maintain exactly one active stream connection without recreation churn");
+    assert.equal(events.length, 5, "Must receive all 5 streamed events");
+    assert.ok(summaryUpdateCalls >= 5, "Summary update callbacks should have been invoked without restarting stream");
+    assert.equal(manager.getStatus(), "connected");
+
+    manager.stop();
+    assert.equal(manager.getStatus(), "disconnected");
+  });
 });

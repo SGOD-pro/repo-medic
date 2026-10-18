@@ -89,6 +89,14 @@ export function RunActiveView({
 
   const managerRef = React.useRef<StreamManager | null>(null);
   const seenSeqsRef = React.useRef<Set<number>>(new Set());
+  const onUpdateRunRef = React.useRef(onUpdateRun);
+  useEffect(() => {
+    onUpdateRunRef.current = onUpdateRun;
+  }, [onUpdateRun]);
+  const startedAtRef = React.useRef(startedAt);
+  useEffect(() => {
+    startedAtRef.current = startedAt;
+  }, [startedAt]);
   const [liveUsage, setLiveUsage] = useState<UsageSummary | null>(() => activeRun?.usage || null);
 
   // Dynamic stage and candidate states driven by documented events
@@ -148,7 +156,8 @@ export function RunActiveView({
         if (seenSeqsRef.current.has(event.seq)) return;
         seenSeqsRef.current.add(event.seq);
 
-        const elapsedNow = startedAt ? Math.max(0, Math.floor((Date.now() - startedAt) / 1000)) : 0;
+        const currentStartedAt = startedAtRef.current;
+        const elapsedNow = currentStartedAt ? Math.max(0, Math.floor((Date.now() - currentStartedAt) / 1000)) : 0;
         const m = Math.floor(elapsedNow / 60);
         const s = elapsedNow % 60;
         const timeTag = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
@@ -206,7 +215,7 @@ export function RunActiveView({
             `${timeTag} run.finished: state=${f.state} (${f.reason || "clean completion"})`,
           ]);
           apiClient.getRun(runId).then((recovered) => {
-            onUpdateRun?.(recovered);
+            onUpdateRunRef.current?.(recovered);
           }).catch(() => {});
         } else if (event.type === "run.cancelled") {
           setIsCancelled(true);
@@ -216,7 +225,7 @@ export function RunActiveView({
             `${timeTag} run.cancelled: ${(cancelledPayload?.reason as string) || "User initiated cancellation"}`,
           ]);
           apiClient.getRun(runId).then((recovered) => {
-            onUpdateRun?.(recovered);
+            onUpdateRunRef.current?.(recovered);
           }).catch(() => {});
         } else if (event.type === "run.error") {
           const err = event.payload as unknown as ErrorDetail;
@@ -226,7 +235,7 @@ export function RunActiveView({
             `${timeTag} run.error: ${err.code} - ${err.message}`,
           ]);
           apiClient.getRun(runId).then((recovered) => {
-            onUpdateRun?.(recovered);
+            onUpdateRunRef.current?.(recovered);
           }).catch(() => {});
         }
       },
@@ -235,7 +244,7 @@ export function RunActiveView({
         setReconnectAttempt(attempt);
         if (status === "connected") {
           apiClient.getRun(runId).then((recovered) => {
-            onUpdateRun?.(recovered);
+            onUpdateRunRef.current?.(recovered);
             if (recovered.state === "succeeded" || recovered.state === "failed" || recovered.state === "cancelled") {
               if (recovered.state === "cancelled") {
                 setIsCancelled(true);
@@ -257,7 +266,8 @@ export function RunActiveView({
       manager.stop();
       managerRef.current = null;
     };
-  }, [activeRun?.run_id, activeRun?.state, apiClient, onUpdateRun, startedAt]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeRun?.run_id, apiClient]);
 
   useEffect(() => {
     if (activeRun?.state === "cancelled") {
@@ -1016,7 +1026,10 @@ export function RunActiveView({
                   </div>
                 </div>
 
-                <div className="p-4 font-mono text-[12px] leading-relaxed text-[#A9B8AD] overflow-x-auto whitespace-pre max-h-[360px]">
+                <div
+                  data-testid="stream-terminal-logs"
+                  className="p-4 font-mono text-[12px] leading-relaxed text-[#A9B8AD] overflow-x-auto whitespace-pre max-h-[360px]"
+                >
                   {currentLogText.split("\n").map((line, idx) => {
                     const isPass =
                       line.includes("PASSED") ||

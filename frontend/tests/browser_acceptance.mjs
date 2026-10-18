@@ -2,23 +2,40 @@ import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
-const ARTIFACT_DIR = "/home/swyra/.gemini/antigravity-cli/brain/db53fea2-c2cd-42b1-bbad-cc6e0bd7195b";
-const BASE_URL = "http://localhost:3000";
-const BACKEND_URL = "http://127.0.0.1:8000";
-const D1_WORKER_URL = "http://127.0.0.1:8787";
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const REPO_ROOT = path.resolve(__dirname, "../..");
+
+const ARTIFACT_DIR = process.env.ARTIFACT_DIR || path.resolve(REPO_ROOT, "artifacts");
+const BASE_URL = process.env.BASE_URL || process.env.FRONTEND_URL || "http://localhost:3000";
+const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8000";
+const D1_WORKER_URL = process.env.D1_WORKER_URL || "http://127.0.0.1:8787";
 
 async function runAcceptanceSuite() {
   console.log("=== STARTING K2 BROWSER & LOCAL D1 INTEGRATION SUITE ===");
+  console.log(`Repository root: ${REPO_ROOT}`);
   console.log(`Artifact directory: ${ARTIFACT_DIR}`);
   console.log(`Frontend URL: ${BASE_URL}`);
   console.log(`Backend URL: ${BACKEND_URL}`);
   console.log(`D1 Worker URL: ${D1_WORKER_URL}`);
 
-  const browser = await chromium.launch({
+  fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+
+  const launchOptions = {
     headless: true,
     args: ["--no-sandbox", "--disable-setuid-sandbox"],
-  });
+  };
+  const homeChromium = path.join(process.env.HOME || "", ".local/bin/chromium");
+  if (process.env.CHROMIUM_PATH) {
+    launchOptions.executablePath = process.env.CHROMIUM_PATH;
+  } else if (process.env.HOME && fs.existsSync(homeChromium)) {
+    launchOptions.executablePath = homeChromium;
+  }
+
+  const browser = await chromium.launch(launchOptions);
 
   const context = await browser.newContext({
     viewport: { width: 1280, height: 950 },
@@ -282,18 +299,92 @@ async function runAcceptanceSuite() {
     console.log("  ✔ Failure scenario confirmed with Patch safety validation error; screenshot saved");
 
     // -------------------------------------------------------------
-    // CHECK 7: Stream Reconnect & Recovery Verification
+    // CHECK 7: Browser Stream Interruption and Recovery without Duplicate Events
     // -------------------------------------------------------------
-    console.log("\n[CHECK 7] Verifying SSE stream reconnection with Last-Event-ID header...");
-    const sseResp = await fetch(`${BACKEND_URL}/api/runs/${sequentialRunId}/events`, {
+    console.log("\n[CHECK 7] Testing browser stream interruption, background completion, and recovery without duplicate events...");
+    await page.goto(BASE_URL);
+    await page.waitForTimeout(500);
+
+    // Select TASK-084
+    await page.click('text=TASK-084');
+    await page.waitForTimeout(300);
+
+    // Start repair run
+    await page.click('button:has-text("Start repair run")');
+    await page.waitForURL(/runId=/, { timeout: 10000 });
+    const recoveryRunId = page.url().match(/runId=([a-zA-Z0-9_\-]+)/)[1];
+    console.log(`  ✔ Recovery test run started with runId: ${recoveryRunId}`);
+
+    // Wait until stream connects and renders initial log lines
+    await page.waitForSelector('text=repomedic-stream.log', { timeout: 5000 });
+    await page.waitForTimeout(600);
+
+    // Simulate network transport drop by disconnecting network via context.setOffline
+    console.log("  Simulating transport interruption via context.setOffline(true)...");
+    await context.setOffline(true);
+
+    // Verify browser UI enters disconnected / reconnecting state
+    const disconnectedOrReconnecting = page.locator('text=DISCONNECTED').or(page.locator('text=RECONNECTING'));
+    await disconnectedOrReconnecting.first().waitFor({ state: "visible", timeout: 10000 });
+    console.log("  ✔ Browser detected connection loss and rendered status indicator");
+
+    // Allow run to finish in backend while browser remains disconnected
+    console.log("  Awaiting run completion in backend while browser remains disconnected...");
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        const checkResp = await fetch(`${BACKEND_URL}/api/runs/${recoveryRunId}`);
+        if (checkResp.ok) {
+          const runData = await checkResp.json();
+          if (runData.state === "succeeded" || runData.state === "failed") {
+            console.log(`  ✔ Background run completed with state: ${runData.state}`);
+            break;
+          }
+        }
+      } catch {}
+    }
+
+    // Now restore network connection
+    console.log("  Restoring network connection via context.setOffline(false)...");
+    await context.setOffline(false);
+
+    // If Retry Connection button is visible, click it; otherwise let retry loop handle it
+    const retryBtn = page.locator('button:has-text("Retry Connection")');
+    if (await retryBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+      console.log("  Clicking Retry Connection button...");
+      await retryBtn.click();
+    }
+
+    // Wait for the browser to recover the terminal state (SUCCEEDED)
+    const recoverySucceededText = page.locator('[data-testid="active-run-status"]:has-text("SUCCEEDED")');
+    await recoverySucceededText.waitFor({ state: "visible", timeout: 20000 });
+    console.log("  ✔ Browser recovered terminal SUCCEEDED status");
+
+    // Verify log text in terminal box contains no duplicates
+    const logContainer = page.locator('[data-testid="stream-terminal-logs"]').first();
+    const logContent = await logContainer.textContent();
+    assert.ok(logContent, "Log container must contain event text");
+
+    const countMatches = (text, pattern) => (text.match(new RegExp(pattern, "g")) || []).length;
+    assert.equal(countMatches(logContent, "stage\\.baseline"), 1, "stage.baseline must appear exactly once in execution log");
+    assert.equal(countMatches(logContent, "stage\\.upgrade"), 1, "stage.upgrade must appear exactly once in execution log");
+    assert.equal(countMatches(logContent, "candidate\\."), 1, "candidate must appear exactly once in execution log");
+    assert.equal(countMatches(logContent, "stage\\.verification"), 1, "stage.verification must appear exactly once in execution log");
+    assert.equal(countMatches(logContent, "run\\.finished"), 1, "run.finished must appear exactly once in execution log");
+    console.log("  ✔ Deduplication verified: all stages and run.finished appear exactly once without duplicate log entries");
+
+    await page.screenshot({ path: path.join(ARTIFACT_DIR, "evidence_stream_recovery.png"), fullPage: true });
+    console.log("  ✔ Stream recovery screenshot saved");
+
+    // Also assert direct SSE endpoint deduplication with Last-Event-ID header
+    const sseResp = await fetch(`${BACKEND_URL}/api/runs/${recoveryRunId}/events`, {
       headers: { "Last-Event-ID": "2" },
     });
     assert.equal(sseResp.status, 200, "SSE stream must return 200 OK");
     const sseBody = await sseResp.text();
     assert.ok(!sseBody.includes("id: 1\n"), "Reconnected stream must not include event id: 1");
     assert.ok(!sseBody.includes("id: 2\n"), "Reconnected stream must not include event id: 2");
-    assert.ok(sseBody.includes("id: 3\n") || sseBody.includes("id: 4\n"), "Reconnected stream must include subsequent events");
-    console.log("  ✔ SSE stream reconnection and cursor deduplication verified");
+    console.log("  ✔ Direct SSE endpoint Last-Event-ID cursor deduplication verified");
 
     // -------------------------------------------------------------
     // CHECK 8: Budget Denial against Local D1 Bridge
@@ -327,48 +418,152 @@ async function runAcceptanceSuite() {
     console.log(`  ✔ Budget denial verified against local D1 (status: 409, code: ${budgetResult.error?.code}, tracked: $${(usageResult.total_micro_usd / 1_000_000).toFixed(4)})`);
 
     // -------------------------------------------------------------
-    // CHECK 9: Backend Startup Restart Recovery against Local D1 Bridge
+    // CHECK 9: Backend Process Stop and Restart against Persistent Local D1
     // -------------------------------------------------------------
-    console.log("\n[CHECK 9] Testing system restart recovery against local D1 bridge...");
-    // Seed an interrupted run directly in D1 Worker
-    const seedRunId = `run_interrupted_acceptance_${Date.now()}`;
-    const createSeedResp = await fetch(`${D1_WORKER_URL}/api/runs`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer local-bridge-token",
-      },
-      body: JSON.stringify({
-        run_id: seedRunId,
-        task_id: "TASK-084",
-        mode: "offline",
-        search_mode: "sequential",
-        state: "running",
-      }),
-    });
-    assert.equal(createSeedResp.status, 201, "Seeding running run into D1 must succeed");
+    console.log("\n[CHECK 9] Testing real backend process stop and restart against persistent local D1...");
+    const backendCwd = path.resolve(REPO_ROOT, "backend");
+    const testPort = Number(process.env.TEST_BACKEND_PORT) || 8009;
+    const testBackendUrl = `http://127.0.0.1:${testPort}`;
 
-    // Verify seed run is running in D1
-    const getBeforeResp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRunId}`, {
-      headers: { Authorization: "Bearer local-bridge-token" },
-    });
-    const runBefore = await getBeforeResp.json();
-    assert.equal(runBefore.state, "running", "Seed run must initially be running");
+    let testProc = null;
+    const stopProcess = async (proc) => {
+      if (!proc || proc.killed) return;
+      await new Promise((resolve) => {
+        let timer = null;
+        proc.once("exit", () => {
+          if (timer) clearTimeout(timer);
+          resolve();
+        });
+        proc.kill("SIGTERM");
+        timer = setTimeout(() => {
+          if (!proc.killed) proc.kill("SIGKILL");
+          resolve();
+        }, 3000);
+      });
+    };
 
-    // Run backend recover_interrupted_runs logic directly against local D1 bridge
-    const { execSync } = await import("node:child_process");
-    execSync(
-      'uv run python -c "from src.storage.repository import D1StorageRepository; from src.main import recover_interrupted_runs; recover_interrupted_runs(D1StorageRepository())"',
-      { cwd: "/home/swyra/projects/repo-medic/backend", stdio: "pipe" }
-    );
+    const cleanTestProc = async () => {
+      if (testProc) {
+        await stopProcess(testProc);
+        testProc = null;
+      }
+    };
 
-    const getAfterResp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRunId}`, {
-      headers: { Authorization: "Bearer local-bridge-token" },
-    });
-    const runAfter = await getAfterResp.json();
-    assert.equal(runAfter.state, "failed", "Recovered run must be transitioned to failed state");
-    assert.ok(runAfter.reason.includes("restarted"), `Recovered run must record restart reason, got: ${runAfter.reason}`);
-    console.log(`  ✔ Interrupted run recovery verified against local D1 bridge (state: ${runAfter.state}, reason: "${runAfter.reason}")`);
+    try {
+      async function waitForBackend(url, timeoutMs = 15000) {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+          try {
+            const resp = await fetch(`${url}/api/tasks`);
+            if (resp.ok) return true;
+          } catch {}
+          await new Promise((r) => setTimeout(r, 250));
+        }
+        throw new Error(`Backend at ${url} failed to respond within ${timeoutMs}ms`);
+      }
+
+      function launchTestBackend() {
+        return spawn("uv", [
+          "run",
+          "python",
+          "-m",
+          "uvicorn",
+          "src.main:create_app",
+          "--factory",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          String(testPort),
+        ], {
+          cwd: backendCwd,
+          env: {
+            ...process.env,
+            REPOMEDIC_D1_WORKER_URL: D1_WORKER_URL,
+            REPOMEDIC_D1_AUTH_TOKEN: "local-bridge-token",
+            REPOMEDIC_MODE: "offline",
+            PORT: String(testPort),
+          },
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+      }
+
+      // Step 1: Seed first interrupted run in persistent local D1
+      const seedRun1 = `run_interrupted_proc1_${Date.now()}`;
+      const seed1Resp = await fetch(`${D1_WORKER_URL}/api/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer local-bridge-token" },
+        body: JSON.stringify({
+          run_id: seedRun1,
+          task_id: "TASK-084",
+          mode: "offline",
+          search_mode: "sequential",
+          state: "running",
+        }),
+      });
+      assert.equal(seed1Resp.status, 201, "Seeding first run into D1 must succeed");
+
+      // Step 2: Spawn backend process and wait for startup lifespan recovery
+      console.log(`  Spawning test backend process on port ${testPort}...`);
+      testProc = launchTestBackend();
+      await waitForBackend(testBackendUrl);
+      console.log("  ✔ Backend process started and healthy");
+
+      // Verify that startup recovery transitioned seedRun1 to failed
+      const check1Resp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRun1}`, {
+        headers: { Authorization: "Bearer local-bridge-token" },
+      });
+      const check1 = await check1Resp.json();
+      assert.equal(check1.state, "failed", "Startup recovery must mark interrupted run as failed in persistent D1");
+      assert.ok(check1.reason.includes("restarted"), `Reason must mention process restart, got: ${check1.reason}`);
+      console.log(`  ✔ First run recovered upon startup: state=${check1.state}, reason="${check1.reason}"`);
+
+      // Step 3: Seed second run in persistent local D1 while backend is active
+      const seedRun2 = `run_interrupted_proc2_${Date.now()}`;
+      const seed2Resp = await fetch(`${D1_WORKER_URL}/api/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: "Bearer local-bridge-token" },
+        body: JSON.stringify({
+          run_id: seedRun2,
+          task_id: "TASK-084",
+          mode: "offline",
+          search_mode: "branch_refine",
+          state: "running",
+        }),
+      });
+      assert.equal(seed2Resp.status, 201, "Seeding second run into D1 must succeed");
+
+      // Step 4: Stop backend process (simulate shutdown/termination)
+      console.log("  Stopping backend process via SIGTERM...");
+      await stopProcess(testProc);
+      testProc = null;
+      console.log("  ✔ Backend process stopped");
+
+      // Verify second run remains 'running' in persistent D1 while backend is stopped
+      const checkDownResp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRun2}`, {
+        headers: { Authorization: "Bearer local-bridge-token" },
+      });
+      const checkDown = await checkDownResp.json();
+      assert.equal(checkDown.state, "running", "Seed run must remain running while backend process is stopped");
+      console.log("  ✔ Verified run state remains persisted in local D1 across process termination");
+
+      // Step 5: Restart backend process
+      console.log(`  Restarting backend process on port ${testPort}...`);
+      testProc = launchTestBackend();
+      await waitForBackend(testBackendUrl);
+      console.log("  ✔ Backend process restarted and healthy");
+
+      // Step 6: Verify startup recovery of second run
+      const check2Resp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRun2}`, {
+        headers: { Authorization: "Bearer local-bridge-token" },
+      });
+      const check2 = await check2Resp.json();
+      assert.equal(check2.state, "failed", "Restarted backend process must recover interrupted run in persistent D1");
+      assert.ok(check2.reason.includes("restarted"), `Reason must mention process restart, got: ${check2.reason}`);
+      console.log(`  ✔ Second run recovered upon process restart: state=${check2.state}, reason="${check2.reason}"`);
+    } finally {
+      await cleanTestProc();
+      console.log("  ✔ Test backend process cleaned up");
+    }
 
     console.log("\n========================================================");
     console.log("ALL 9 BROWSER & LOCAL D1 ACCEPTANCE CHECKS PASSED!");

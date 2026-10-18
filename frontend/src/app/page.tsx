@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { Navbar, ActiveTab } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { TasksView } from "@/components/tasks-view";
@@ -200,6 +200,18 @@ export default function Home() {
     }
   };
 
+  const handleUpdateRun = useCallback(
+    (updated: RunSummary) => {
+      setActiveRun(updated);
+      updateRun(updated.run_id, {
+        state: updated.state,
+        reason: updated.reason,
+        cost_usd: updated.usage?.estimated_usd,
+      });
+    },
+    [updateRun]
+  );
+
   const handleRunAnotherTask = () => {
     setActiveRun(null);
     updateUrlParam(null);
@@ -286,14 +298,7 @@ export default function Home() {
             activeRun={activeRun}
             onReturnToTasks={handleRunAnotherTask}
             apiClient={apiClient}
-            onUpdateRun={(updated) => {
-              setActiveRun(updated);
-              updateRun(updated.run_id, {
-                state: updated.state,
-                reason: updated.reason,
-                cost_usd: updated.usage?.estimated_usd,
-              });
-            }}
+            onUpdateRun={handleUpdateRun}
           />
         )}
 
