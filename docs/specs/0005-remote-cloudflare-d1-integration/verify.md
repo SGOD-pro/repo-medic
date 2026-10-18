@@ -1,6 +1,6 @@
 # Verification Guide: Remote Cloudflare D1 integration
 
-This guide describes the operator commands and verification protocol for checkpoint K3. Follow these steps when deploying and validating the remote Cloudflare D1 integration.
+This guide describes the operator commands, safety checklists, and acceptance verification protocol for checkpoint K3. Follow these steps when deploying and validating the remote Cloudflare D1 integration.
 
 ## 1. Preflight target verification
 
@@ -13,7 +13,7 @@ npx wrangler whoami
 # 2. Inspect target database details
 npx wrangler d1 info repomedic-db
 
-# 3. Ensure wrangler.toml database_id is configured
+# 3. Ensure wrangler.toml database_id is configured with the real D1 UUID
 # database_id must not equal 00000000-0000-0000-0000-000000000000
 grep "database_id" db-worker/wrangler.toml
 ```
@@ -43,17 +43,21 @@ Compatibility rules:
 * Migration `0002_tasks_table.sql` creates table `tasks`.
 * If tables already exist, verify that columns and check constraints match `docs/DATABASE.md` without destructive drops.
 
-## 3. Worker bridge deployment and secret provisioning
+## 3. Safe secret provisioning and Worker deployment order
 
-Deploy the private Worker bridge to Cloudflare and provision the shared service token.
+To ensure the remote Worker fails closed and never exposes the database, follow this strict deployment sequence:
 
 ```bash
-# 1. Deploy Worker to Cloudflare edge
-cd db-worker && npx wrangler deploy
-
-# 2. Provision secret authorization token on remote Worker
+# Step 1: Provision the secret authorization token BEFORE deploying code
 # Use a high entropy token string; never commit this token to git
-npx wrangler secret put DB_BRIDGE_TOKEN
+cd db-worker && npx wrangler secret put DB_BRIDGE_TOKEN
+
+# Step 2: Deploy the Worker bridge to Cloudflare edge
+npx wrangler deploy
+
+# Step 3: Verify fail closed behavior
+# If DB_BRIDGE_TOKEN is ever unconfigured, requests must return HTTP 500 or 401
+# It must NEVER fall back to local-bridge-token on remote deployments
 ```
 
 Verification of deployed Worker:
@@ -64,14 +68,18 @@ curl -s -i https://repomedic-db-worker.<your-subdomain>.workers.dev/health
 # 2. Probe data endpoint without token (must return HTTP 401 Unauthorized)
 curl -s -i https://repomedic-db-worker.<your-subdomain>.workers.dev/api/tasks
 
-# 3. Probe data endpoint with valid token (must return HTTP 200 with tasks list)
+# 3. Probe data endpoint with invalid token (must return HTTP 401 Unauthorized)
+curl -s -i -H "Authorization: Bearer invalid-token" \
+  https://repomedic-db-worker.<your-subdomain>.workers.dev/api/tasks
+
+# 4. Probe data endpoint with valid token (must return HTTP 200 with tasks list)
 curl -s -i -H "Authorization: Bearer <DB_BRIDGE_TOKEN>" \
   https://repomedic-db-worker.<your-subdomain>.workers.dev/api/tasks
 ```
 
-## 4. Backend environment configuration
+## 4. Backend environment and isolation configuration
 
-Configure the Python backend in `backend/.env` (or environment variables) to target the remote bridge:
+Configure the Python backend in `backend/.env` (or environment variables) to target the remote bridge with full acceptance isolation:
 
 ```env
 # Backend remote D1 configuration
@@ -83,11 +91,17 @@ DB_BRIDGE_TOKEN=<DB_BRIDGE_TOKEN>
 REPOMEDIC_MODE=offline
 REPOMEDIC_USE_REAL_ENGINE=true
 REPOMEDIC_WORKER_ENABLED=true
+
+# Remote acceptance isolation settings
+# Prevent startup fixture sync from modifying existing remote tasks
+REPOMEDIC_SYNC_FIXTURES=false
+# Scope interrupted run recovery and queue worker polling to test prefix
+REPOMEDIC_ACCEPTANCE_PREFIX=run_k3_accept_
 ```
 
 Ensure the frontend has zero exposure to `DB_BRIDGE_TOKEN`. The frontend communicates exclusively with the backend HTTP API at `http://127.0.0.1:8000`.
 
-## 5. Bounded acceptance test suite
+## 5. Bounded acceptance test suite and exact manifest tracking
 
 Run the dedicated remote acceptance test suite in `backend/`:
 
@@ -95,55 +109,62 @@ Run the dedicated remote acceptance test suite in `backend/`:
 cd backend && uv run pytest tests/test_k3_remote_d1.py -v
 ```
 
-The acceptance suite executes the following checks against remote D1:
+The test runner tracks an exact in memory manifest of every entity created during the test run:
+* `manifest["tasks"]`: list of specific `task_id` strings created.
+* `manifest["runs"]`: list of specific `run_id` strings created.
+* `manifest["operations"]`: list of specific `operation_id` strings created.
+* `manifest["artifacts"]`: list of specific `artifact_id` strings created.
 
-1. **Unauthorized request rejection**:
-   Confirms missing token and invalid token requests return HTTP 401 with standard error JSON.
+The suite executes the following checks using `D1HostPorts` and fake adapters:
 
-2. **Persistence across process restart**:
-   Creates run in remote D1 with state `running`. Shuts down backend process cleanly, confirms run remains `running` in remote D1 while backend is stopped, restarts backend, and verifies startup recovery marks run `failed` with restart reason.
+1. **Isolation across startup paths**:
+   Verifies that startup fixture sync does not mutate existing remote tasks, startup recovery inspects only runs matching the acceptance prefix, and queue worker polling claims only acceptance runs.
 
-3. **Event ordering and sequence integrity**:
-   Emits multiple sequential events and confirms monotonic sequence numbers without gaps. Queries `/api/runs/:run_id/events?after=N` over WAN and confirms order and payload integrity.
+2. **Fail closed authentication verification**:
+   Probes the bridge without tokens and with invalid tokens, verifying HTTP 401 rejection and confirming that dummy local tokens are never accepted on remote deployments.
 
-4. **User cancellation handling**:
-   Transitions active run to `cancelled` and confirms subsequent event emissions are rejected or handled idempotently.
+3. **Transaction failure assertions (zero partial writes)**:
+   * **Duplicate run insertion**: Attempting to insert a duplicate `run_id` returns HTTP 409 conflict. An assertion verifies that `SELECT COUNT(*) FROM runs WHERE run_id = ?` remains exactly 1, proving the original record was untouched.
+   * **Invalid event sequence**: Attempting to append an event with a duplicate sequence number returns an error. An assertion verifies `SELECT COUNT(*) FROM events WHERE run_id = ?` confirms no partial or out of order event was stored.
+   * **Oversized artifact boundary**: Uploading an artifact exceeding 1,048,576 bytes returns HTTP 400. An assertion verifies `SELECT COUNT(*) FROM artifacts WHERE artifact_id = ?` equals zero, proving no partial binary chunks remain.
 
-5. **Artifact hash and limit enforcement**:
-   Uploads patch diff and JSON evidence with computed SHA256 hashes. Fetches artifact by ID, decodes base64 content, and validates SHA256 checksum match. Probes 1 megabyte individual artifact limit and 8 megabytes total run volume limit, verifying HTTP 400 rejection on violation.
+4. **Concurrent budget reservation denial (per run and global)**:
+   * **Per run budget cap**: For a run with `max_run_micro_usd` equal to 1,000,000 (1 USD), two concurrent `D1HostPorts.reserve` calls of 600,000 micro USD are dispatched in parallel. Exactly one succeeds (HTTP 201), and the second returns `False` (HTTP 409 conflict). An assertion confirms `SELECT SUM(reserved_micro_usd) FROM operations WHERE run_id = ?` equals exactly 600,000, proving no budget overrun occurred.
+   * **Global budget cap (25 USD)**: Parallel reservations across multiple runs exceeding the 25 USD global cap (`repomedic_total_budget_usd = 25.0`) are dispatched simultaneously. Excess calls are rejected with HTTP 409 conflict. An assertion confirms the total committed micro USD across all operations in D1 remains strictly less than or equal to 25,000,000.
 
-6. **Concurrent budget reservation denial**:
-   Sends simultaneous parallel operation reservations exceeding `max_run_micro_usd`. Confirms atomic SQL transaction enforces spending cap and returns HTTP 409 conflict with code `budget_limit_exceeded`.
+5. **Persistence across process restart**:
+   Creates a run in state `running`. Terminates the backend process cleanly using `stopProcess`, verifies via direct bridge query that the run remains `running` in remote D1 while the backend is stopped, restarts the backend, and verifies that startup recovery marks only this acceptance run as `failed` with the restart reason.
 
-7. **Transactional failure behavior**:
-   Simulates run failure and verifies run state transitions to `failed` with reason, failure event is recorded, settled operations are finalized, and no orphaned locks remain.
+6. **Event streaming and artifact integrity**:
+   Emits sequential events via `D1HostPorts.emit` and verifies monotonic gap free sequence numbers. Stores patch and evidence artifacts via `D1HostPorts.save_artifact` and verifies decoded content matches the computed SHA256 checksum.
 
-## 6. Targeted cleanup protocol
+7. **User cancellation handling**:
+   Cancels an active run and verifies state transitions to `cancelled`. Confirms `D1HostPorts.cancelled()` returns true and subsequent reservations or updates are rejected.
 
-All test runs initiated during K3 testing use identifiers prefixed with `run_k3_remote_`:
-Example: `run_k3_remote_1713400000_a1b2c3d4`
+## 6. Exact manifest cleanup protocol
 
-Cleanup is strictly constrained to this prefix:
+Broad pattern matching deletions (such as SQL `LIKE` queries) are prohibited. Cleanup deletes only the exact primary keys recorded in the invocation manifest:
 
 ```sql
--- Safe scoped cleanup script (executed via wrangler or client script)
-DELETE FROM operations WHERE run_id LIKE 'run_k3_remote_%';
-DELETE FROM artifacts WHERE run_id LIKE 'run_k3_remote_%';
-DELETE FROM events WHERE run_id LIKE 'run_k3_remote_%';
-DELETE FROM runs WHERE run_id LIKE 'run_k3_remote_%';
+-- Safe exact manifest cleanup queries
+DELETE FROM operations WHERE operation_id IN (?1, ?2, ...);
+DELETE FROM artifacts WHERE artifact_id IN (?1, ?2, ...);
+DELETE FROM events WHERE run_id IN (?1, ?2, ...);
+DELETE FROM runs WHERE run_id IN (?1, ?2, ...);
+DELETE FROM tasks WHERE task_id IN (?1, ?2, ...);
 ```
 
-Safety constraints:
-* Never execute `DROP TABLE` on remote D1.
-* Never execute unconstrained `DELETE FROM runs` without a `WHERE run_id LIKE 'run_k3_remote_%'` clause.
-* If a test fails, skip cleanup to preserve failure evidence for debugging unless `--force-cleanup` is passed.
+Safety rules:
+* Deletions must use exact parameter lists matching the in memory manifest.
+* Never issue `DROP TABLE` or unconstrained deletions without an explicit `IN (...)` clause.
+* If any test assertion fails, cleanup is aborted and the manifest is saved to `artifacts/k3_manifest_<timestamp>.json` so that operators can inspect or clean up the exact records during post failure analysis.
 
 ## 7. Failure recovery procedures
 
 ### Migration failure recovery
 If `npx wrangler d1 migrations apply` fails:
 1. Query migration history: `npx wrangler d1 execute repomedic-db --remote --command "SELECT * FROM d1_migrations;"`
-2. Identify the failing statement. Because D1 wraps each migration file in a transaction, incomplete migrations are automatically rolled back.
+2. Identify the failing statement. Because Cloudflare D1 executes each migration file inside an atomic transaction, an error automatically rolls back the entire file.
 3. Correct the SQL migration script, commit the fix, and re-run the apply command.
 
 ### Worker deployment failure recovery
