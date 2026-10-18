@@ -27,7 +27,10 @@ Merge B and C, connect real Engine repair to QueueWorker with HostPorts, switch 
 ### 4. K3: Connect remote Cloudflare D1 · planned
 Deploy D1 bridge, apply migrations, set tokens.
 **Done when:** The backend persists to the remote D1 correctly while offline models run.
-- [ ] Design it (spec): `/architect k3 remote d1`
+- [x] Design it (spec): [0005. Remote Cloudflare D1 integration](../specs/0005-remote-cloudflare-d1-integration/index.md)
+- [ ] Preflight target verification and remote schema inspection
+- [ ] Deploy Worker bridge and configure backend tokens
+- [ ] Run remote acceptance suite with bounded records and cleanup
 
 ### 5. K4: Provider verification and live E2E · planned
 Verify inference keys, sandbox access, and run a capped live test.
