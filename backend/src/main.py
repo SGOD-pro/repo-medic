@@ -45,7 +45,20 @@ class RunsResponse(BaseModel):
     runs: list[RunSummary]
 
 
-def sync_task_fixtures(repo: D1StorageRepository) -> None:
+def sync_task_fixtures(
+    repo: D1StorageRepository,
+    sync_enabled: bool | None = None,
+    acceptance_prefix: str | None = None,
+) -> None:
+    if sync_enabled is None:
+        sync_enabled = getattr(settings, "repomedic_sync_fixtures", True)
+    if not sync_enabled:
+        logger.info("Task fixture sync skipped because repomedic_sync_fixtures is disabled")
+        return
+
+    if acceptance_prefix is None:
+        acceptance_prefix = getattr(settings, "repomedic_acceptance_prefix", "")
+
     fixture_dir = find_task_fixture_dir()
     if not fixture_dir:
         logger.info("No fixtures/tasks directory found for task synchronization")
@@ -55,17 +68,36 @@ def sync_task_fixtures(repo: D1StorageRepository) -> None:
             with open(json_file, "r", encoding="utf-8") as f:
                 data: dict[str, Any] = json.load(f)
             if "task_id" in data:
+                if acceptance_prefix and not data["task_id"].startswith(acceptance_prefix):
+                    logger.debug(
+                        "Skipping task fixture %s not matching acceptance prefix %s",
+                        data["task_id"],
+                        acceptance_prefix,
+                    )
+                    continue
                 repo.upsert_task(data)
                 logger.info("Synchronized task %s from %s", data["task_id"], json_file.name)
         except Exception as e:
             logger.warning("Failed to synchronize task fixture %s: %s", json_file.name, e)
 
 
-def recover_interrupted_runs(repo: D1StorageRepository) -> None:
+def recover_interrupted_runs(
+    repo: D1StorageRepository,
+    acceptance_prefix: str | None = None,
+) -> None:
     """Transition any runs left in 'running' state on restart to 'failed'."""
+    if acceptance_prefix is None:
+        acceptance_prefix = getattr(settings, "repomedic_acceptance_prefix", "")
     try:
         interrupted = repo.list_runs(limit=100, state="running")
         for r in interrupted:
+            if acceptance_prefix and not r.run_id.startswith(acceptance_prefix):
+                logger.debug(
+                    "Skipping interrupted run %s not matching acceptance prefix %s",
+                    r.run_id,
+                    acceptance_prefix,
+                )
+                continue
             try:
                 repo.finish_run(
                     r.run_id,
@@ -92,19 +124,27 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if repo is None:
         app.state.repository = D1StorageRepository()
         repo = app.state.repository
+
+    sync_enabled = getattr(settings, "repomedic_sync_fixtures", True)
+    acceptance_prefix = getattr(settings, "repomedic_acceptance_prefix", "")
+
     try:
-        sync_task_fixtures(repo)
+        sync_task_fixtures(repo, sync_enabled=sync_enabled, acceptance_prefix=acceptance_prefix)
     except Exception as e:
         logger.warning("Error during startup task sync: %s", e)
     try:
-        recover_interrupted_runs(repo)
+        recover_interrupted_runs(repo, acceptance_prefix=acceptance_prefix)
     except Exception as e:
         logger.warning("Error during startup run recovery: %s", e)
 
     worker = getattr(app.state, "worker", None)
     if worker is None and getattr(settings, "repomedic_worker_enabled", True):
         poll_interval = getattr(settings, "repomedic_worker_poll_interval_seconds", 1.0)
-        worker = QueueWorker(repo=repo, poll_interval_seconds=poll_interval)
+        worker = QueueWorker(
+            repo=repo,
+            poll_interval_seconds=poll_interval,
+            acceptance_prefix=acceptance_prefix,
+        )
         app.state.worker = worker
     if worker is not None and getattr(settings, "repomedic_worker_enabled", True):
         await worker.start()
@@ -253,7 +293,8 @@ def create_app(
                 detail="Budget unavailable",
             )
 
-        run_id = f"run_{uuid.uuid4().hex}"
+        prefix = getattr(settings, "repomedic_acceptance_prefix", "")
+        run_id = f"{prefix}{uuid.uuid4().hex}" if prefix else f"run_{uuid.uuid4().hex}"
         run = repo.create_run(
             run_id=run_id,
             task_id=payload.task_id,

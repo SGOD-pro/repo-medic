@@ -237,12 +237,137 @@ async function runTests() {
   assert.strictEqual(resHealth.status, 200);
   const healthJson = await resHealth.json();
   assert.strictEqual(healthJson.ok, true);
+  assert.strictEqual(healthJson.status, "healthy");
+
+  // Health probe is public and remains 200 when secret is missing or whitespace
+  const envMissingSecret = { DB: db };
+  const resHealthNoSecret = await worker.fetch(new Request("http://localhost/health"), envMissingSecret, ctx);
+  assert.strictEqual(resHealthNoSecret.status, 200);
+  const healthNoSecretJson = await resHealthNoSecret.json();
+  assert.strictEqual(healthNoSecretJson.ok, true);
+
+  const envWhitespaceSecret = { DB: db, DB_BRIDGE_TOKEN: "   \t  " };
+  const resHealthWhitespace = await worker.fetch(new Request("http://localhost/health"), envWhitespaceSecret, ctx);
+  assert.strictEqual(resHealthWhitespace.status, 200);
 
   console.log("2. Testing Auth enforcement");
+  // 2a. Remote missing secret rejection (fail closed with 500 auth_unconfigured)
+  const resMissingSecret = await worker.fetch(req("/api/tasks", "GET", null, "Bearer anything"), envMissingSecret, ctx);
+  assert.strictEqual(resMissingSecret.status, 500);
+  const missingJson = await resMissingSecret.json();
+  assert.strictEqual(missingJson.error.code, "auth_unconfigured");
+
+  // Empty string secret
+  const envEmptySecret = { DB: db, DB_BRIDGE_TOKEN: "" };
+  const resEmptySecret = await worker.fetch(req("/api/tasks", "GET", null, "Bearer anything"), envEmptySecret, ctx);
+  assert.strictEqual(resEmptySecret.status, 500);
+  const emptyJson = await resEmptySecret.json();
+  assert.strictEqual(emptyJson.error.code, "auth_unconfigured");
+
+  // Whitespace only secret
+  const resWhitespaceSecret = await worker.fetch(req("/api/tasks", "GET", null, "Bearer anything"), envWhitespaceSecret, ctx);
+  assert.strictEqual(resWhitespaceSecret.status, 500);
+  const whitespaceJson = await resWhitespaceSecret.json();
+  assert.strictEqual(whitespaceJson.error.code, "auth_unconfigured");
+
+  // Never infer local dev from request hostname alone (even with localhost or 127.0.0.1)
+  const resLocalhostNoSecret = await worker.fetch(new Request("http://localhost:8787/api/tasks", {
+    method: "GET",
+    headers: { Authorization: "Bearer local-bridge-token" },
+  }), envMissingSecret, ctx);
+  assert.strictEqual(resLocalhostNoSecret.status, 500);
+  const localhostJson = await resLocalhostNoSecret.json();
+  assert.strictEqual(localhostJson.error.code, "auth_unconfigured");
+
+  const res127NoSecret = await worker.fetch(new Request("http://127.0.0.1:8787/api/tasks", {
+    method: "GET",
+    headers: { Authorization: "Bearer local-bridge-token" },
+  }), envMissingSecret, ctx);
+  assert.strictEqual(res127NoSecret.status, 500);
+
+  // 2b. Invalid tokens when secret is configured (401 unauthorized)
   const resNoAuth = await worker.fetch(req("/api/runs", "POST", { run_id: "r1" }, null), env, ctx);
   assert.strictEqual(resNoAuth.status, 401);
+  const noAuthJson = await resNoAuth.json();
+  assert.strictEqual(noAuthJson.error.code, "unauthorized");
+
   const resBadAuth = await worker.fetch(req("/api/runs", "POST", { run_id: "r1" }, "Bearer wrong"), env, ctx);
   assert.strictEqual(resBadAuth.status, 401);
+  const badAuthJson = await resBadAuth.json();
+  assert.strictEqual(badAuthJson.error.code, "unauthorized");
+
+  // Local dummy token rejected when secret is configured and local mode is off
+  const resDummyRejected = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), env, ctx);
+  assert.strictEqual(resDummyRejected.status, 401);
+
+  // Malformed headers
+  const resMalformedAuth = await worker.fetch(req("/api/tasks", "GET", null, "Token my-secret-token"), env, ctx);
+  assert.strictEqual(resMalformedAuth.status, 401);
+
+  const resBasicAuth = await worker.fetch(req("/api/tasks", "GET", null, "Basic dXNlcjpwYXNz"), env, ctx);
+  assert.strictEqual(resBasicAuth.status, 401);
+
+  // 2c. Valid tokens when secret is configured
+  const resValidAuth = await worker.fetch(req("/api/tasks", "GET", null, "Bearer my-secret-token"), env, ctx);
+  assert.strictEqual(resValidAuth.status, 200);
+
+  // Case insensitive bearer scheme matches
+  const resLowerBearer = await worker.fetch(req("/api/tasks", "GET", null, "bearer my-secret-token"), env, ctx);
+  assert.strictEqual(resLowerBearer.status, 200);
+
+  const resUpperBearer = await worker.fetch(req("/api/tasks", "GET", null, "BEARER my-secret-token"), env, ctx);
+  assert.strictEqual(resUpperBearer.status, 200);
+
+  // Configured secret with trimmed whitespace
+  const envTrimmed = { DB: db, DB_BRIDGE_TOKEN: "   trimmed-secret-token   " };
+  const resValidTrimmed = await worker.fetch(req("/api/tasks", "GET", null, "Bearer trimmed-secret-token"), envTrimmed, ctx);
+  assert.strictEqual(resValidTrimmed.status, 200);
+
+  // 2d. Explicit local configuration behavior
+  // ENVIRONMENT set to local permits fallback dummy token when DB_BRIDGE_TOKEN is missing
+  const envLocal = { DB: db, ENVIRONMENT: "local" };
+  const resLocalDummy = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), envLocal, ctx);
+  assert.strictEqual(resLocalDummy.status, 200);
+
+  // ENVIRONMENT set to development does NOT permit dummy token fallback (fails closed with 500)
+  const envDev = { DB: db, ENVIRONMENT: "development" };
+  const resDevReject = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), envDev, ctx);
+  assert.strictEqual(resDevReject.status, 500);
+  const devJson = await resDevReject.json();
+  assert.strictEqual(devJson.error.code, "auth_unconfigured");
+
+  // Missing or wrong token still returns 401 under explicit local configuration
+  const resLocalNoAuth = await worker.fetch(req("/api/tasks", "GET", null, null), envLocal, ctx);
+  assert.strictEqual(resLocalNoAuth.status, 401);
+
+  const resLocalWrongAuth = await worker.fetch(req("/api/tasks", "GET", null, "Bearer wrong-token"), envLocal, ctx);
+  assert.strictEqual(resLocalWrongAuth.status, 401);
+
+  // ALLOW_LOCAL_DUMMY_TOKEN set to true permits fallback dummy token
+  const envLocalFlag = { DB: db, ALLOW_LOCAL_DUMMY_TOKEN: true };
+  const resLocalFlagDummy = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), envLocalFlag, ctx);
+  assert.strictEqual(resLocalFlagDummy.status, 200);
+
+  // ALLOW_LOCAL_DUMMY_TOKEN set to string "1" permits fallback dummy token
+  const envLocalFlagString = { DB: db, ALLOW_LOCAL_DUMMY_TOKEN: "1" };
+  const resLocalFlagStringDummy = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), envLocalFlagString, ctx);
+  assert.strictEqual(resLocalFlagStringDummy.status, 200);
+
+  // Explicit local mode with custom DB_BRIDGE_TOKEN requires custom token, rejecting dummy token
+  const envLocalCustom = { DB: db, ENVIRONMENT: "local", DB_BRIDGE_TOKEN: "custom-local-secret" };
+  const resLocalCustomPass = await worker.fetch(req("/api/tasks", "GET", null, "Bearer custom-local-secret"), envLocalCustom, ctx);
+  assert.strictEqual(resLocalCustomPass.status, 200);
+
+  const resLocalCustomDummyReject = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), envLocalCustom, ctx);
+  assert.strictEqual(resLocalCustomDummyReject.status, 401);
+
+  // Precedence test: ALLOW_LOCAL_DUMMY_TOKEN true with custom DB_BRIDGE_TOKEN still requires custom token
+  const envFlagWithSecret = { DB: db, ALLOW_LOCAL_DUMMY_TOKEN: true, DB_BRIDGE_TOKEN: "real-key" };
+  const resPrecedencePass = await worker.fetch(req("/api/tasks", "GET", null, "Bearer real-key"), envFlagWithSecret, ctx);
+  assert.strictEqual(resPrecedencePass.status, 200);
+
+  const resPrecedenceDummyReject = await worker.fetch(req("/api/tasks", "GET", null, "Bearer local-bridge-token"), envFlagWithSecret, ctx);
+  assert.strictEqual(resPrecedenceDummyReject.status, 401);
 
   console.log("3. Testing POST /api/runs");
   const resCreate = await worker.fetch(req("/api/runs", "POST", {

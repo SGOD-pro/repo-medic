@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     repomedic_worker_enabled: bool = True
     repomedic_worker_poll_interval_seconds: float = 1.0
     repomedic_use_real_engine: bool = False
+    repomedic_sync_fixtures: bool = True
+    repomedic_acceptance_prefix: str = ""
 
     # Nebius Token Factory inference & sandbox
     token_factory_api_key: str = ""

@@ -89,6 +89,7 @@ class QueueWorker:
         poll_interval_seconds: float = 1.0,
         repair_fn: Callable[[RepairRequest, TaskRecipe, HostPorts], Awaitable[RepairResult]] | None = None,
         use_real_engine: bool | None = None,
+        acceptance_prefix: str | None = None,
     ) -> None:
         self.repo = repo or D1StorageRepository()
         self.poll_interval_seconds = poll_interval_seconds
@@ -97,6 +98,10 @@ class QueueWorker:
             self.use_real_engine = use_real_engine
         else:
             self.use_real_engine = getattr(settings, "repomedic_use_real_engine", False)
+        if acceptance_prefix is not None:
+            self.acceptance_prefix = acceptance_prefix
+        else:
+            self.acceptance_prefix = getattr(settings, "repomedic_acceptance_prefix", "")
         self._running: bool = False
         self._loop_task: asyncio.Task[None] | None = None
 
@@ -122,11 +127,18 @@ class QueueWorker:
 
     async def process_one(self) -> bool:
         """Claim and process at most one queued run. Returns True if a run was processed."""
-        queued_runs = self.repo.list_runs(limit=1, state="queued")
-        if not queued_runs:
-            return False
+        if self.acceptance_prefix:
+            queued_runs = self.repo.list_runs(limit=100, state="queued")
+            matching_runs = [r for r in queued_runs if r.run_id.startswith(self.acceptance_prefix)]
+            if not matching_runs:
+                return False
+            run = matching_runs[0]
+        else:
+            queued_runs = self.repo.list_runs(limit=1, state="queued")
+            if not queued_runs:
+                return False
+            run = queued_runs[0]
 
-        run = queued_runs[0]
         run_id = run.run_id
         logger.info("Claiming queued run %s for task %s", run_id, run.task_id)
 
@@ -220,6 +232,7 @@ async def run_standalone(
     max_runs: int | None = None,
     repair_fn: Callable[[RepairRequest, TaskRecipe, HostPorts], Awaitable[RepairResult]] | None = None,
     use_real_engine: bool | None = None,
+    acceptance_prefix: str | None = None,
 ) -> None:
     """Run worker in standalone mode until stopped or max_runs is reached.
 
@@ -231,6 +244,7 @@ async def run_standalone(
         poll_interval_seconds=poll_interval,
         repair_fn=repair_fn,
         use_real_engine=use_real_engine,
+        acceptance_prefix=acceptance_prefix,
     )
     runs_processed = 0
 

@@ -1,6 +1,8 @@
 export interface Env {
   DB: D1Database;
   DB_BRIDGE_TOKEN?: string;
+  ENVIRONMENT?: string;
+  ALLOW_LOCAL_DUMMY_TOKEN?: string | boolean;
 }
 
 function jsonResponse(data: unknown, status = 200): Response {
@@ -18,12 +20,62 @@ function errorResponse(code: string, message: string, status = 400): Response {
   return jsonResponse({ error: { code, message } }, status);
 }
 
+function isExplicitLocal(env: Env): boolean {
+  if (env.ENVIRONMENT === "local") {
+    return true;
+  }
+  if (
+    env.ALLOW_LOCAL_DUMMY_TOKEN === true ||
+    env.ALLOW_LOCAL_DUMMY_TOKEN === "true" ||
+    env.ALLOW_LOCAL_DUMMY_TOKEN === "1"
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function timingSafeEqual(a: string, b: string): boolean {
+  const aLen = a.length;
+  const bLen = b.length;
+  let diff = aLen ^ bLen;
+  const maxLen = Math.max(aLen, bLen);
+  for (let i = 0; i < maxLen; i++) {
+    const charA = i < aLen ? a.charCodeAt(i) : 0;
+    const charB = i < bLen ? b.charCodeAt(i) : 0;
+    diff |= charA ^ charB;
+  }
+  return diff === 0;
+}
+
 function checkAuth(request: Request, env: Env): Response | null {
-  const expectedToken = env.DB_BRIDGE_TOKEN || DEFAULT_BRIDGE_TOKEN;
+  const rawToken = env.DB_BRIDGE_TOKEN;
+  const configuredToken = typeof rawToken === "string" ? rawToken.trim() : "";
+
+  let expectedToken: string;
+
+  if (configuredToken.length > 0) {
+    expectedToken = configuredToken;
+  } else if (isExplicitLocal(env)) {
+    expectedToken = DEFAULT_BRIDGE_TOKEN;
+  } else {
+    return errorResponse("auth_unconfigured", "Worker authentication secret is not configured", 500);
+  }
+
   const authHeader = request.headers.get("Authorization");
-  if (!authHeader || authHeader !== `Bearer ${expectedToken}`) {
+  if (!authHeader) {
     return errorResponse("unauthorized", "Missing or invalid authorization token", 401);
   }
+
+  const match = authHeader.match(/^bearer\s+(.+)$/i);
+  if (!match) {
+    return errorResponse("unauthorized", "Missing or invalid authorization token", 401);
+  }
+
+  const token = match[1].trim();
+  if (!timingSafeEqual(token, expectedToken)) {
+    return errorResponse("unauthorized", "Missing or invalid authorization token", 401);
+  }
+
   return null;
 }
 

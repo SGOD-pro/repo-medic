@@ -24,7 +24,7 @@ Merge B and C, connect real Engine repair to QueueWorker with HostPorts, switch 
 - [x] Complete B slices 4 and 5 (SSE, cancel, artifacts, budgets, restart)
 - [x] Verify K2 end to end scenarios offline
 
-### 4. K3: Connect remote Cloudflare D1 · planned
+### 4. K3: Connect remote Cloudflare D1 · in progress
 Deploy D1 bridge, apply migrations, set tokens.
 **Done when:** The backend persists to the remote D1 correctly while offline models run.
 - [x] Design it (spec): [0005. Remote Cloudflare D1 integration](../specs/0005-remote-cloudflare-d1-integration/index.md)

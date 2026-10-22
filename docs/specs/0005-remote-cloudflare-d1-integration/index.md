@@ -1,7 +1,7 @@
 # 0005. Remote Cloudflare D1 integration
 
 **Date**: 2026-10-18
-**Status**: Proposed
+**Status**: In Progress
 
 ## Summary
 
@@ -67,7 +67,7 @@ If a test check fails, cleanup is skipped and the manifest is written to `artifa
 
 In `db-worker/src/index.ts`, authentication fails closed on remote deployments:
 * If `env.DB_BRIDGE_TOKEN` is undefined, empty, or whitespace, `checkAuth` immediately rejects the request with HTTP 500 and code `auth_unconfigured`.
-* The fallback to `local-bridge-token` is restricted strictly to local development (detected via local hostname or `env.ENVIRONMENT === "local"`).
+* The fallback to `local-bridge-token` is permitted only through explicit local configuration (such as `env.ENVIRONMENT === "local"` or `env.ALLOW_LOCAL_DUMMY_TOKEN`), and is never inferred from request hostname.
 * Deployment order requires provisioning the secret before routing live traffic:
   1. `npx wrangler secret put DB_BRIDGE_TOKEN` provisions the encrypted secret on Cloudflare.
   2. `npx wrangler deploy` deploys the Worker code.
@@ -135,7 +135,7 @@ In `db-worker/src/index.ts`, authentication fails closed on remote deployments:
 ## Build plan
 
 1. Fail closed Worker authentication update (`db-worker/src/index.ts`):
-   Ensure `checkAuth` rejects requests immediately if `DB_BRIDGE_TOKEN` is unconfigured on remote environments, reserving local dummy token fallback for local dev server mode. Satisfies **AC-3**.
+   Ensure `checkAuth` rejects requests immediately with HTTP 500 auth_unconfigured if `DB_BRIDGE_TOKEN` is missing, empty, or whitespace, permitting local dummy token fallback only through explicit local configuration and never inferred from request hostname. Satisfies **AC-3**.
 
 2. Backend isolation scoping (`backend/src/main.py`, `backend/src/worker.py`):
    Add configurable scoping to startup fixture sync, interrupted run recovery, and queue worker polling so that acceptance runs do not alter or claim unrelated tasks and runs. Satisfies **AC-2**.
