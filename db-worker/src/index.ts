@@ -219,6 +219,7 @@ export default {
         const limit = Math.min(Math.max(isNaN(limitParam) ? 50 : limitParam, 1), 100);
         const taskId = url.searchParams.get("task_id") || null;
         const stateParam = url.searchParams.get("state") || null;
+        const runPrefix = url.searchParams.get("run_prefix") || url.searchParams.get("prefix") || null;
 
         if (stateParam) {
           const allowedStates = ["queued", "running", "succeeded", "failed", "cancelled"];
@@ -237,6 +238,11 @@ export default {
         if (stateParam) {
           conditions.push("state = ?");
           params.push(stateParam);
+        }
+        if (runPrefix) {
+          const escapedPrefix = runPrefix.replace(/([%_\\])/g, "\\$1");
+          conditions.push("run_id LIKE ? ESCAPE '\\'");
+          params.push(`${escapedPrefix}%`);
         }
         if (conditions.length > 0) {
           query += " WHERE " + conditions.join(" AND ");
@@ -780,6 +786,71 @@ export default {
         await updateOperationProviderRef(env.DB, operationId, body.provider_ref, now);
 
         return jsonResponse({ ok: true }, 200);
+      }
+
+      // POST /api/cleanup (exact manifest cleanup)
+      if (method === "POST" && pathname === "/api/cleanup") {
+        const body = (await request.json().catch(() => null)) as {
+          tasks?: unknown;
+          runs?: unknown;
+          operations?: unknown;
+          artifacts?: unknown;
+        } | null;
+
+        if (!body || typeof body !== "object") {
+          return errorResponse("invalid_request", "Invalid JSON payload for cleanup", 400);
+        }
+
+        const taskIds = Array.isArray(body.tasks) ? body.tasks.filter((x): x is string => typeof x === "string") : [];
+        const runIds = Array.isArray(body.runs) ? body.runs.filter((x): x is string => typeof x === "string") : [];
+        const opIds = Array.isArray(body.operations) ? body.operations.filter((x): x is string => typeof x === "string") : [];
+        const artIds = Array.isArray(body.artifacts) ? body.artifacts.filter((x): x is string => typeof x === "string") : [];
+
+        // Exact deletion order: operations -> artifacts -> events -> runs -> tasks
+        const deletedCounts = {
+          operations: 0,
+          artifacts: 0,
+          events: 0,
+          runs: 0,
+          tasks: 0,
+        };
+
+        const chunk = <T>(arr: T[], size: number): T[][] => {
+          const res: T[][] = [];
+          for (let i = 0; i < arr.length; i += size) {
+            res.push(arr.slice(i, i + size));
+          }
+          return res;
+        };
+
+        for (const opBatch of chunk(opIds, 50)) {
+          const placeholders = opBatch.map(() => "?").join(",");
+          const res = await env.DB.prepare(`DELETE FROM operations WHERE operation_id IN (${placeholders})`).bind(...opBatch).run();
+          deletedCounts.operations += res.meta?.changes ?? 0;
+        }
+
+        for (const artBatch of chunk(artIds, 50)) {
+          const placeholders = artBatch.map(() => "?").join(",");
+          const res = await env.DB.prepare(`DELETE FROM artifacts WHERE artifact_id IN (${placeholders})`).bind(...artBatch).run();
+          deletedCounts.artifacts += res.meta?.changes ?? 0;
+        }
+
+        for (const runBatch of chunk(runIds, 50)) {
+          const placeholders = runBatch.map(() => "?").join(",");
+          const resEvents = await env.DB.prepare(`DELETE FROM events WHERE run_id IN (${placeholders})`).bind(...runBatch).run();
+          deletedCounts.events += resEvents.meta?.changes ?? 0;
+
+          const resRuns = await env.DB.prepare(`DELETE FROM runs WHERE run_id IN (${placeholders})`).bind(...runBatch).run();
+          deletedCounts.runs += resRuns.meta?.changes ?? 0;
+        }
+
+        for (const taskBatch of chunk(taskIds, 50)) {
+          const placeholders = taskBatch.map(() => "?").join(",");
+          const res = await env.DB.prepare(`DELETE FROM tasks WHERE task_id IN (${placeholders})`).bind(...taskBatch).run();
+          deletedCounts.tasks += res.meta?.changes ?? 0;
+        }
+
+        return jsonResponse({ ok: true, deleted: deletedCounts }, 200);
       }
 
       return errorResponse("not_found", `Route '${method} ${pathname}' not found`, 404);

@@ -8,6 +8,7 @@ class MockD1 {
     this.events = [];
     this.artifacts = [];
     this.operations = [];
+    this.tasks = new Map();
   }
 
   prepare(query) {
@@ -99,6 +100,22 @@ class MockD1 {
                 ts: e.ts,
               }));
               return { results: evts };
+            }
+            if (q.includes("FROM runs")) {
+              let runs = Array.from(mock.runs.values());
+              if (q.includes("state = ?")) {
+                const s = args.find(a => ["queued", "running", "succeeded", "failed", "cancelled"].includes(a));
+                if (s) runs = runs.filter(r => r.state === s);
+              }
+              if (q.includes("run_id LIKE ?")) {
+                const prefixParam = args.find(a => typeof a === "string" && a.endsWith("%"));
+                if (prefixParam) {
+                  const rawPrefix = prefixParam.slice(0, -1);
+                  const prefix = rawPrefix.replace(/\\([%_\\])/g, "$1");
+                  runs = runs.filter(r => r.run_id.startsWith(prefix));
+                }
+              }
+              return { results: runs };
             }
             return { results: [] };
           },
@@ -198,6 +215,35 @@ class MockD1 {
                 op.updated_at = args[1];
               }
               return { success: true, meta: { changes: 1 } };
+            }
+            if (q.includes("DELETE FROM operations")) {
+              const before = mock.operations.length;
+              mock.operations = mock.operations.filter(o => !args.includes(o.operation_id));
+              return { success: true, meta: { changes: before - mock.operations.length } };
+            }
+            if (q.includes("DELETE FROM artifacts")) {
+              const before = mock.artifacts.length;
+              mock.artifacts = mock.artifacts.filter(a => !args.includes(a.artifact_id));
+              return { success: true, meta: { changes: before - mock.artifacts.length } };
+            }
+            if (q.includes("DELETE FROM events")) {
+              const before = mock.events.length;
+              mock.events = mock.events.filter(e => !args.includes(e.run_id));
+              return { success: true, meta: { changes: before - mock.events.length } };
+            }
+            if (q.includes("DELETE FROM runs")) {
+              let changes = 0;
+              for (const rid of args) {
+                if (mock.runs.delete(rid)) changes++;
+              }
+              return { success: true, meta: { changes } };
+            }
+            if (q.includes("DELETE FROM tasks")) {
+              let changes = 0;
+              for (const tid of args) {
+                if (mock.tasks && mock.tasks.delete(tid)) changes++;
+              }
+              return { success: true, meta: { changes } };
             }
             return { success: true, meta: { changes: 1 } };
           },
@@ -570,6 +616,63 @@ async function runTests() {
     global_budget_micro_usd: 1200000,
   }), env, ctx);
   assert.strictEqual(resGlobalOver.status, 409);
+
+  console.log("10. Testing GET /api/runs with run_prefix filter");
+  // Insert run with prefix run_k3_accept_ and run with run_other_
+  await worker.fetch(req("/api/runs", "POST", {
+    run_id: "run_k3_accept_alpha",
+    task_id: "task-100",
+    mode: "offline",
+    search_mode: "sequential",
+  }), env, ctx);
+  await worker.fetch(req("/api/runs", "POST", {
+    run_id: "run_other_beta",
+    task_id: "task-100",
+    mode: "offline",
+    search_mode: "sequential",
+  }), env, ctx);
+
+  const resPrefixFilter = await worker.fetch(req("/api/runs?run_prefix=run_k3_accept_"), env, ctx);
+  assert.strictEqual(resPrefixFilter.status, 200);
+  const prefixJson = await resPrefixFilter.json();
+  const matchedIds = prefixJson.runs.map(r => r.run_id);
+  assert.ok(matchedIds.includes("run_k3_accept_alpha"));
+  assert.ok(!matchedIds.includes("run_other_beta"));
+
+  console.log("11. Testing POST /api/cleanup (exact manifest cleanup)");
+  // Populate an artifact and an operation for run_k3_accept_alpha
+  await worker.fetch(req("/api/runs/run_k3_accept_alpha/artifacts", "POST", {
+    artifact_id: "art-accept-1",
+    kind: "patch",
+    filename: "test.patch",
+    sha256: "hash123",
+    size_bytes: 50,
+    content_base64: "dGVzdA==",
+  }), env, ctx);
+
+  await worker.fetch(req("/api/runs/run_k3_accept_alpha/operations", "POST", {
+    operation_id: "op-accept-1",
+    kind: "model",
+    reserved_micro_usd: 100000,
+  }), env, ctx);
+
+  // Invoke cleanup targeting ONLY the manifest entities
+  const cleanupRes = await worker.fetch(req("/api/cleanup", "POST", {
+    runs: ["run_k3_accept_alpha"],
+    operations: ["op-accept-1"],
+    artifacts: ["art-accept-1"],
+    tasks: [],
+  }), env, ctx);
+  assert.strictEqual(cleanupRes.status, 200);
+  const cleanupData = await cleanupRes.json();
+  assert.strictEqual(cleanupData.ok, true);
+
+  // Verify run_k3_accept_alpha is deleted while run_other_beta is intact
+  const resCheckAlpha = await worker.fetch(req("/api/runs/run_k3_accept_alpha"), env, ctx);
+  assert.strictEqual(resCheckAlpha.status, 404);
+
+  const resCheckBeta = await worker.fetch(req("/api/runs/run_other_beta"), env, ctx);
+  assert.strictEqual(resCheckBeta.status, 200);
 
   console.log("All Worker bridge tests passed successfully!");
 }

@@ -89,24 +89,35 @@ def recover_interrupted_runs(
     if acceptance_prefix is None:
         acceptance_prefix = getattr(settings, "repomedic_acceptance_prefix", "")
     try:
-        interrupted = repo.list_runs(limit=100, state="running")
-        for r in interrupted:
-            if acceptance_prefix and not r.run_id.startswith(acceptance_prefix):
-                logger.debug(
-                    "Skipping interrupted run %s not matching acceptance prefix %s",
-                    r.run_id,
-                    acceptance_prefix,
-                )
-                continue
-            try:
-                repo.finish_run(
-                    r.run_id,
-                    state="failed",
-                    reason="Backend process restarted while run was in progress",
-                )
-                logger.info("Marked interrupted run %s as failed", r.run_id)
-            except Exception as e:
-                logger.warning("Failed to mark interrupted run %s: %s", r.run_id, e)
+        while True:
+            interrupted = repo.list_runs(
+                limit=100,
+                state="running",
+                run_prefix=acceptance_prefix or None,
+            )
+            if not interrupted:
+                break
+            marked_any = False
+            for r in interrupted:
+                if acceptance_prefix and not r.run_id.startswith(acceptance_prefix):
+                    logger.debug(
+                        "Skipping interrupted run %s not matching acceptance prefix %s",
+                        r.run_id,
+                        acceptance_prefix,
+                    )
+                    continue
+                try:
+                    repo.finish_run(
+                        r.run_id,
+                        state="failed",
+                        reason="Backend process restarted while run was in progress",
+                    )
+                    marked_any = True
+                    logger.info("Marked interrupted run %s as failed", r.run_id)
+                except Exception as e:
+                    logger.warning("Failed to mark interrupted run %s: %s", r.run_id, e)
+            if not marked_any:
+                break
     except Exception as e:
         logger.warning("Could not query interrupted runs during startup recovery: %s", e)
 

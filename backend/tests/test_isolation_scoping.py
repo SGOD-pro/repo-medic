@@ -197,6 +197,107 @@ async def test_queue_worker_claims_only_matching_prefix(test_repo: D1StorageRepo
 
 
 @pytest.mark.asyncio
+async def test_queue_worker_finds_matching_run_beyond_first_100_unrelated_rows(
+    test_repo: D1StorageRepository,
+) -> None:
+    """QueueWorker claims matching run even when preceded by more than 100 unrelated runs."""
+    test_repo.upsert_task({
+        "task_id": "task_1",
+        "title": "Test task",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+
+    # Insert 105 unrelated queued runs first
+    for i in range(105):
+        test_repo.create_run(
+            run_id=f"run_unrelated_{i:03d}",
+            task_id="task_1",
+            mode="offline",
+            search_mode="sequential",
+            state="queued",
+            created_at=f"2026-10-18T00:{i // 60:02d}:{i % 60:02d}Z",
+        )
+
+    # Insert the matching run at position 106
+    test_repo.create_run(
+        run_id="run_k3_accept_hidden_target",
+        task_id="task_1",
+        mode="offline",
+        search_mode="sequential",
+        state="queued",
+        created_at="2026-10-18T02:00:00Z",
+    )
+
+    async def mock_repair(req: RepairRequest, recipe: TaskRecipe, host: object) -> RepairResult:
+        return RepairResult(state="succeeded", reason="Repaired hidden target run")
+
+    worker = QueueWorker(
+        repo=test_repo,
+        repair_fn=mock_repair,
+        acceptance_prefix="run_k3_accept_",
+    )
+
+    processed = await worker.process_one()
+    assert processed is True
+
+    target_run = test_repo.get_run("run_k3_accept_hidden_target")
+    assert target_run.state == "succeeded"
+
+    # Verify unrelated runs are still queued
+    assert test_repo.get_run("run_unrelated_000").state == "queued"
+    assert test_repo.get_run("run_unrelated_104").state == "queued"
+
+
+def test_recover_interrupted_runs_finds_matching_runs_beyond_first_100_unrelated_rows(
+    test_repo: D1StorageRepository,
+) -> None:
+    """Interrupted recovery marks matching runs even when preceded by more than 100 unrelated runs."""
+    test_repo.upsert_task({
+        "task_id": "task_1",
+        "title": "Test task",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+
+    # Insert 105 unrelated running runs first
+    for i in range(105):
+        test_repo.create_run(
+            run_id=f"run_unrelated_running_{i:03d}",
+            task_id="task_1",
+            mode="offline",
+            search_mode="sequential",
+            state="running",
+            created_at=f"2026-10-18T00:{i // 60:02d}:{i % 60:02d}Z",
+        )
+
+    # Insert matching running run at position 106
+    test_repo.create_run(
+        run_id="run_k3_accept_interrupted_hidden",
+        task_id="task_1",
+        mode="offline",
+        search_mode="sequential",
+        state="running",
+        created_at="2026-10-18T02:00:00Z",
+    )
+
+    recover_interrupted_runs(test_repo, acceptance_prefix="run_k3_accept_")
+
+    target_run = test_repo.get_run("run_k3_accept_interrupted_hidden")
+    assert target_run.state == "failed"
+
+    # Verify unrelated runs remain in running state
+    assert test_repo.get_run("run_unrelated_running_000").state == "running"
+    assert test_repo.get_run("run_unrelated_running_104").state == "running"
+
+
+@pytest.mark.asyncio
 async def test_queue_worker_no_matching_runs_returns_false(test_repo: D1StorageRepository) -> None:
     """When no queued runs match acceptance_prefix, worker returns False and skips processing."""
     test_repo.upsert_task({

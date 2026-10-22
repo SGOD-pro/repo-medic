@@ -222,6 +222,7 @@ class RepoMedicDB:
         limit: int = 50,
         task_id: Optional[str] = None,
         state: Optional[str] = None,
+        run_prefix: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """List runs with optional limit, task_id, and state filters."""
         params: Dict[str, Any] = {"limit": limit}
@@ -229,8 +230,14 @@ class RepoMedicDB:
             params["task_id"] = task_id
         if state:
             params["state"] = state
+        if run_prefix:
+            params["run_prefix"] = run_prefix
         result = self._request("GET", "/api/runs", params=params)
         return result.get("runs", [])
+
+    def cleanup_manifest(self, manifest: Dict[str, List[str]]) -> Dict[str, Any]:
+        """Delete exact entities recorded in the acceptance manifest."""
+        return self._request("POST", "/api/cleanup", json=manifest)
 
     # --- Tasks ---
 

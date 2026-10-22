@@ -128,11 +128,10 @@ class QueueWorker:
     async def process_one(self) -> bool:
         """Claim and process at most one queued run. Returns True if a run was processed."""
         if self.acceptance_prefix:
-            queued_runs = self.repo.list_runs(limit=100, state="queued")
-            matching_runs = [r for r in queued_runs if r.run_id.startswith(self.acceptance_prefix)]
-            if not matching_runs:
+            queued_runs = self.repo.list_runs(limit=1, state="queued", run_prefix=self.acceptance_prefix)
+            if not queued_runs or not queued_runs[0].run_id.startswith(self.acceptance_prefix):
                 return False
-            run = matching_runs[0]
+            run = queued_runs[0]
         else:
             queued_runs = self.repo.list_runs(limit=1, state="queued")
             if not queued_runs:

@@ -5,6 +5,17 @@ This guide describes the operator commands, safety checklists, and acceptance ve
 ## 1. Preflight target verification
 
 Before running any remote commands, verify operator credentials, account scope, and database configuration.
+You can run the automated preflight tool:
+
+```bash
+# Offline verification of wrangler binding, database name, and non placeholder UUID
+cd backend && uv run python scripts/preflight_check.py
+
+# Live remote verification with operator Cloudflare credentials
+cd backend && uv run python scripts/preflight_check.py --remote
+```
+
+Or execute the checks individually:
 
 ```bash
 # 1. Verify operator identity and account access
@@ -106,7 +117,14 @@ Ensure the frontend has zero exposure to `DB_BRIDGE_TOKEN`. The frontend communi
 Run the dedicated remote acceptance test suite in `backend/`:
 
 ```bash
+# Offline simulation mode (verifies harness and assertions with zero cloud credentials)
 cd backend && uv run pytest tests/test_k3_remote_d1.py -v
+
+# Live remote acceptance against deployed Worker bridge (explicitly opt in)
+cd backend && REPOMEDIC_RUN_REMOTE_D1=true \
+  REPOMEDIC_DB_WORKER_URL=https://repomedic-db-worker.<your-subdomain>.workers.dev \
+  REPOMEDIC_DB_WORKER_TOKEN=<DB_BRIDGE_TOKEN> \
+  uv run pytest tests/test_k3_remote_d1.py -v
 ```
 
 The test runner tracks an exact in memory manifest of every entity created during the test run:

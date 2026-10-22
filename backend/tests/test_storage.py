@@ -1,5 +1,6 @@
 import pytest
 import sqlite3
+import threading
 import json
 import base64
 import hashlib
@@ -84,7 +85,9 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
     );
     """)
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    lock = threading.Lock()
+
+    def _sync_handler(request: httpx.Request) -> httpx.Response:
         url = request.url
         method = request.method.upper()
         path = url.path.rstrip("/")
@@ -168,6 +171,7 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
             limit_val = int(request.url.params.get("limit", 50))
             task_filter = request.url.params.get("task_id")
             state_filter = request.url.params.get("state")
+            run_prefix = request.url.params.get("run_prefix")
             if state_filter and state_filter not in ["queued", "running", "succeeded", "failed", "cancelled"]:
                 return httpx.Response(
                     400,
@@ -185,6 +189,10 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
             if state_filter:
                 conditions.append("state = ?")
                 params.append(state_filter)
+            if run_prefix:
+                escaped_prefix = run_prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+                conditions.append("run_id LIKE ? ESCAPE '\\'")
+                params.append(f"{escaped_prefix}%")
             if conditions:
                 query += " WHERE " + " AND ".join(conditions)
             if state_filter == "queued":
@@ -307,6 +315,10 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
         if method == "POST" and path.endswith("/events") and path.startswith("/api/runs/"):
             run_id = path.split("/")[3]
             body = json.loads(request.content.decode("utf-8"))
+            if not body.get("type") or not isinstance(body.get("type"), str):
+                return httpx.Response(400, json={"error": {"code": "invalid_request", "message": "Type required"}})
+            if not body.get("payload") or not isinstance(body.get("payload"), dict):
+                return httpx.Response(400, json={"error": {"code": "invalid_request", "message": "Payload required"}})
             row = conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,)).fetchone()
             if not row:
                 return httpx.Response(404, json={"error": {"code": "not_found", "message": "Not found"}})
@@ -497,7 +509,42 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
             )
             return httpx.Response(200, json={"ok": True})
 
+        # POST /api/cleanup (exact manifest cleanup)
+        if method == "POST" and path == "/api/cleanup":
+            body = json.loads(request.content.decode("utf-8")) if request.content else {}
+            task_ids = [str(x) for x in body.get("tasks", []) if isinstance(x, str)]
+            run_ids = [str(x) for x in body.get("runs", []) if isinstance(x, str)]
+            op_ids = [str(x) for x in body.get("operations", []) if isinstance(x, str)]
+            art_ids = [str(x) for x in body.get("artifacts", []) if isinstance(x, str)]
+
+            deleted = {"operations": 0, "artifacts": 0, "events": 0, "runs": 0, "tasks": 0}
+
+            if op_ids:
+                q_marks = ",".join("?" * len(op_ids))
+                cur = conn.execute(f"DELETE FROM operations WHERE operation_id IN ({q_marks})", op_ids)
+                deleted["operations"] = cur.rowcount
+            if art_ids:
+                q_marks = ",".join("?" * len(art_ids))
+                cur = conn.execute(f"DELETE FROM artifacts WHERE artifact_id IN ({q_marks})", art_ids)
+                deleted["artifacts"] = cur.rowcount
+            if run_ids:
+                q_marks = ",".join("?" * len(run_ids))
+                cur_ev = conn.execute(f"DELETE FROM events WHERE run_id IN ({q_marks})", run_ids)
+                deleted["events"] = cur_ev.rowcount
+                cur_runs = conn.execute(f"DELETE FROM runs WHERE run_id IN ({q_marks})", run_ids)
+                deleted["runs"] = cur_runs.rowcount
+            if task_ids:
+                q_marks = ",".join("?" * len(task_ids))
+                cur_tasks = conn.execute(f"DELETE FROM tasks WHERE task_id IN ({q_marks})", task_ids)
+                deleted["tasks"] = cur_tasks.rowcount
+
+            return httpx.Response(200, json={"ok": True, "deleted": deleted})
+
         return httpx.Response(404, json={"error": {"code": "not_found", "message": "Route not found"}})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        with lock:
+            return _sync_handler(request)
 
     return httpx.MockTransport(handler)
 

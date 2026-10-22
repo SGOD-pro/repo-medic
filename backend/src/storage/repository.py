@@ -107,9 +107,19 @@ class D1StorageRepository:
         limit: int = 50,
         task_id: str | None = None,
         state: str | None = None,
+        run_prefix: str | None = None,
     ) -> list[RunSummary]:
-        raw_runs = self.client.list_runs(limit=limit, task_id=task_id, state=state)
+        raw_runs = self.client.list_runs(
+            limit=limit,
+            task_id=task_id,
+            state=state,
+            run_prefix=run_prefix,
+        )
         return [self._map_run_summary(r) for r in raw_runs]
+
+    def cleanup_manifest(self, manifest: dict[str, list[str]]) -> dict[str, Any]:
+        """Delete exact entities recorded in the acceptance manifest."""
+        return self.client.cleanup_manifest(manifest)
 
     def list_tasks(self) -> list[TaskSummary]:
         raw_tasks = self.client.list_tasks()
