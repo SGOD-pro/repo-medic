@@ -12,7 +12,9 @@ from pydantic import ValidationError
 from src.config import settings
 from src.contracts import HostPorts, RepairRequest, RepairResult, TaskRecipe
 from src.engine import fake_engine
+from src.engine.contree_sandbox import ConTreeSandboxAdapter
 from src.engine.repair import repair as engine_repair
+from src.engine.token_factory_model import TokenFactoryModelAdapter
 from src.fixtures import find_task_fixture_dir
 from src.storage.repository import D1HostPorts, D1StorageRepository
 
@@ -171,14 +173,57 @@ class QueueWorker:
             recipe = load_task_recipe(run.task_id, self.repo)
             host = D1HostPorts(run_id=run_id, repo=self.repo)
 
-            if self.repair_fn is not None:
-                repair_callable = self.repair_fn
-            elif self.use_real_engine:
-                repair_callable = engine_repair
-            else:
-                repair_callable = fake_engine.repair
+            # In live execution mode, enforce explicit live adapters with zero fake fallback
+            if run.mode == "live":
+                token_factory_key = (settings.token_factory_api_key or settings.nebius_api_key).strip()
+                nebius_key = settings.nebius_api_key.strip()
+                project_id = (
+                    settings.nebius_project_id or settings.token_factory_sandbox_project_id
+                ).strip()
+                missing = []
+                if not token_factory_key:
+                    missing.append("TOKEN_FACTORY_API_KEY (or NEBIUS_API_KEY)")
+                if not nebius_key:
+                    missing.append("NEBIUS_API_KEY")
+                if not project_id:
+                    missing.append("NEBIUS_PROJECT_ID")
+                if missing:
+                    fail_reason = (
+                        f"Live mode execution failed: missing required credentials: {', '.join(missing)}"
+                    )
+                    logger.error("Run %s failed closed: %s", run_id, fail_reason)
+                    self.repo.finish_run(run_id, state="failed", reason=fail_reason)
+                    return True
 
-            result = await repair_callable(request, recipe, host)
+                if self.repair_fn is not None:
+                    result = await self.repair_fn(request, recipe, host)
+                else:
+                    live_sandbox = ConTreeSandboxAdapter(
+                        api_key=nebius_key,
+                        project_id=project_id,
+                        base_image=settings.nebius_sandbox_image or "python:3.12-bookworm",
+                        timeout_seconds=600,
+                    )
+                    live_model = TokenFactoryModelAdapter(
+                        api_key=token_factory_key,
+                        base_url=settings.token_factory_base_url,
+                        model=settings.token_factory_model,
+                    )
+                    try:
+                        result = await engine_repair(
+                            request, recipe, host, sandbox=live_sandbox, model=live_model
+                        )
+                    finally:
+                        await live_sandbox.cleanup()
+            else:
+                if self.repair_fn is not None:
+                    repair_callable = self.repair_fn
+                elif self.use_real_engine:
+                    repair_callable = engine_repair
+                else:
+                    repair_callable = fake_engine.repair
+
+                result = await repair_callable(request, recipe, host)
         except Exception as e:
             logger.exception("Run %s failed with exception: %s", run_id, e)
             error_reason = f"Unhandled error: {repr(e)}"

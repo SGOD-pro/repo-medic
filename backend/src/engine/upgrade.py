@@ -130,6 +130,15 @@ async def run_upgrade_stage(
         )
 
     # Upgrade succeeded and expected failure reproduced
+    checkpoint_id = "chk_upgrade"
+    if hasattr(sandbox, "capture_checkpoint") and callable(sandbox.capture_checkpoint):
+        try:
+            captured = await sandbox.capture_checkpoint(tag=f"chk_{recipe.task_id}_upgrade")
+            if captured:
+                checkpoint_id = captured
+        except Exception:
+            pass
+
     summary = (
         f"Upgrade to {recipe.to_version} verified and reproduced expected failure '{expected}'"
     )
@@ -142,5 +151,6 @@ async def run_upgrade_stage(
         failure_output=combined_output,
         exit_code=test_res.exit_code,
         failure_reproduced=True,
+        checkpoint_id=checkpoint_id,
         summary=summary,
     )

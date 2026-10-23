@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from src.engine.adapters import CommandResult, SandboxAdapter, SandboxPreset
 
 
@@ -61,6 +61,35 @@ class FakeSandboxAdapter(SandboxAdapter):
         child.node_ids = list(self.node_ids)
         self.execution_handles.append(child)
         return child
+
+    async def prepare_repository(self, recipe: Any = None) -> None:
+        """Simulates repository preparation in sandbox."""
+        pass
+
+    async def capture_checkpoint(self, tag: Optional[str] = None) -> str:
+        """Captures sandbox image state as an immutable checkpoint UUID."""
+        checkpoint_id = tag or self.checkpoint_id or "chk_upgrade_snapshot_001"
+        self.checkpoint_id = checkpoint_id
+        return checkpoint_id
+
+    async def apply_patch(self, diff_content: str) -> CommandResult:
+        """Applies a candidate patch into the sandbox."""
+        self.call_count += 1
+        self.executed_commands.append(["apply_patch", diff_content[:30] + "..."])
+        if self.preset == SandboxPreset.TIMEOUT:
+            raise TimeoutError("Execution timed out after 60 seconds")
+        if self.preset == SandboxPreset.PATCH_APPLY_FAIL:
+            return CommandResult(
+                exit_code=1,
+                stdout="",
+                stderr="error: patch failed: patch does not apply",
+            )
+        self._patch_applied = True
+        return CommandResult(
+            exit_code=0,
+            stdout="Patch applied cleanly",
+            stderr="",
+        )
 
     async def cleanup(self) -> None:
         """Cleans up isolated execution handle and resources."""

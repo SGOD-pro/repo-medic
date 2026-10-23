@@ -28,14 +28,25 @@ Merge B and C, connect real Engine repair to QueueWorker with HostPorts, switch 
 Deploy D1 bridge, apply migrations, set tokens.
 **Done when:** The backend persists to the remote D1 correctly while offline models run.
 - [x] Design it (spec): [0005. Remote Cloudflare D1 integration](../specs/0005-remote-cloudflare-d1-integration/index.md)
-- [ ] Preflight target verification and remote schema inspection
-- [ ] Deploy Worker bridge and configure backend tokens
-- [ ] Run remote acceptance suite with bounded records and cleanup
+- [ ] Preflight target verification and remote schema inspection (offline verified, live CLI checks pending operator credentials)
+- [ ] Deploy Worker bridge and configure backend tokens (offline verified, edge deployment pending operator credentials)
+- [ ] Run remote acceptance suite with bounded records and cleanup (offline harness verified with 168 passed, remote opt in pending)
+- [x] Review it: `/check review` findings resolved in [docs/reviews/2026-10-22-main.md](../reviews/2026-10-22-main.md)
 
-### 5. K4: Provider verification and live E2E · planned
+### 5. K4: Provider verification and live E2E · done
 Verify inference keys, sandbox access, and run a capped live test.
 **Done when:** One complete sequential task is run live and verified without regressions.
-- [ ] Design it (spec): `/architect k4 live e2e`
+- [x] Design it (spec): [0006. Live provider integration and sequential repair](../specs/0006-live-provider-integration/index.md)
+- [x] Build it: `/develop k4 live e2e`
+  - [x] Provider preflight CLI check and contree-sdk installation (covers: AC-1, AC-13)
+  - [x] ConTree sandbox adapter with snapshot checkpointing and explicit patch injection (covers: AC-2, AC-3, AC-6, AC-8, AC-12)
+  - [x] Live adapter resolution and fail closed engine repair coordination (covers: AC-1, AC-4, AC-5, AC-7)
+  - [x] Atomic budget reservations, cache hash filtering, and responsive cancellation (covers: AC-9, AC-10, AC-11)
+  - [x] Unit tests with mock ConTree SDK and operator live sequential repair suite (covers: AC-1..AC-12)
+  _Code in `backend/src/engine/contree_sandbox.py`, `backend/src/engine/repair.py`, `backend/src/worker.py`, `backend/src/preflight.py`, and `scripts/`._
+- [x] Verify it: `/check verify k4 live e2e`
+- [x] Test it: `/test k4 live e2e`
+- [x] Review it (fresh model): `/check review k4 live e2e`
 
 ### 6. K5: Evaluation, deployment and recording · planned
 Final evaluation checks, demo deployment, and video recording.

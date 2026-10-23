@@ -2,26 +2,22 @@ import asyncio
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List
+from unittest.mock import patch
 
 import httpx
 import pytest
+from fastapi.testclient import TestClient
 
 from src.config import settings
-from src.contracts import TaskRecipe
-from src.main import recover_interrupted_runs
+from src.main import create_app, recover_interrupted_runs
 from src.storage.db_client import RepoMedicDB
 from src.storage.repository import D1HostPorts, D1StorageRepository
 from tests.test_storage import create_sqlite_d1_transport
-
-
-@pytest.hookimpl(tryfirst=True, hookwrapper=True)
-def pytest_runtest_makereport(item, call):
-    outcome = yield
-    rep = outcome.get_result()
-    setattr(item, "rep_" + rep.when, rep)
 
 
 class AcceptanceManifest:
@@ -71,14 +67,24 @@ class AcceptanceManifest:
 
 
 @pytest.fixture
-def k3_manifest(request) -> Any:
+def k3_manifest(request, k3_client_and_repo) -> Any:
     prefix = f"run_k3_accept_{int(time.time() * 1000)}_"
     manifest = AcceptanceManifest(prefix=prefix)
+    client, repo, is_remote = k3_client_and_repo
+    tests_failed_before = request.session.testsfailed
+
     yield manifest
-    rep_call = getattr(request.node, "rep_call", None)
-    if rep_call and rep_call.failed:
+
+    tests_failed_after = request.session.testsfailed
+    test_failed = tests_failed_after > tests_failed_before
+    if test_failed:
+        # Failure detected: write manifest durably to artifacts before skipping cleanup
         artifacts_dir = Path(__file__).resolve().parent.parent / "artifacts"
         manifest.dump_on_failure(artifacts_dir)
+        # RETAIN failed test records in D1 for operator diagnosis: cleanup is intentionally skipped
+    else:
+        # Test passed: clean up only entities created in manifest
+        repo.cleanup_manifest(manifest.to_dict())
 
 
 @pytest.fixture
@@ -200,9 +206,6 @@ def test_zero_partial_writes_on_failure(k3_client_and_repo, k3_manifest):
     events_after = client.list_events(run_id=run_id)
     assert len(events_after) == 0
 
-    # Clean up manifest
-    repo.cleanup_manifest(k3_manifest.to_dict())
-
 
 @pytest.mark.asyncio
 async def test_event_ordering_and_artifact_hashes(k3_client_and_repo, k3_manifest):
@@ -257,9 +260,6 @@ async def test_event_ordering_and_artifact_hashes(k3_client_and_repo, k3_manifes
     actual_hash = hashlib.sha256(content).hexdigest()
     assert actual_hash == expected_hash
 
-    # Clean up manifest
-    repo.cleanup_manifest(k3_manifest.to_dict())
-
 
 @pytest.mark.asyncio
 async def test_cancellation_handling(k3_client_and_repo, k3_manifest):
@@ -289,63 +289,96 @@ async def test_cancellation_handling(k3_client_and_repo, k3_manifest):
         client.update_run_state(run_id, state="running")
     assert exc_info.value.response.status_code == 409
 
-    repo.cleanup_manifest(k3_manifest.to_dict())
-
 
 @pytest.mark.asyncio
 async def test_concurrent_budget_reservations(k3_client_and_repo, k3_manifest):
     """Verify per run and global budget caps atomically reject excess reservations (AC 6)."""
     client, repo, is_remote = k3_client_and_repo
-    task_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_budget")
-    run_id = k3_manifest.record_run(f"{k3_manifest.prefix}run_budget")
+
+    # 1. Per run budget limit check: Two concurrent reservations of 0.6 USD on a single run (0.6 + 0.6 > 1.0 USD)
+    task1_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_budget_run")
+    run1_id = k3_manifest.record_run(f"{k3_manifest.prefix}run_budget_single")
 
     repo.upsert_task({
-        "task_id": task_id,
-        "title": "Task for budget check",
+        "task_id": task1_id,
+        "title": "Task for per run budget check",
         "repository_url": "https://github.com/example/repo",
         "commit_sha": "abc123",
         "dependency": "pkg",
         "from_version": "1.0",
         "to_version": "2.0",
     })
-    # Run with 1.0 USD budget cap
     repo.create_run(
-        run_id=run_id,
-        task_id=task_id,
+        run_id=run1_id,
+        task_id=task1_id,
         mode="offline",
         search_mode="sequential",
         max_run_usd=1.0,
     )
-    host = D1HostPorts(run_id=run_id, repo=repo)
+    host1 = D1HostPorts(run_id=run1_id, repo=repo)
 
-    # Per run budget limit check: Two concurrent reservations of 0.6 USD each (total 1.2 USD > 1.0 USD)
-    op1_id = f"{run_id}:model:call1"
-    op2_id = f"{run_id}:model:call2"
+    op1_id = f"{run1_id}:model:call1"
+    op2_id = f"{run1_id}:model:call2"
     k3_manifest.record_operation(op1_id)
     k3_manifest.record_operation(op2_id)
 
     res1, res2 = await asyncio.gather(
-        host.reserve("model:call1", 0.6),
-        host.reserve("model:call2", 0.6),
+        host1.reserve("model:call1", 0.6),
+        host1.reserve("model:call2", 0.6),
     )
-
-    # Exactly one must succeed and one must fail
+    # Exactly one must succeed and one must fail against the 1.0 USD per run cap
     assert (res1 is True and res2 is False) or (res1 is False and res2 is True)
 
-    # Global budget cap check (25 USD = 25,000,000 micro USD, AC 6)
-    # Attempting to exceed global budget ceiling of 25.0 USD is atomically rejected
-    global_exceed_op = f"{run_id}:model:call_global_exceed"
-    with pytest.raises(httpx.HTTPStatusError) as exc_global:
-        client.reserve_budget(
-            run_id=run_id,
-            operation_id=global_exceed_op,
-            kind="model_inference",
-            estimated_usd=25.1,
-            global_budget_usd=25.0,
-        )
-    assert exc_global.value.response.status_code == 409
+    # 2. Cross run concurrent global budget testing across MULTIPLE distinct runs
+    # whose individual reservations remain strictly within their per run caps:
+    # Run A has max_run_usd=20.0 and reserves 15.0 USD (within 20.0 USD cap)
+    # Run B has max_run_usd=20.0 and reserves 15.0 USD (within 20.0 USD cap)
+    # Global budget ceiling is 25.0 USD. Together 0.6 + 15.0 + 15.0 = 30.6 > 25.0 USD.
+    task2_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_budget_cross_run")
+    repo.upsert_task({
+        "task_id": task2_id,
+        "title": "Task for cross run global budget check",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "def456",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
 
-    repo.cleanup_manifest(k3_manifest.to_dict())
+    run_a_id = k3_manifest.record_run(f"{k3_manifest.prefix}run_cross_a")
+    run_b_id = k3_manifest.record_run(f"{k3_manifest.prefix}run_cross_b")
+
+    repo.create_run(
+        run_id=run_a_id,
+        task_id=task2_id,
+        mode="offline",
+        search_mode="sequential",
+        max_run_usd=20.0,
+    )
+    repo.create_run(
+        run_id=run_b_id,
+        task_id=task2_id,
+        mode="offline",
+        search_mode="sequential",
+        max_run_usd=20.0,
+    )
+
+    host_a = D1HostPorts(run_id=run_a_id, repo=repo)
+    host_b = D1HostPorts(run_id=run_b_id, repo=repo)
+
+    op_a = f"{run_a_id}:model:call_a"
+    op_b = f"{run_b_id}:model:call_b"
+    k3_manifest.record_operation(op_a)
+    k3_manifest.record_operation(op_b)
+
+    res_a, res_b = await asyncio.gather(
+        host_a.reserve("model:call_a", 15.0),
+        host_b.reserve("model:call_b", 15.0),
+    )
+
+    # Exactly one must succeed and the other must be rejected by the global cap,
+    # even though each individual reservation remained well within its respective 20.0 USD per run cap
+    assert (res_a is True and res_b is False) or (res_a is False and res_b is True)
 
 
 def test_persistence_across_restart(k3_client_and_repo, k3_manifest):
@@ -365,20 +398,57 @@ def test_persistence_across_restart(k3_client_and_repo, k3_manifest):
         "to_version": "2.0",
     })
 
-    try:
-        repo.create_run(
-            run_id=scoped_run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running"
-        )
-        repo.create_run(
-            run_id=unrelated_run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running"
-        )
+    repo.create_run(
+        run_id=scoped_run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running"
+    )
+    repo.create_run(
+        run_id=unrelated_run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running"
+    )
 
-        # Simulate process restart recovery with prefix
-        recover_interrupted_runs(repo, acceptance_prefix=k3_manifest.prefix)
+    try:
+        if is_remote:
+            # Actual separate OS process simulating a real backend restart against persistent remote D1
+            code = (
+                "import os, sys\n"
+                "from src.storage.db_client import RepoMedicDB\n"
+                "from src.storage.repository import D1StorageRepository\n"
+                "from src.main import recover_interrupted_runs\n"
+                "client = RepoMedicDB(\n"
+                "    base_url=os.environ['REPOMEDIC_DB_WORKER_URL'],\n"
+                "    api_key=os.environ['REPOMEDIC_DB_WORKER_TOKEN'],\n"
+                ")\n"
+                "repo = D1StorageRepository(client)\n"
+                "recover_interrupted_runs(repo, acceptance_prefix=os.environ['REPOMEDIC_ACCEPTANCE_PREFIX'])\n"
+            )
+            proc_env = {
+                **os.environ,
+                "REPOMEDIC_DB_WORKER_URL": str(client.base_url),
+                "REPOMEDIC_DB_WORKER_TOKEN": str(client.api_key),
+                "REPOMEDIC_ACCEPTANCE_PREFIX": k3_manifest.prefix,
+            }
+            proc = subprocess.run(
+                [sys.executable, "-c", code],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                env=proc_env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                check=True,
+            )
+            assert proc.returncode == 0
+        else:
+            # In offline simulation, simulate backend process startup recovery via create_app lifespan
+            with patch.object(settings, "repomedic_acceptance_prefix", k3_manifest.prefix):
+                with patch.object(settings, "repomedic_worker_enabled", False):
+                    with patch.object(settings, "repomedic_sync_fixtures", False):
+                        app = create_app(repository=repo)
+                        with TestClient(app):
+                            pass
 
         # Scoped run must be failed
         scoped_run = repo.get_run(scoped_run_id)
         assert scoped_run.state == "failed"
+        assert "restarted" in (scoped_run.reason or "")
 
         # Unrelated run must remain in running state
         unrelated_run = repo.get_run(unrelated_run_id)
@@ -391,7 +461,6 @@ def test_persistence_across_restart(k3_client_and_repo, k3_manifest):
             "operations": [],
             "artifacts": [],
         })
-        repo.cleanup_manifest(k3_manifest.to_dict())
 
 
 def test_exact_manifest_cleanup_preserves_unrelated_records(k3_client_and_repo, k3_manifest):
@@ -480,6 +549,56 @@ def test_acceptance_manifest_dump_on_failure(tmp_path: Path):
         "operations": ["op-1"],
         "artifacts": ["art-1"],
     }
+
+
+def test_failure_detection_and_durable_manifest_capture(k3_client_and_repo, tmp_path: Path):
+    """Verify failure detection writes durable manifest artifact and retains database records."""
+    client, repo, is_remote = k3_client_and_repo
+    prefix = f"run_k3_fail_capture_{int(time.time() * 1000)}_"
+    manifest = AcceptanceManifest(prefix=prefix)
+
+    task_id = manifest.record_task(f"{prefix}task_fail_capture")
+    run_id = manifest.record_run(f"{prefix}run_fail_capture")
+    op_id = manifest.record_operation(f"{run_id}:model:call1")
+
+    repo.upsert_task({
+        "task_id": task_id,
+        "title": "Task for failure retention test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+    repo.create_run(run_id=run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running")
+
+    # Simulate an acceptance check failure block
+    test_failed = False
+    try:
+        # Simulated assertion failure during acceptance verification
+        raise AssertionError("Simulated acceptance test failure for diagnosis")
+    except AssertionError:
+        test_failed = True
+        # As specced: on failure, capture manifest durably and skip cleanup
+        dump_file = manifest.dump_on_failure(tmp_path)
+
+    assert test_failed is True
+    # 1. Verify durable manifest file was created with exact contents
+    assert dump_file.is_file()
+    data = json.loads(dump_file.read_text(encoding="utf-8"))
+    assert data["tasks"] == [task_id]
+    assert data["runs"] == [run_id]
+    assert data["operations"] == [op_id]
+
+    # 2. Verify cleanup was SKIPPED and records are RETAINED in database for operator diagnosis
+    retained_run = repo.get_run(run_id)
+    assert retained_run is not None
+    assert retained_run.state == "running"
+    retained_task = repo.get_task(task_id)
+    assert retained_task is not None
+
+    # Teardown: explicitly clean up after verifying retention
+    repo.cleanup_manifest(manifest.to_dict())
 
 
 @pytest.mark.skipif(

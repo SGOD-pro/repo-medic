@@ -2,6 +2,7 @@ from pathlib import Path
 
 from src.preflight import (
     run_preflight,
+    verify_live_providers,
     verify_schema_tables,
     verify_wrangler_config,
 )
@@ -94,3 +95,30 @@ def test_run_preflight_default_path_resolves() -> None:
     binding_check = next((c for c in res.checks if c.get("name") == "binding_name"), None)
     assert binding_check is not None
     assert binding_check.get("passed") is True
+
+
+def test_verify_live_providers_all_valid() -> None:
+    env = {
+        "TOKEN_FACTORY_API_KEY": "tf-secret-123",
+        "TOKEN_FACTORY_BASE_URL": "https://api.tokenfactory.us-central1.nebius.com/v1/",
+        "TOKEN_FACTORY_MODEL": "nvidia/nemotron-3-super-120b-a12b",
+        "NEBIUS_API_KEY": "neb-secret-456",
+        "NEBIUS_PROJECT_ID": "proj-789",
+        "NEBIUS_SANDBOX_IMAGE": "python:3.12-bookworm",
+    }
+    res = verify_live_providers(env=env)
+    assert res.passed is True
+    assert len(res.errors) == 0
+
+
+def test_verify_live_providers_missing_credentials_fails() -> None:
+    env = {
+        "TOKEN_FACTORY_API_KEY": "",
+        "NEBIUS_API_KEY": "",
+        "NEBIUS_PROJECT_ID": "",
+    }
+    res = verify_live_providers(env=env)
+    assert res.passed is False
+    assert any("TOKEN_FACTORY_API_KEY" in err for err in res.errors)
+    assert any("NEBIUS_API_KEY" in err for err in res.errors)
+    assert any("NEBIUS_PROJECT_ID" in err for err in res.errors)

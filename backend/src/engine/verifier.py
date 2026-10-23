@@ -1,7 +1,7 @@
 import hashlib
 import json
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from src.contracts import HostPorts, TaskRecipe
 from src.engine.adapters import CommandResult, SandboxAdapter
 from src.engine.candidate import (
@@ -122,15 +122,57 @@ async def verify_candidate_patch(
     start_time = time.monotonic()
     candidate_id = candidate.candidate_id
     test_res = CommandResult(exit_code=1)
+    exec_sandbox: Optional[Any] = None
 
-    # 1. Provision fresh isolated execution handle
-    checkpoint_isolated = False
-    if hasattr(sandbox, "create_execution") and callable(sandbox.create_execution):
-        try:
-            exec_sandbox = await sandbox.create_execution(checkpoint_id)
-            checkpoint_isolated = True
-        except Exception as exc:
-            summary = f"Failed to create fresh execution from checkpoint '{checkpoint_id}': {exc}"
+    # Reserve budget for candidate verification in live mode
+    op_id = f"sandbox:verify:{candidate_id}"
+    reserved = False
+    if mode == "live":
+        reserved = await host.reserve(op_id, 0.10)
+        if not reserved:
+            summary = "Budget reservation of $0.10 for candidate verification denied by host"
+            return await _terminate_verification(
+                host=host,
+                candidate=candidate,
+                recipe=recipe,
+                start_time=start_time,
+                summary=summary,
+                failure_reason="budget_exceeded",
+                test_res=test_res,
+                checkpoint_id=checkpoint_id,
+                mode=mode,
+                checks=VerificationChecks(checkpoint_isolated=False),
+                test_logs=summary,
+                artifact_prefix=artifact_prefix,
+                emit_stage_event=emit_stage_event,
+            )
+
+    try:
+        # 1. Provision fresh isolated execution handle
+        checkpoint_isolated = False
+        if hasattr(sandbox, "create_execution") and callable(sandbox.create_execution):
+            try:
+                exec_sandbox = await sandbox.create_execution(checkpoint_id)
+                checkpoint_isolated = True
+            except Exception as exc:
+                summary = f"Failed to create fresh execution from checkpoint '{checkpoint_id}': {exc}"
+                return await _terminate_verification(
+                    host=host,
+                    candidate=candidate,
+                    recipe=recipe,
+                    start_time=start_time,
+                    summary=summary,
+                    failure_reason="execution_creation_failed",
+                    test_res=test_res,
+                    checkpoint_id=checkpoint_id,
+                    mode=mode,
+                    checks=VerificationChecks(checkpoint_isolated=False),
+                    test_logs=summary,
+                    artifact_prefix=artifact_prefix,
+                    emit_stage_event=emit_stage_event,
+                )
+        else:
+            summary = f"Sandbox does not support create_execution for checkpoint '{checkpoint_id}'"
             return await _terminate_verification(
                 host=host,
                 candidate=candidate,
@@ -146,60 +188,42 @@ async def verify_candidate_patch(
                 artifact_prefix=artifact_prefix,
                 emit_stage_event=emit_stage_event,
             )
-    else:
-        summary = f"Sandbox does not support create_execution for checkpoint '{checkpoint_id}'"
-        return await _terminate_verification(
-            host=host,
-            candidate=candidate,
-            recipe=recipe,
-            start_time=start_time,
-            summary=summary,
-            failure_reason="execution_creation_failed",
-            test_res=test_res,
-            checkpoint_id=checkpoint_id,
-            mode=mode,
-            checks=VerificationChecks(checkpoint_isolated=False),
-            test_logs=summary,
-            artifact_prefix=artifact_prefix,
-            emit_stage_event=emit_stage_event,
-        )
 
-    pre_patch_hash_match = True
-    patch_applied = False
-    post_patch_hash_match = True
-    collection_node_ids_match = True
-    tests_passed = False
-    zero_new_skips = True
-    post_test_hash_match = True
-    version_intact = True
-    artifacts_persisted = False
-    failure_reason: Optional[str] = None
-    summary = ""
-    test_logs = ""
+        pre_patch_hash_match = True
+        patch_applied = False
+        post_patch_hash_match = True
+        collection_node_ids_match = True
+        tests_passed = False
+        zero_new_skips = True
+        post_test_hash_match = True
+        version_intact = True
+        artifacts_persisted = False
+        failure_reason: Optional[str] = None
+        summary = ""
+        test_logs = ""
 
-    async def _term(
-        summary_msg: str,
-        reason: str,
-        checks_state: VerificationChecks,
-        logs: str = "",
-    ) -> CandidateVerification:
-        return await _terminate_verification(
-            host=host,
-            candidate=candidate,
-            recipe=recipe,
-            start_time=start_time,
-            summary=summary_msg,
-            failure_reason=reason,
-            test_res=test_res,
-            checkpoint_id=checkpoint_id,
-            mode=mode,
-            checks=checks_state,
-            test_logs=logs or summary_msg,
-            artifact_prefix=artifact_prefix,
-            emit_stage_event=emit_stage_event,
-        )
+        async def _term(
+            summary_msg: str,
+            reason: str,
+            checks_state: VerificationChecks,
+            logs: str = "",
+        ) -> CandidateVerification:
+            return await _terminate_verification(
+                host=host,
+                candidate=candidate,
+                recipe=recipe,
+                start_time=start_time,
+                summary=summary_msg,
+                failure_reason=reason,
+                test_res=test_res,
+                checkpoint_id=checkpoint_id,
+                mode=mode,
+                checks=checks_state,
+                test_logs=logs or summary_msg,
+                artifact_prefix=artifact_prefix,
+                emit_stage_event=emit_stage_event,
+            )
 
-    try:
         # 2. Check pre-patch file hashes
         if baseline_preservation and baseline_preservation.file_hashes:
             current_hashes = await _get_hashes(exec_sandbox)
@@ -219,11 +243,14 @@ async def verify_candidate_patch(
                     )
 
         # 3. Apply candidate patch
-        apply_cmd = ["git", "apply", "--whitespace=nowarn"]
         try:
-            apply_res = await exec_sandbox.execute_command(
-                apply_cmd, timeout_seconds=recipe.timeout_seconds
-            )
+            if hasattr(exec_sandbox, "apply_patch") and callable(exec_sandbox.apply_patch):
+                apply_res = await exec_sandbox.apply_patch(candidate.diff_content)
+            else:
+                apply_cmd = ["git", "apply", "--whitespace=nowarn"]
+                apply_res = await exec_sandbox.execute_command(
+                    apply_cmd, timeout_seconds=recipe.timeout_seconds
+                )
         except TimeoutError as exc:
             summary = f"Patch application timed out: {exc}"
             failure_reason = "patch_apply_failed"
@@ -561,8 +588,13 @@ async def verify_candidate_patch(
         )
 
     finally:
+        if reserved:
+            try:
+                await host.settle(op_id, 0.10)
+            except Exception:
+                pass
         # Cleanup sandbox execution resources
-        if hasattr(exec_sandbox, "cleanup") and callable(exec_sandbox.cleanup):
+        if exec_sandbox is not None and hasattr(exec_sandbox, "cleanup") and callable(exec_sandbox.cleanup):
             try:
                 await exec_sandbox.cleanup()
             except Exception:

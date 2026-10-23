@@ -37,7 +37,7 @@ class Settings(BaseSettings):
     # Legacy / provider aliases used in adapters and scripts
     nebius_api_key: str = ""
     nebius_project_id: str = ""
-    nebius_sandbox_image: str = "python:3.12-slim"
+    nebius_sandbox_image: str = "python:3.12-bookworm"
 
     model_config = SettingsConfigDict(
         env_file=".env",

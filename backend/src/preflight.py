@@ -137,3 +137,99 @@ def run_preflight(
 
     passed = len(all_errors) == 0
     return PreflightResult(passed=passed, checks=all_checks, errors=all_errors)
+
+
+def verify_live_providers(env: Optional[Dict[str, str]] = None) -> PreflightResult:
+    """Validate live provider credentials, URLs, and package availability."""
+    import importlib
+    import os
+
+    source_env = os.environ if env is None else env
+    checks: List[Dict[str, Any]] = []
+    errors: List[str] = []
+
+    # 1. Token Factory API Key
+    tf_key = (source_env.get("TOKEN_FACTORY_API_KEY") or source_env.get("NEBIUS_API_KEY") or "").strip()
+    tf_key_ok = bool(tf_key and not tf_key.startswith("placeholder"))
+    checks.append({
+        "name": "token_factory_api_key",
+        "configured": tf_key_ok,
+        "passed": tf_key_ok,
+    })
+    if not tf_key_ok:
+        errors.append("TOKEN_FACTORY_API_KEY (or NEBIUS_API_KEY) is missing or unconfigured")
+
+    # 2. Token Factory Base URL
+    default_base_url = "https://api.tokenfactory.us-central1.nebius.com/v1/"
+    base_url = (source_env.get("TOKEN_FACTORY_BASE_URL") or default_base_url).strip()
+    url_ok = base_url.startswith("http://") or base_url.startswith("https://")
+    checks.append({
+        "name": "token_factory_base_url",
+        "actual": base_url,
+        "passed": url_ok,
+    })
+    if not url_ok:
+        errors.append(f"TOKEN_FACTORY_BASE_URL must be a valid HTTP or HTTPS URL, found '{base_url}'")
+
+    # 3. Token Factory Model
+    model_name = (source_env.get("TOKEN_FACTORY_MODEL") or "nvidia/nemotron-3-super-120b-a12b").strip()
+    model_ok = bool(model_name)
+    checks.append({
+        "name": "token_factory_model",
+        "actual": model_name,
+        "passed": model_ok,
+    })
+    if not model_ok:
+        errors.append("TOKEN_FACTORY_MODEL is not specified")
+
+    # 4. Nebius API Key for ConTree SDK
+    neb_key = (source_env.get("NEBIUS_API_KEY") or "").strip()
+    neb_key_ok = bool(neb_key and not neb_key.startswith("placeholder"))
+    checks.append({
+        "name": "nebius_api_key",
+        "configured": neb_key_ok,
+        "passed": neb_key_ok,
+    })
+    if not neb_key_ok:
+        errors.append("NEBIUS_API_KEY is missing or unconfigured")
+
+    # 5. Nebius Project ID
+    proj_id = (source_env.get("NEBIUS_PROJECT_ID") or source_env.get("TOKEN_FACTORY_SANDBOX_PROJECT_ID") or "").strip()
+    proj_id_ok = bool(proj_id and not proj_id.startswith("placeholder"))
+    checks.append({
+        "name": "nebius_project_id",
+        "configured": proj_id_ok,
+        "passed": proj_id_ok,
+    })
+    if not proj_id_ok:
+        errors.append("NEBIUS_PROJECT_ID is missing or unconfigured")
+
+    # 6. Nebius Sandbox Image
+    image_name = (source_env.get("NEBIUS_SANDBOX_IMAGE") or "python:3.12-bookworm").strip()
+    image_ok = bool(image_name)
+    checks.append({
+        "name": "nebius_sandbox_image",
+        "actual": image_name,
+        "passed": image_ok,
+    })
+    if not image_ok:
+        errors.append("NEBIUS_SANDBOX_IMAGE is empty")
+
+    # 7. contree-sdk package import check
+    contree_installed = False
+    try:
+        importlib.import_module("contree_sdk")
+        contree_installed = True
+    except ImportError:
+        contree_installed = False
+
+    checks.append({
+        "name": "contree_sdk_installed",
+        "installed": contree_installed,
+        "passed": contree_installed,
+    })
+    if not contree_installed:
+        errors.append("contree-sdk package is not installed in the python environment")
+
+    passed = len(errors) == 0
+    return PreflightResult(passed=passed, checks=checks, errors=errors)

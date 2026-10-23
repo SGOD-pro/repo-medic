@@ -17,6 +17,7 @@ Core repair engine for Repo Medic. This package validates task recipes, runs bas
 - `verifier.py`: Isolated candidate verification, file hash checks, collection matching, and evidence manifest persistence.
 - `branch_search.py`: Bounded depth first branch and refine search coordinator with early stopping.
 - `token_factory_model.py`: Live model adapter connecting to Nebius Token Factory with zero SDK retries.
+- `contree_sandbox.py`: Live sandbox adapter wrapping ConTree SDK with checkpoint branching and cleanup.
 - `repair.py`: Package entry point coordinating baseline, upgrade, and repair search routing.
 
 ## Commands
@@ -36,6 +37,6 @@ Core repair engine for Repo Medic. This package validates task recipes, runs bas
 - Check cancellation via host ports before and between operations.
 - Bound tree search to at most 3 candidate branches and at most 1 refinement per branch.
 - Provision fresh sandbox handles from immutable checkpoints for every candidate evaluation.
-- Governing specs: [0001-provider-fakes-and-baseline](../../docs/specs/0001-provider-fakes-and-baseline/index.md), [0002-sequential-repair](../../docs/specs/0002-sequential-repair/index.md), [0003-safe-verifier-and-evidence](../../docs/specs/0003-safe-verifier-and-evidence/index.md), [0004-bounded-branch-and-refine](../../docs/specs/0004-bounded-branch-and-refine/index.md)
+- Governing specs: [0001-provider-fakes-and-baseline](../../docs/specs/0001-provider-fakes-and-baseline/index.md), [0002-sequential-repair](../../docs/specs/0002-sequential-repair/index.md), [0003-safe-verifier-and-evidence](../../docs/specs/0003-safe-verifier-and-evidence/index.md), [0004-bounded-branch-and-refine](../../docs/specs/0004-bounded-branch-and-refine/index.md), [0006-live-provider-integration](../../docs/specs/0006-live-provider-integration/index.md)
 
 _Drafted by /sync from the introducing change, worth a quick human pass._

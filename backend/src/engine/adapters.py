@@ -46,6 +46,14 @@ class SandboxAdapter(Protocol):
         self, checkpoint_id: str
     ) -> "SandboxAdapter": ...
 
+    async def apply_patch(
+        self, diff_content: str
+    ) -> CommandResult: ...
+
+    async def capture_checkpoint(
+        self, tag: Optional[str] = None
+    ) -> str: ...
+
     async def cleanup(self) -> None: ...
 
     async def hash_files(
