@@ -21,10 +21,12 @@ async def record_baseline_preservation(
     sandbox: SandboxAdapter,
     baseline_collected_count: int = 0,
     collected_node_ids: Optional[list[str]] = None,
+    baseline_skipped_count: int = 0,
+    baseline_xfailed_count: int = 0,
 ) -> TestPreservationRecord:
     """
     Captures baseline test node IDs and test/config file hashes.
-    Uses collected_node_ids if available, otherwise executes pytest --collect-only -q.
+    Uses collected_node_ids if available, otherwise executes test collection preserving env wrappers.
     """
     file_hashes = {}
     if hasattr(sandbox, "hash_files") and callable(sandbox.hash_files):
@@ -40,8 +42,10 @@ async def record_baseline_preservation(
         }
 
     node_ids = list(collected_node_ids or [])
-    if not node_ids:
-        collect_cmd = ["pytest", "--collect-only", "-q"]
+    if not node_ids or len(node_ids) < baseline_collected_count:
+        collect_cmd = list(recipe.test_command)
+        if "--collect-only" not in collect_cmd:
+            collect_cmd.extend(["--collect-only", "-q"])
         try:
             collect_res = await sandbox.execute_command(
                 collect_cmd, timeout_seconds=recipe.timeout_seconds
@@ -68,6 +72,8 @@ async def record_baseline_preservation(
         file_hashes=file_hashes,
         node_ids=sorted(list(set(node_ids))),
         collected_count=count,
+        skipped_count=baseline_skipped_count,
+        xfailed_count=baseline_xfailed_count,
     )
 
 
@@ -167,6 +173,8 @@ async def run_baseline_stage(
         sandbox,
         baseline_collected_count=res1.collected_count,
         collected_node_ids=res1.collected_node_ids,
+        baseline_skipped_count=res1.skipped_count,
+        baseline_xfailed_count=res1.xfailed_count,
     )
     summary = "Baseline tests passed cleanly twice with stable collection"
     await host.emit(

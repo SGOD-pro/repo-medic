@@ -1,11 +1,14 @@
-from typing import Optional
+import logging
+from typing import Dict, Optional
 from src.config import settings
 from src.contracts import HostPorts, RepairRequest, RepairResult, TaskRecipe
 from src.engine.adapters import ModelAdapter, SandboxAdapter
 from src.engine.baseline import run_baseline_stage
 from src.engine.branch_search import run_branch_refine_search
+from src.engine.candidate import BranchSearchBudget
 from src.engine.candidate_generator import BudgetExceededError, generate_candidate_patch
 from src.engine.contree_sandbox import ConTreeSandboxAdapter
+from src.engine.extraction import extract_error_context
 from src.engine.fake_model import FakeModelAdapter
 from src.engine.fake_sandbox import FakeSandboxAdapter
 from src.engine.patch_validator import validate_patch
@@ -13,6 +16,8 @@ from src.engine.token_factory_model import TokenFactoryModelAdapter
 from src.engine.upgrade import run_upgrade_stage
 from src.engine.validation import RecipeValidationError, validate_recipe
 from src.engine.verifier import verify_candidate_patch
+
+logger = logging.getLogger("repomedic.repair")
 
 
 async def repair(
@@ -134,6 +139,12 @@ async def repair(
 
         # 8. Route by search mode: branch and refine vs sequential
         if request.search_mode == "branch_refine":
+            gen_cost = 0.05 if request.mode == "live" else 0.0
+            search_budget = BranchSearchBudget(
+                max_candidates=recipe.max_candidates or 3,
+                max_refinements=recipe.max_refinements or 1,
+                estimated_cost_per_generation=gen_cost,
+            )
             search_result = await run_branch_refine_search(
                 request=request,
                 recipe=recipe,
@@ -145,10 +156,33 @@ async def repair(
                 baseline_preservation=baseline.preservation,
                 checkpoint_id=upgrade.checkpoint_id,
                 mode=request.mode,
+                budget=search_budget,
             )
             return RepairResult(state=search_result.state, reason=search_result.reason)
 
-        # 9. Generate candidate patch
+        # 9. Read source files for allowed paths from sandbox to provide accurate context
+        error_block, error_files = extract_error_context(upgrade.failure_output)
+        innermost_matching = None
+        for ef in reversed(error_files):
+            for p in recipe.allowed_source_paths:
+                if p == ef or ef.endswith(p) or p.endswith(ef) or ef.endswith("/" + p):
+                    innermost_matching = p
+                    break
+            if innermost_matching:
+                break
+        target_paths = [innermost_matching] if innermost_matching else recipe.allowed_source_paths
+
+        source_files: Dict[str, str] = {}
+        if hasattr(active_sandbox, "execute_command"):
+            for rel_path in target_paths:
+                try:
+                    cat_res = await active_sandbox.execute_command(["cat", rel_path], timeout_seconds=15)
+                    if cat_res.exit_code == 0 and cat_res.stdout:
+                        source_files[rel_path] = cat_res.stdout
+                except Exception as exc:
+                    logger.warning("Could not read source file %s from sandbox: %s", rel_path, exc)
+
+        # Generate candidate patch
         try:
             candidate = await generate_candidate_patch(
                 recipe=recipe,
@@ -157,6 +191,7 @@ async def repair(
                 host=host,
                 candidate_id="candidate_1",
                 estimated_cost=0.05,
+                source_files=source_files,
             )
         except BudgetExceededError as exc:
             return RepairResult(state="failed", reason=str(exc))

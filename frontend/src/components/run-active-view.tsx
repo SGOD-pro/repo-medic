@@ -245,11 +245,8 @@ export function RunActiveView({
         if (status === "connected") {
           apiClient.getRun(runId).then((recovered) => {
             onUpdateRunRef.current?.(recovered);
-            if (recovered.state === "succeeded" || recovered.state === "failed" || recovered.state === "cancelled") {
-              if (recovered.state === "cancelled") {
-                setIsCancelled(true);
-              }
-              managerRef.current?.stop();
+            if (recovered.state === "cancelled") {
+              setIsCancelled(true);
             }
           }).catch(() => {});
         }

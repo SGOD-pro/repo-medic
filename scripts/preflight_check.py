@@ -37,7 +37,19 @@ def main() -> int:
     parser.add_argument(
         "--live-providers",
         action="store_true",
-        help="Inspect live provider credentials, URLs, models, and contree-sdk",
+        help="Inspect live provider credentials, URLs, models, limits, and contree-sdk",
+    )
+    parser.add_argument(
+        "--repository-url",
+        type=str,
+        default=None,
+        help="Target git repository URL to test connectivity",
+    )
+    parser.add_argument(
+        "--commit-sha",
+        type=str,
+        default=None,
+        help="Target commit SHA to verify in repository",
     )
     parser.add_argument(
         "--wrangler-path",
@@ -52,7 +64,10 @@ def main() -> int:
 
     if args.live_providers:
         print("\n--- Live Provider Inspection ---")
-        result = verify_live_providers()
+        result = verify_live_providers(
+            repository_url=args.repository_url,
+            commit_sha=args.commit_sha,
+        )
         for check in result.checks:
             status = "PASS" if check["passed"] else "FAIL"
             print(f"[{status}] {check['name']}: {check}")

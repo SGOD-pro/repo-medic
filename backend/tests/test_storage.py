@@ -219,6 +219,26 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
 
             runs_list = []
             for r in rows:
+                cur_ops = conn.execute(
+                    "SELECT COALESCE(SUM(CASE WHEN status = 'settled' "
+                    "THEN settled_micro_usd ELSE reserved_micro_usd END), 0) "
+                    "FROM operations WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')",
+                    (r["run_id"],),
+                )
+                ops_micro = cur_ops.fetchone()[0] or 0
+                usage = json.loads(r["usage_json"])
+                if ops_micro > 0 or usage.get("estimated_usd", 0.0) == 0.0:
+                    usage["estimated_usd"] = ops_micro / 1_000_000.0
+
+                cur_model_ops = conn.execute(
+                    "SELECT COUNT(*) FROM operations WHERE run_id = ? AND kind = 'model' "
+                    "AND status IN ('reserved', 'settled', 'uncertain')",
+                    (r["run_id"],),
+                )
+                model_ops_count = cur_model_ops.fetchone()[0] or 0
+                if model_ops_count > 0 and usage.get("model_calls", 0) == 0:
+                    usage["model_calls"] = model_ops_count
+
                 runs_list.append({
                     "run_id": r["run_id"],
                     "task_id": r["task_id"],
@@ -227,7 +247,7 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                     "state": r["state"],
                     "reason": r["reason"],
                     "max_run_micro_usd": r["max_run_micro_usd"],
-                    "usage": json.loads(r["usage_json"]),
+                    "usage": usage,
                     "artifacts": artifacts_by_run.get(r["run_id"], []),
                 })
             return httpx.Response(200, json={"runs": runs_list})
@@ -281,6 +301,26 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
             arts = conn.execute(
                 "SELECT artifact_id, kind, filename FROM artifacts WHERE run_id = ?", (run_id,)
             ).fetchall()
+            cur_ops = conn.execute(
+                "SELECT COALESCE(SUM(CASE WHEN status = 'settled' "
+                "THEN settled_micro_usd ELSE reserved_micro_usd END), 0) "
+                "FROM operations WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')",
+                (run_id,),
+            )
+            ops_micro = cur_ops.fetchone()[0] or 0
+            usage = json.loads(row["usage_json"])
+            if ops_micro > 0 or usage.get("estimated_usd", 0.0) == 0.0:
+                usage["estimated_usd"] = ops_micro / 1_000_000.0
+
+            cur_model_ops = conn.execute(
+                "SELECT COUNT(*) FROM operations WHERE run_id = ? AND kind = 'model' "
+                "AND status IN ('reserved', 'settled', 'uncertain')",
+                (row["run_id"],),
+            )
+            model_ops_count = cur_model_ops.fetchone()[0] or 0
+            if model_ops_count > 0 and usage.get("model_calls", 0) == 0:
+                usage["model_calls"] = model_ops_count
+
             return httpx.Response(200, json={
                 "run_id": row["run_id"],
                 "task_id": row["task_id"],
@@ -289,7 +329,7 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                 "state": row["state"],
                 "reason": row["reason"],
                 "max_run_micro_usd": row["max_run_micro_usd"],
-                "usage": json.loads(row["usage_json"]),
+                "usage": usage,
                 "artifacts": [dict(a) for a in arts],
             })
 
@@ -330,6 +370,11 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                 "INSERT INTO events VALUES (?, ?, '2026-10-10T00:00:00Z', ?, ?)",
                 (run_id, max_seq, body["type"], json.dumps(body["payload"])),
             )
+            if body["type"] == "usage.updated" and isinstance(body.get("payload"), dict):
+                conn.execute(
+                    "UPDATE runs SET usage_json = ? WHERE run_id = ?",
+                    (json.dumps(body["payload"]), run_id),
+                )
             return httpx.Response(201, json={"ok": True, "seq": max_seq, "ts": "2026-10-10T00:00:00Z"})
 
         # GET /api/runs/:run_id/events
@@ -897,3 +942,43 @@ async def test_atomic_global_budget_enforcement_across_runs(mock_db):
     ok2_retry = await hp2.reserve("model:gen2", 10.00)
     assert ok2_retry is True
     assert repo.get_total_committed_usd() == 15.00
+
+
+@pytest.mark.asyncio
+async def test_run_usage_derived_from_operation_ledger_prevents_zero_summary(mock_db):
+    """Regression test: run usage estimated_usd must derive from operation ledger, not stay zero."""
+    repo = D1StorageRepository(mock_db)
+    run_id = "run-reconcile-ops-1"
+
+    mock_db.create_run(run_id, "TASK-091", "live", "sequential", max_run_usd=2.0)
+    hp = D1HostPorts(run_id, client=mock_db)
+
+    # Initial usage before operations
+    initial_run = repo.get_run(run_id)
+    assert initial_run.usage.estimated_usd == 0.0
+    assert initial_run.usage.model_calls == 0
+
+    # Execute and settle three operations mirroring live repair: setup (0.20), model (0.05), verify (0.10)
+    assert await hp.reserve("sandbox:setup", 0.20) is True
+    await hp.settle("sandbox:setup", 0.20)
+
+    assert await hp.reserve("candidate_gen_candidate_1", 0.05) is True
+    await hp.settle("candidate_gen_candidate_1", 0.05)
+
+    assert await hp.reserve("sandbox:verify_candidate_1", 0.10) is True
+    await hp.settle("sandbox:verify_candidate_1", 0.10)
+
+    # Reconciled get_run must reflect $0.3500 from the operation ledger, not 0.0
+    reconciled_run = repo.get_run(run_id)
+    assert reconciled_run.usage.estimated_usd == 0.35
+    assert reconciled_run.usage.estimated_usd > 0.0, "Run summary must not remain zero when operations are settled"
+
+    # Reconciled model calls derive from committed model operations in the ledger
+    assert reconciled_run.usage.model_calls == 1, "Run that performed model inference must not report zero calls"
+    assert reconciled_run.usage.input_tokens == 0
+    assert reconciled_run.usage.output_tokens == 0
+
+    # list_runs must also derive the same estimated allocation
+    runs_list = repo.list_runs(run_prefix=run_id)
+    assert len(runs_list) == 1
+    assert runs_list[0].usage.estimated_usd == 0.35

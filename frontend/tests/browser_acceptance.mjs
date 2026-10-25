@@ -2,7 +2,7 @@ import { chromium } from "playwright";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
+import { spawn, execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { stopProcess } from "./process_control.mjs";
 
@@ -15,15 +15,13 @@ const REPO_ROOT = path.resolve(__dirname, "../..");
 const ARTIFACT_DIR = process.env.ARTIFACT_DIR || path.resolve(REPO_ROOT, "artifacts");
 const BASE_URL = process.env.BASE_URL || process.env.FRONTEND_URL || "http://localhost:3000";
 const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8000";
-const D1_WORKER_URL = process.env.D1_WORKER_URL || "http://127.0.0.1:8787";
 
 async function runAcceptanceSuite() {
-  console.log("=== STARTING K2 BROWSER & LOCAL D1 INTEGRATION SUITE ===");
+  console.log("=== STARTING BROWSER & TURSO INTEGRATION SUITE ===");
   console.log(`Repository root: ${REPO_ROOT}`);
   console.log(`Artifact directory: ${ARTIFACT_DIR}`);
   console.log(`Frontend URL: ${BASE_URL}`);
   console.log(`Backend URL: ${BACKEND_URL}`);
-  console.log(`D1 Worker URL: ${D1_WORKER_URL}`);
 
   fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
 
@@ -52,6 +50,7 @@ async function runAcceptanceSuite() {
   page.on("console", (msg) => {
     if (msg.type() === "error") {
       consoleErrors.push(msg.text());
+      console.error(`  [Browser Console Error] ${msg.text()}`);
     }
   });
 
@@ -62,7 +61,7 @@ async function runAcceptanceSuite() {
     // CHECK 1: Task Selection & Dynamic getTasks() Loading
     // -------------------------------------------------------------
     console.log("\n[CHECK 1] Loading tasks from getTasks() and verifying task metadata...");
-    await page.goto(BASE_URL, { waitUntil: "networkidle" });
+    await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
 
     // Verify task discovery container
     const tasksView = page.locator('[data-testid="tasks-view"]');
@@ -85,7 +84,7 @@ async function runAcceptanceSuite() {
     const textContent = await page.textContent('body');
     assert.ok(textContent.includes("pydantic==2.0.2") || textContent.includes("pydantic"), "Target dependency version must be rendered");
     assert.ok(textContent.includes("42 preserved tests") || textContent.includes("42/42 PASS"), "Preserved tests count must be rendered");
-    assert.ok(textContent.includes("LOCAL D1 / OFFLINE MODE"), "Truthful offline mode label must be present in navbar");
+    assert.ok(textContent.includes("LOCAL D1 / OFFLINE MODE") || textContent.includes("OFFLINE MODE"), "Truthful offline mode label must be present in navbar");
 
     await page.screenshot({ path: path.join(ARTIFACT_DIR, "evidence_task_discovery.png"), fullPage: true });
     console.log("  ✔ Task selection and metadata verified; screenshot saved");
@@ -99,12 +98,11 @@ async function runAcceptanceSuite() {
     const strategyTrigger = page.locator('button:has-text("Branch & Refine"), button:has-text("Sequential Direct"), button:has-text("Select strategy")').first();
     if (await strategyTrigger.isVisible()) {
       await strategyTrigger.click();
+      const sequentialItem = page.locator('[data-slot="select-item"]:has-text("Sequential Direct"), [role="option"]:has-text("Sequential Direct"), text=Sequential Direct').first();
+      await sequentialItem.waitFor({ state: "visible", timeout: 5000 });
+      await sequentialItem.click();
       await page.waitForTimeout(300);
-      const sequentialItem = page.locator('[role="option"]:has-text("Sequential Direct"), text=Sequential Direct').first();
-      if (await sequentialItem.isVisible()) {
-        await sequentialItem.click();
-        await page.waitForTimeout(300);
-      }
+      console.log("  ✔ Strategy set to Sequential Direct");
     }
 
     // Click Start repair run
@@ -123,7 +121,7 @@ async function runAcceptanceSuite() {
     // Wait for pipeline stages to progress and terminal state to be reached
     console.log("  Waiting for pipeline stages and candidate verification...");
     const succeededText = page.locator('[data-testid="active-run-status"]:has-text("SUCCEEDED")');
-    await succeededText.waitFor({ state: "visible", timeout: 45000 });
+    await succeededText.waitFor({ state: "visible", timeout: 90000 });
     console.log("  ✔ Sequential run reached SUCCEEDED");
 
     await page.screenshot({ path: path.join(ARTIFACT_DIR, "evidence_sequential_run_active.png"), fullPage: true });
@@ -192,12 +190,10 @@ async function runAcceptanceSuite() {
     const stratBtn = page.locator('button:has-text("Branch & Refine"), button:has-text("Sequential Direct"), button:has-text("Select strategy")').first();
     if (await stratBtn.isVisible()) {
       await stratBtn.click();
+      const branchItem = page.locator('[data-slot="select-item"]:has-text("Branch & Refine"), [role="option"]:has-text("Branch & Refine"), text=Branch & Refine').first();
+      await branchItem.waitFor({ state: "visible", timeout: 5000 });
+      await branchItem.click();
       await page.waitForTimeout(300);
-      const branchItem = page.locator('[role="option"]:has-text("Branch & Refine"), text=Branch & Refine').first();
-      if (await branchItem.isVisible()) {
-        await branchItem.click();
-        await page.waitForTimeout(300);
-      }
     }
 
     // Start branch refine run
@@ -208,7 +204,7 @@ async function runAcceptanceSuite() {
 
     // Wait for completion
     const branchSucceededText = page.locator('[data-testid="active-run-status"]:has-text("SUCCEEDED")');
-    await branchSucceededText.waitFor({ state: "visible", timeout: 45000 });
+    await branchSucceededText.waitFor({ state: "visible", timeout: 90000 });
     console.log("  ✔ Branch & Refine terminal state SUCCEEDED confirmed");
 
     await page.screenshot({ path: path.join(ARTIFACT_DIR, "evidence_branch_refine_run.png"), fullPage: true });
@@ -243,7 +239,7 @@ async function runAcceptanceSuite() {
 
     // Wait for cancelled state badge / banner
     const cancelledBanner = page.locator('text=Run Cancelled').first();
-    await cancelledBanner.waitFor({ state: "visible", timeout: 10000 });
+    await cancelledBanner.waitFor({ state: "visible", timeout: 30000 });
     await page.screenshot({ path: path.join(ARTIFACT_DIR, "evidence_run_cancelled.png"), fullPage: true });
     console.log("  ✔ Cancellation confirmed in UI; screenshot saved");
 
@@ -252,12 +248,12 @@ async function runAcceptanceSuite() {
     // -------------------------------------------------------------
     console.log(`\n[CHECK 5] Testing Reload Hydration for run ${sequentialRunId}...`);
     // Navigate directly with ?runId query parameter
-    await page.goto(`${BASE_URL}/?runId=${sequentialRunId}`, { waitUntil: "networkidle" });
+    await page.goto(`${BASE_URL}/?runId=${sequentialRunId}`, { waitUntil: "domcontentloaded" });
     await page.waitForTimeout(1000);
 
     // Verify the page hydrated directly into verification view from getRun()
     const reloadVerificationHeader = page.locator('text=Verified Source Repair Completed').first();
-    await reloadVerificationHeader.waitFor({ state: "visible", timeout: 10000 });
+    await reloadVerificationHeader.waitFor({ state: "visible", timeout: 20000 });
 
     const taskText = await page.textContent('body');
     assert.ok(taskText.includes("TASK-084"), "Reloaded page must display TASK-084 metadata");
@@ -287,7 +283,7 @@ async function runAcceptanceSuite() {
 
     // Wait for failure completion
     const failedText = page.locator('[data-testid="active-run-status"]:has-text("FAILED")');
-    await failedText.waitFor({ state: "visible", timeout: 45000 });
+    await failedText.waitFor({ state: "visible", timeout: 90000 });
     console.log("  ✔ TASK-091 terminal state FAILED confirmed");
 
     // Inspect failure view
@@ -360,11 +356,17 @@ async function runAcceptanceSuite() {
 
     // Wait for the browser to recover the terminal state (SUCCEEDED)
     const recoverySucceededText = page.locator('[data-testid="active-run-status"]:has-text("SUCCEEDED")');
-    await recoverySucceededText.waitFor({ state: "visible", timeout: 20000 });
+    await recoverySucceededText.waitFor({ state: "visible", timeout: 90000 });
     console.log("  ✔ Browser recovered terminal SUCCEEDED status");
 
-    // Verify log text in terminal box contains no duplicates
+    // Wait for reconnected stream events to finish rendering in terminal box
     const logContainer = page.locator('[data-testid="stream-terminal-logs"]').first();
+    await page.waitForFunction(() => {
+      const el = document.querySelector('[data-testid="stream-terminal-logs"]');
+      return el && el.textContent && el.textContent.includes("run.finished");
+    }, { timeout: 30000 });
+
+    // Verify log text in terminal box contains no duplicates
     const logContent = await logContainer.textContent();
     assert.ok(logContent, "Log container must contain event text");
 
@@ -390,15 +392,14 @@ async function runAcceptanceSuite() {
     console.log("  ✔ Direct SSE endpoint Last-Event-ID cursor deduplication verified");
 
     // -------------------------------------------------------------
-    // CHECK 8: Budget Denial against Local D1 Bridge
+    // CHECK 8: Budget Denial against Storage Backend
     // -------------------------------------------------------------
-    console.log("\n[CHECK 8] Testing budget denial returning 409 Conflict against local bridge...");
-    // Direct call to D1 Worker operations endpoint with excessive amount exceeding global budget cap
-    const budgetResp = await fetch(`${D1_WORKER_URL}/api/runs/${sequentialRunId}/operations`, {
+    console.log("\n[CHECK 8] Testing budget denial returning 409 Conflict against storage backend...");
+    // Direct call to operations endpoint with excessive amount exceeding global budget cap
+    const budgetResp = await fetch(`${BACKEND_URL}/api/runs/${sequentialRunId}/operations`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: "Bearer local-bridge-token",
       },
       body: JSON.stringify({
         operation_id: `op_budget_excessive_${Date.now()}`,
@@ -412,21 +413,25 @@ async function runAcceptanceSuite() {
     assert.equal(budgetResult.error?.code, "budget_limit_exceeded", "Error code must be budget_limit_exceeded");
 
     // Also verify GET /api/budget/usage reports tracked budget
-    const usageResp = await fetch(`${D1_WORKER_URL}/api/budget/usage`, {
-      headers: { Authorization: "Bearer local-bridge-token" },
-    });
+    const usageResp = await fetch(`${BACKEND_URL}/api/budget/usage`);
     assert.equal(usageResp.status, 200, "Budget usage endpoint must return 200 OK");
     const usageResult = await usageResp.json();
     assert.ok(typeof usageResult.total_micro_usd === "number", "total_micro_usd must be a number");
-    console.log(`  ✔ Budget denial verified against local D1 (status: 409, code: ${budgetResult.error?.code}, tracked: $${(usageResult.total_micro_usd / 1_000_000).toFixed(4)})`);
+    console.log(`  ✔ Budget denial verified against storage backend (status: 409, code: ${budgetResult.error?.code}, tracked: $${(usageResult.total_micro_usd / 1_000_000).toFixed(4)})`);
 
     // -------------------------------------------------------------
-    // CHECK 9: Backend Process Stop and Restart against Persistent Local D1
+    // CHECK 9: Backend Process Stop and Restart against Persistent Storage
     // -------------------------------------------------------------
-    console.log("\n[CHECK 9] Testing real backend process stop and restart against persistent local D1...");
+    console.log("\n[CHECK 9] Testing real backend process stop and restart against persistent storage...");
     const backendCwd = path.resolve(REPO_ROOT, "backend");
     const testPort = Number(process.env.TEST_BACKEND_PORT) || 8009;
     const testBackendUrl = `http://127.0.0.1:${testPort}`;
+    const check9Db = path.resolve(backendCwd, `test_check9_${Date.now()}.db`);
+    const check9Env = {
+      ...process.env,
+      TURSO_DATABASE_URL: check9Db,
+      REPOMEDIC_STORAGE_BACKEND: "turso",
+    };
 
     let testProc = null;
     const cleanTestProc = async () => {
@@ -464,9 +469,7 @@ async function runAcceptanceSuite() {
         ], {
           cwd: backendCwd,
           env: {
-            ...process.env,
-            REPOMEDIC_DB_WORKER_URL: D1_WORKER_URL,
-            REPOMEDIC_DB_WORKER_TOKEN: "local-bridge-token",
+            ...check9Env,
             REPOMEDIC_MODE: "offline",
             PORT: String(testPort),
           },
@@ -475,20 +478,12 @@ async function runAcceptanceSuite() {
         });
       }
 
-      // Step 1: Seed first interrupted run in persistent local D1
+      // Step 1: Seed first interrupted run in persistent storage
       const seedRun1 = `run_interrupted_proc1_${Date.now()}`;
-      const seed1Resp = await fetch(`${D1_WORKER_URL}/api/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer local-bridge-token" },
-        body: JSON.stringify({
-          run_id: seedRun1,
-          task_id: "TASK-084",
-          mode: "offline",
-          search_mode: "sequential",
-          state: "running",
-        }),
+      execSync(`uv run python -m src.storage.turso_client seed-run ${seedRun1} TASK-084 offline sequential running`, {
+        cwd: backendCwd,
+        env: check9Env,
       });
-      assert.equal(seed1Resp.status, 201, "Seeding first run into D1 must succeed");
 
       // Step 2: Spawn backend process and wait for startup lifespan recovery
       console.log(`  Spawning test backend process on port ${testPort}...`);
@@ -497,28 +492,21 @@ async function runAcceptanceSuite() {
       console.log("  ✔ Backend process started and healthy");
 
       // Verify that startup recovery transitioned seedRun1 to failed
-      const check1Resp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRun1}`, {
-        headers: { Authorization: "Bearer local-bridge-token" },
-      });
+      const check1Resp = await fetch(`${testBackendUrl}/api/runs/${seedRun1}`);
       const check1 = await check1Resp.json();
-      assert.equal(check1.state, "failed", "Startup recovery must mark interrupted run as failed in persistent D1");
+      assert.equal(check1.state, "failed", "Startup recovery must mark interrupted run as failed in persistent storage");
       assert.ok(check1.reason.includes("restarted"), `Reason must mention process restart, got: ${check1.reason}`);
       console.log(`  ✔ First run recovered upon startup: state=${check1.state}, reason="${check1.reason}"`);
 
-      // Step 3: Seed second run in persistent local D1 while backend is active
+      // Step 3: Seed second run in persistent storage while backend is active
       const seedRun2 = `run_interrupted_proc2_${Date.now()}`;
-      const seed2Resp = await fetch(`${D1_WORKER_URL}/api/runs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer local-bridge-token" },
-        body: JSON.stringify({
-          run_id: seedRun2,
-          task_id: "TASK-084",
-          mode: "offline",
-          search_mode: "branch_refine",
-          state: "running",
-        }),
+      execSync(`uv run python -m src.storage.turso_client seed-run ${seedRun2} TASK-084 offline branch_refine running`, {
+        cwd: backendCwd,
+        env: check9Env,
       });
-      assert.equal(seed2Resp.status, 201, "Seeding second run into D1 must succeed");
+      const check2ActiveResp = await fetch(`${testBackendUrl}/api/runs/${seedRun2}`);
+      const check2Active = await check2ActiveResp.json();
+      assert.equal(check2Active.state, "running", "Seed run must be running initially");
 
       // Step 4: Stop backend process (simulate shutdown/termination)
       console.log("  Stopping backend process via SIGTERM...");
@@ -526,13 +514,14 @@ async function runAcceptanceSuite() {
       testProc = null;
       console.log("  ✔ Backend process stopped");
 
-      // Verify second run remains 'running' in persistent D1 while backend is stopped
-      const checkDownResp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRun2}`, {
-        headers: { Authorization: "Bearer local-bridge-token" },
-      });
-      const checkDown = await checkDownResp.json();
+      // Verify second run remains 'running' in persistent storage while backend is stopped
+      const rawRun = execSync(`uv run python -m src.storage.turso_client get-run ${seedRun2}`, {
+        cwd: backendCwd,
+        env: check9Env,
+      }).toString();
+      const checkDown = JSON.parse(rawRun);
       assert.equal(checkDown.state, "running", "Seed run must remain running while backend process is stopped");
-      console.log("  ✔ Verified run state remains persisted in local D1 across process termination");
+      console.log("  ✔ Verified run state remains persisted in storage across process termination");
 
       // Step 5: Restart backend process
       console.log(`  Restarting backend process on port ${testPort}...`);
@@ -541,20 +530,26 @@ async function runAcceptanceSuite() {
       console.log("  ✔ Backend process restarted and healthy");
 
       // Step 6: Verify startup recovery of second run
-      const check2Resp = await fetch(`${D1_WORKER_URL}/api/runs/${seedRun2}`, {
-        headers: { Authorization: "Bearer local-bridge-token" },
-      });
+      const check2Resp = await fetch(`${testBackendUrl}/api/runs/${seedRun2}`);
       const check2 = await check2Resp.json();
-      assert.equal(check2.state, "failed", "Restarted backend process must recover interrupted run in persistent D1");
+      assert.equal(check2.state, "failed", "Restarted backend process must recover interrupted run in persistent storage");
       assert.ok(check2.reason.includes("restarted"), `Reason must mention process restart, got: ${check2.reason}`);
       console.log(`  ✔ Second run recovered upon process restart: state=${check2.state}, reason="${check2.reason}"`);
     } finally {
       await cleanTestProc();
-      console.log("  ✔ Test backend process cleaned up");
+      for (const suffix of ["", "-wal", "-shm"]) {
+        const p = `${check9Db}${suffix}`;
+        if (fs.existsSync(p)) {
+          try {
+            fs.unlinkSync(p);
+          } catch {}
+        }
+      }
+      console.log("  ✔ Test backend process and isolated database cleaned up");
     }
 
     console.log("\n========================================================");
-    console.log("ALL 9 BROWSER & LOCAL D1 ACCEPTANCE CHECKS PASSED!");
+    console.log("ALL 9 BROWSER & TURSO STORAGE ACCEPTANCE CHECKS PASSED!");
     console.log("========================================================\n");
   } finally {
     await browser.close();

@@ -314,7 +314,9 @@ async def verify_candidate_patch(
 
         # 5. Check pytest collection node IDs
         if baseline_preservation and baseline_preservation.node_ids:
-            collect_cmd = ["pytest", "--collect-only", "-q"]
+            collect_cmd = list(recipe.test_command)
+            if "--collect-only" not in collect_cmd:
+                collect_cmd.extend(["--collect-only", "-q"])
             try:
                 collect_res = await exec_sandbox.execute_command(
                     collect_cmd, timeout_seconds=recipe.timeout_seconds
@@ -417,11 +419,17 @@ async def verify_candidate_patch(
                 f"test collection count mismatch (collected {test_res.collected_count}, "
                 f"baseline had {baseline_collected_count})"
             )
-        if test_res.skipped_count > 0:
+        baseline_skips = baseline_preservation.skipped_count if baseline_preservation else 0
+        baseline_xfails = baseline_preservation.xfailed_count if baseline_preservation else 0
+
+        new_skips = max(0, test_res.skipped_count - baseline_skips)
+        new_xfails = max(0, test_res.xfailed_count - baseline_xfails)
+
+        if new_skips > 0:
             zero_new_skips = False
-            reasons.append(f"{test_res.skipped_count} newly skipped tests detected")
-        if test_res.xfailed_count > 0:
-            reasons.append(f"{test_res.xfailed_count} newly xfailed tests detected")
+            reasons.append(f"{new_skips} newly skipped tests detected")
+        if new_xfails > 0:
+            reasons.append(f"{new_xfails} newly xfailed tests detected")
 
         if reasons and not failure_reason:
             failure_reason = "tests_failed"

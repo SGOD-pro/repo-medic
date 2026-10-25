@@ -19,15 +19,26 @@ from src.contracts import (
     UsageSummary,
 )
 from src.storage.db_client import RepoMedicDB
+from src.storage.exceptions import (
+    StorageConflictError,
+    StorageError,
+    StorageNotFoundError,
+)
+from src.storage.turso_client import TursoClient
 
 logger = logging.getLogger("repomedic.repository")
 
 
 class D1StorageRepository:
-    """Repository wrapping low level RepoMedicDB calls into domain contract objects."""
+    """Repository wrapping low level storage calls into domain contract objects."""
 
-    def __init__(self, client: RepoMedicDB | None = None):
-        self.client = client or RepoMedicDB()
+    def __init__(self, client: RepoMedicDB | TursoClient | None = None):
+        if client is not None:
+            self.client = client
+        elif getattr(settings, "repomedic_storage_backend", "turso") == "d1":
+            self.client = RepoMedicDB()
+        else:
+            self.client = TursoClient()
 
     def get_total_committed_usd(self) -> float:
         try:
@@ -102,6 +113,12 @@ class D1StorageRepository:
         data = self.client.get_run(run_id)
         return self._map_run_summary(data)
 
+    def get_run_state(self, run_id: str) -> str | None:
+        if hasattr(self.client, "get_run_state"):
+            return self.client.get_run_state(run_id)
+        data = self.client.get_run(run_id)
+        return data.get("state") if data else None
+
     def list_runs(
         self,
         limit: int = 50,
@@ -148,8 +165,11 @@ class D1StorageRepository:
                 from_version=t["from_version"],
                 to_version=t["to_version"],
             )
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
+        except (httpx.HTTPStatusError, StorageError) as e:
+            status_code = getattr(e, "status_code", None) or (
+                getattr(e.response, "status_code", None) if hasattr(e, "response") else None
+            )
+            if status_code == 404:
                 return None
             raise
 
@@ -157,8 +177,11 @@ class D1StorageRepository:
         """Retrieve raw task dictionary containing recipe fields or recipe_json from D1."""
         try:
             return self.client.get_task(task_id)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
+        except (httpx.HTTPStatusError, StorageError) as e:
+            status_code = getattr(e, "status_code", None) or (
+                getattr(e.response, "status_code", None) if hasattr(e, "response") else None
+            )
+            if status_code == 404:
                 return None
             raise
 
@@ -253,16 +276,19 @@ class D1HostPorts(HostPorts):
     def __init__(
         self,
         run_id: str,
-        client: RepoMedicDB | None = None,
+        client: RepoMedicDB | TursoClient | None = None,
         repo: D1StorageRepository | None = None,
     ):
         self.run_id = run_id
         if repo is not None:
             self.repo = repo
             self.client = repo.client
-        else:
-            self.client = client or RepoMedicDB()
+        elif client is not None:
+            self.client = client
             self.repo = D1StorageRepository(self.client)
+        else:
+            self.repo = D1StorageRepository()
+            self.client = self.repo.client
         self._is_cancelled = False
 
     async def emit(self, event_type: str, payload: dict[str, Any]) -> None:
@@ -291,8 +317,11 @@ class D1HostPorts(HostPorts):
                 global_budget_usd=global_budget,
             )
             return True
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 409:
+        except (httpx.HTTPStatusError, StorageError) as e:
+            status_code = getattr(e, "status_code", None) or (
+                getattr(e.response, "status_code", None) if hasattr(e, "response") else None
+            )
+            if status_code == 409:
                 return False
             raise
 
@@ -308,11 +337,19 @@ class D1HostPorts(HostPorts):
             if run_data.get("state") == "cancelled":
                 self._is_cancelled = True
                 return True
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 404:
+        except (httpx.HTTPStatusError, StorageError) as e:
+            status_code = getattr(e, "status_code", None) or (
+                getattr(e.response, "status_code", None) if hasattr(e, "response") else None
+            )
+            if status_code == 404:
                 return False
             raise
         return self._is_cancelled
 
     async def record_provider_ref(self, operation_id: str, provider_ref: str) -> None:
         await asyncio.to_thread(self.client.record_provider_ref, operation_id, provider_ref)
+
+
+# Unified aliases for Turso persistence
+TursoStorageRepository = D1StorageRepository
+TursoHostPorts = D1HostPorts

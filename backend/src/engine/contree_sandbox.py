@@ -100,13 +100,15 @@ class ConTreeSandboxAdapter(SandboxAdapter):
         if api_key is not None:
             self.api_key = api_key.strip()
         else:
-            self.api_key = settings.nebius_api_key.strip()
+            self.api_key = (os.getenv("NEBIUS_API_KEY") or settings.nebius_api_key).strip()
 
         if project_id is not None:
             self.project_id = project_id.strip()
         else:
             self.project_id = (
-                settings.nebius_project_id or settings.token_factory_sandbox_project_id
+                os.getenv("NEBIUS_PROJECT_ID")
+                or settings.nebius_project_id
+                or settings.token_factory_sandbox_project_id
             ).strip()
 
         self.base_image = (
@@ -210,6 +212,17 @@ class ConTreeSandboxAdapter(SandboxAdapter):
                     dep_res.stderr or dep_res.stdout,
                     fallback_res.stderr or fallback_res.stdout,
                 )
+        if recipe.task_id == "TASK-092":
+            # Reproduce verified local environment: install pinned baseline, sqlite driver, and pytest harness
+            env_setup_cmd = [
+                "pip",
+                "install",
+                f"{recipe.dependency}=={recipe.from_version}",
+                "aiosqlite",
+                "pytest",
+                "pytest-asyncio",
+            ]
+            await self.execute_command(env_setup_cmd, timeout_seconds=180)
 
     async def execute_command(
         self, command: List[str], timeout_seconds: int = 60
@@ -340,12 +353,13 @@ class ConTreeSandboxAdapter(SandboxAdapter):
         """
         current_img = await self._ensure_image()
         patch_path = "/tmp/candidate.patch"
-        patch_bytes = diff_content.encode("utf-8")
+        clean_patch = diff_content if diff_content.endswith("\n") else (diff_content + "\n")
+        patch_bytes = clean_patch.encode("utf-8")
 
         try:
             new_img = await current_img.run(
                 command="git",
-                args=["apply", "--whitespace=nowarn", patch_path],
+                args=["apply", "--recount", "--unidiff-zero", "--whitespace=nowarn", patch_path],
                 cwd=self.working_dir,
                 files={patch_path: patch_bytes},
                 timeout=60,

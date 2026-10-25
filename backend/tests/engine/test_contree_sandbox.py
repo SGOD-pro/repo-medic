@@ -306,6 +306,55 @@ async def test_contree_adapter_repository_preparation_fallback_install(mock_reci
 
 
 @pytest.mark.asyncio
+async def test_contree_adapter_repository_preparation_task_092_setup():
+    """Verify that TASK-092 installs pinned baseline, sqlite driver, and test harness on fallback."""
+    class Task092Image(MockContreeImage):
+        async def run(self, **kwargs):
+            cmd = kwargs.get("command", "")
+            args = kwargs.get("args", [])
+            if cmd == "git" and "rev-parse" in args:
+                return Task092Image(uuid="img_rev", stdout="6b0c767588f501d5edaabb1bdf665fcf1ded88ea\n", exit_code=0)
+            if cmd == "pip" and "-r" in args:
+                return Task092Image(uuid="img_pip_err", stderr="psycopg2 build error", exit_code=1)
+            if cmd == "pip" and "-e" in args:
+                return Task092Image(uuid="img_pip_ok", stdout="Successfully installed databases", exit_code=0)
+            return Task092Image(uuid="img_ok", exit_code=0)
+
+    client = MockContreeClient()
+    client.images.image_factory = lambda ref: Task092Image()
+    adapter = ConTreeSandboxAdapter(
+        api_key="mock_key",
+        project_id="mock_proj",
+        client=client,
+    )
+
+    task_092_recipe = TaskRecipe(
+        task_id="TASK-092",
+        title="sqlalchemy v1.4.42 to v2.0.19 in encode/databases external project",
+        repository_url="https://github.com/encode/databases.git",
+        commit_sha="6b0c767588f501d5edaabb1bdf665fcf1ded88ea",
+        dependency="sqlalchemy",
+        from_version="1.4.42",
+        to_version="2.0.19",
+        test_command=["env", "TEST_DATABASE_URLS=sqlite:///testsuite", "pytest", "tests/test_databases.py"],
+        allowed_source_paths=["databases/core.py", "databases/backends/sqlite.py"],
+        expected_failure="AttributeError: type object 'Row' has no attribute '_default_key_style'",
+        timeout_seconds=600,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    await adapter.prepare_repository(task_092_recipe)
+    pip_cmds = [cmd for cmd in adapter.executed_commands if cmd[0] == "pip"]
+    assert len(pip_cmds) == 3
+    assert "-r" in pip_cmds[0]
+    assert "-e" in pip_cmds[1]
+    assert "sqlalchemy==1.4.42" in pip_cmds[2]
+    assert "aiosqlite" in pip_cmds[2]
+    assert "pytest" in pip_cmds[2]
+
+
+@pytest.mark.asyncio
 async def test_contree_adapter_hash_files():
     client = MockContreeClient()
     base_img = MockContreeImage(uuid="img_hash_base")

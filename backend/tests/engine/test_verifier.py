@@ -1,6 +1,6 @@
 import pytest
 from src.contracts import TaskRecipe
-from src.engine.adapters import SandboxPreset
+from src.engine.adapters import CommandResult, SandboxPreset
 from src.engine.baseline import record_baseline_preservation
 from src.engine.candidate import CandidatePatch, TestPreservationRecord
 from src.engine.fake_sandbox import FakeSandboxAdapter
@@ -384,3 +384,183 @@ async def test_verifier_fails_on_untrusted_import_origin(
     assert outcome.passed is False
     assert outcome.reason == "invalid_import_origin"
     assert "untrusted or invalid dependency import-origin" in outcome.summary
+
+
+@pytest.mark.asyncio
+async def test_verifier_preserves_baseline_skips_and_xfails(test_recipe, valid_candidate):
+    """Verify that baseline skips and xfails are preserved, and only newly added skips/xfails fail."""
+    from src.engine.candidate import TestPreservationRecord
+
+    class SkipSandbox(FakeSandboxAdapter):
+        def __init__(self, skips: int, xfails: int, **kwargs):
+            super().__init__(**kwargs)
+            self.simulated_skips = skips
+            self.simulated_xfails = xfails
+
+        async def create_execution(self, checkpoint_id: str):
+            await super().create_execution(checkpoint_id)
+            child = SkipSandbox(skips=self.simulated_skips, xfails=self.simulated_xfails, is_execution_handle=True)
+            child.file_hashes = dict(self.file_hashes)
+            child.node_ids = list(self.node_ids)
+            return child
+
+        async def execute_command(self, command, timeout_seconds=60):
+            res = await super().execute_command(command, timeout_seconds=timeout_seconds)
+            if any("--collect-only" in arg for arg in command):
+                return res
+            # Return tests with simulated baseline skips and xfails
+            return CommandResult(
+                exit_code=0,
+                stdout=f"68 passed, {self.simulated_skips} skipped, {self.simulated_xfails} xfailed in 1.0s",
+                stderr="",
+                collected_count=78,
+                skipped_count=self.simulated_skips,
+                xfailed_count=self.simulated_xfails,
+                installed_version="2.0.0",
+                import_origin="site-packages",
+                collected_node_ids=list(self.node_ids),
+            )
+
+    # 1. Baseline had 10 skips and 2 xfails. Current run has exact same 10 skips and 2 xfails.
+    sandbox1 = SkipSandbox(skips=10, xfails=2)
+    preservation = TestPreservationRecord(
+        root_dir=".",
+        file_hashes=dict(sandbox1.file_hashes),
+        node_ids=list(sandbox1.node_ids),
+        collected_count=78,
+        skipped_count=10,
+        xfailed_count=2,
+    )
+
+    host1 = FakeHost()
+    outcome1 = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=test_recipe,
+        sandbox=sandbox1,
+        host=host1,
+        baseline_collected_count=78,
+        baseline_preservation=preservation,
+    )
+    assert outcome1.passed is True
+    assert outcome1.manifest.checks.zero_new_skips is True
+
+    # 2. Baseline had 10 skips. Current run has 11 skips (1 newly skipped test).
+    host2 = FakeHost()
+    sandbox2 = SkipSandbox(skips=11, xfails=2)
+    outcome2 = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=test_recipe,
+        sandbox=sandbox2,
+        host=host2,
+        baseline_collected_count=78,
+        baseline_preservation=preservation,
+    )
+    assert outcome2.passed is False
+    assert outcome2.manifest.checks.zero_new_skips is False
+    assert "1 newly skipped tests detected" in outcome2.summary
+
+    # 3. Baseline had 2 xfails. Current run has 3 xfails (1 newly xfailed test).
+    host3 = FakeHost()
+    sandbox3 = SkipSandbox(skips=10, xfails=3)
+    outcome3 = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=test_recipe,
+        sandbox=sandbox3,
+        host=host3,
+        baseline_collected_count=78,
+        baseline_preservation=preservation,
+    )
+    assert outcome3.passed is False
+    assert "1 newly xfailed tests detected" in outcome3.summary
+
+
+@pytest.mark.asyncio
+async def test_verifier_wrapped_env_pytest_command_identities_and_verification(valid_candidate):
+    """Verify that wrapped env/pytest commands produce test identities and verify full suite correctly."""
+    from src.engine.candidate import TestPreservationRecord
+
+    wrapped_recipe = TaskRecipe(
+        task_id="TASK-092",
+        title="sqlalchemy v1.4.42 to v2.0.19 in encode/databases external project",
+        repository_url="https://github.com/encode/databases.git",
+        commit_sha="6b0c767588f501d5edaabb1bdf665fcf1ded88ea",
+        dependency="sqlalchemy",
+        from_version="1.4.42",
+        to_version="2.0.19",
+        test_command=[
+            "env",
+            "TEST_DATABASE_URLS=sqlite:///testsuite",
+            "pytest",
+            "tests/test_databases.py",
+        ],
+        allowed_source_paths=["databases/core.py", "databases/backends/sqlite.py"],
+        expected_failure="AttributeError",
+        timeout_seconds=600,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    class WrappedSandbox(FakeSandboxAdapter):
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
+            self.node_ids = ["tests/test_databases.py::test_queries", "tests/test_databases.py::test_sqlite"]
+
+        async def create_execution(self, checkpoint_id: str):
+            await super().create_execution(checkpoint_id)
+            child = WrappedSandbox(is_execution_handle=True)
+            child.file_hashes = dict(self.file_hashes)
+            child.node_ids = list(self.node_ids)
+            return child
+
+        async def execute_command(self, command, timeout_seconds=60):
+            await super().execute_command(command, timeout_seconds=timeout_seconds)
+            # Ensure wrapped env is maintained in collect command
+            if any("--collect-only" in arg for arg in command):
+                assert command[0] == "env"
+                assert "TEST_DATABASE_URLS=sqlite:///testsuite" in command[1]
+                assert "--collect-only" in command
+                return CommandResult(
+                    exit_code=0,
+                    stdout="\n".join(self.node_ids) + "\n2 items collected",
+                    stderr="",
+                    collected_count=2,
+                    collected_node_ids=list(self.node_ids),
+                )
+            # Full suite verification execution
+            assert command[0] == "env"
+            assert command[2] == "pytest"
+            return CommandResult(
+                exit_code=0,
+                stdout="2 passed in 0.5s",
+                stderr="",
+                collected_count=2,
+                skipped_count=0,
+                installed_version="2.0.19",
+                import_origin="site-packages",
+                collected_node_ids=list(self.node_ids),
+            )
+
+    sandbox = WrappedSandbox()
+    preservation = TestPreservationRecord(
+        root_dir=".",
+        file_hashes=dict(sandbox.file_hashes),
+        node_ids=["tests/test_databases.py::test_queries", "tests/test_databases.py::test_sqlite"],
+        collected_count=2,
+        skipped_count=0,
+        xfailed_count=0,
+    )
+    host = FakeHost()
+
+    outcome = await verify_candidate_patch(
+        candidate=valid_candidate,
+        recipe=wrapped_recipe,
+        sandbox=sandbox,
+        host=host,
+        baseline_collected_count=2,
+        baseline_preservation=preservation,
+    )
+
+    assert outcome.passed is True
+    assert outcome.manifest.checks.collection_node_ids_match is True
+    assert outcome.manifest.checks.tests_passed is True
+    assert outcome.manifest.verified_version == "2.0.19"

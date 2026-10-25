@@ -228,7 +228,10 @@ async def test_exhaustion_when_all_branches_and_refinements_fail(
 
     assert result.state == "failed"
     assert "failed" in (result.reason or "").lower()
+    # Worst-case bounds: exactly 3 root candidate generations + 3 refinement generations = 6 generations
     assert model.call_count == 6
+    # Exactly 3 root verifications + 3 refinement verifications = 6 verifications
+    assert len(sandbox.execution_handles) == 6
 
     # Overall stage.completed verification event must be passed=False
     stage_events = [e for e in host.events if e["type"] == "stage.completed"]

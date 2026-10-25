@@ -412,3 +412,280 @@ async def test_sequential_repair_cancels_before_accepting_results(
     res = await repair(sample_request, sample_recipe, host, sandbox=sandbox, model=model)
     assert res.state == "cancelled"
     assert "cancelled" in (res.reason or "").lower()
+
+
+def test_strip_code_block_extracts_diff_from_conversational_response():
+    """Offline regression for live model conversational preamble stripping."""
+    from src.engine.candidate_generator import _strip_code_block
+
+    conversational_output = (
+        "We are given that the error occurs in src/backend/database.py.\n"
+        "Looking at the context of the function init_db():\n\n"
+        "Here is the patch:\n"
+        "--- a/src/backend/database.py\n"
+        "+++ b/src/backend/database.py\n"
+        "@@ -5,4 +5,5 @@\n"
+        "-def init_db():\n"
+        "-    engine.execute(text('CREATE TABLE users'))\n"
+        "+def init_db():\n"
+        "+    with engine.begin() as conn:\n"
+        "+        conn.execute(text('CREATE TABLE users'))\n"
+        "\n"
+        "Note: We must not change other files or imports.\n"
+        "Hope this helps resolve the failure.\n"
+    )
+
+    clean = _strip_code_block(conversational_output)
+    assert clean.startswith("--- a/src/backend/database.py")
+    assert clean.endswith("\n")
+    assert "We are given that" not in clean
+    assert "Hope this helps" not in clean
+    assert "with engine.begin() as conn:" in clean
+
+
+def test_clean_patch_git_apply_trailing_newline(tmp_path):
+    """Offline regression proving trailing newline prevents corrupt patch errors in git apply."""
+    import subprocess
+    from src.engine.candidate_generator import _strip_code_block
+
+    repo_dir = tmp_path / "repo"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    src_dir = repo_dir / "src" / "backend"
+    src_dir.mkdir(parents=True)
+    db_file = src_dir / "database.py"
+    db_file.write_text("def init_db():\n    engine.execute(text('CREATE TABLE users'))\n")
+
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    raw_diff = (
+        "Here is the diff:\n"
+        "--- a/src/backend/database.py\n"
+        "+++ b/src/backend/database.py\n"
+        "@@ -1,2 +1,3 @@\n"
+        " def init_db():\n"
+        "-    engine.execute(text('CREATE TABLE users'))\n"
+        "+    with engine.begin() as conn:\n"
+        "+        conn.execute(text('CREATE TABLE users'))"
+    )
+
+    clean_diff = _strip_code_block(raw_diff)
+    assert clean_diff.endswith("\n")
+
+    patch_file = repo_dir / "candidate.patch"
+    patch_file.write_text(clean_diff)
+
+    cmd = ["git", "apply", "--whitespace=nowarn", str(patch_file)]
+    res = subprocess.run(cmd, cwd=str(repo_dir), capture_output=True, text=True)
+    assert res.returncode == 0
+    assert "corrupt patch" not in res.stderr
+    assert "with engine.begin() as conn:" in db_file.read_text()
+
+
+def test_build_repair_prompt_incorporates_source_files(sample_recipe: TaskRecipe):
+    """Offline regression ensuring source files are included in prompt for line context."""
+    from src.engine.candidate import UpgradeResult
+
+    upgrade = UpgradeResult(
+        success=True,
+        installed_version="2.0.19",
+        failure_output="AttributeError: 'Engine' object has no attribute 'execute'",
+        summary="reproduced expected failure",
+    )
+    source_files = {
+        "src/backend/database.py": "def init_db():\n    engine.execute('create table')\n"
+    }
+
+    prompt = build_repair_prompt(
+        recipe=sample_recipe,
+        upgrade=upgrade,
+        error_block="AttributeError: 'Engine' object has no attribute 'execute'",
+        error_files=["src/backend/database.py"],
+        source_files=source_files,
+    )
+
+    assert "--- Current source file content ---" in prompt
+    assert "File: src/backend/database.py" in prompt
+    assert "def init_db():" in prompt
+    assert "Do NOT output conversational explanations" in prompt
+    assert "with engine.begin() as conn:" in prompt
+
+
+def test_normalize_diff_context_restores_blank_line(tmp_path):
+    """Offline regression testing missing blank line restoration between functions."""
+    import subprocess
+    from src.engine.candidate_generator import _strip_code_block
+
+    repo_dir = tmp_path / "repo_blank"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    src_dir = repo_dir / "src" / "backend"
+    src_dir.mkdir(parents=True)
+    db_file = src_dir / "database.py"
+    original_code = (
+        "def init_db():\n"
+        "    engine.execute('create')\n"
+        "\n"
+        "def get_user_count():\n"
+        "    return engine.execute('select')\n"
+    )
+    db_file.write_text(original_code)
+
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    # Patch without blank line context between functions
+    raw_diff = (
+        "--- a/src/backend/database.py\n"
+        "+++ b/src/backend/database.py\n"
+        "@@ -1,5 +1,5 @@\n"
+        " def init_db():\n"
+        "-    engine.execute('create')\n"
+        "+    with engine.begin() as conn:\n"
+        "+        conn.execute('create')\n"
+        " def get_user_count():\n"
+        "-    return engine.execute('select')\n"
+        "+    with engine.connect() as conn:\n"
+        "+        return conn.execute('select')"
+    )
+
+    clean_diff = _strip_code_block(raw_diff, source_files={"src/backend/database.py": original_code})
+    patch_file = repo_dir / "candidate.patch"
+    patch_file.write_text(clean_diff)
+
+    cmd = ["git", "apply", "--recount", "--whitespace=nowarn", str(patch_file)]
+    res = subprocess.run(cmd, cwd=str(repo_dir), capture_output=True, text=True)
+    assert res.returncode == 0
+    assert "with engine.begin() as conn:" in db_file.read_text()
+    assert "with engine.connect() as conn:" in db_file.read_text()
+
+
+def test_normalize_diff_context_bare_hunk_header(tmp_path):
+    """Offline regression testing bare @@ hunk header repair from model outputs."""
+    import subprocess
+    from src.engine.candidate_generator import _strip_code_block
+
+    repo_dir = tmp_path / "repo_bare_hunk"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    src_dir = repo_dir / "src" / "backend"
+    src_dir.mkdir(parents=True)
+    db_file = src_dir / "database.py"
+    original_code = (
+        "from sqlalchemy import create_engine, text\n"
+        "\n"
+        "engine = create_engine('sqlite:///:memory:')\n"
+        "\n"
+        "def init_db():\n"
+        "    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))\n"
+        "    engine.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))\n"
+        "\n"
+        "def get_user_count():\n"
+        "    res = engine.execute(text('SELECT count(*) FROM users'))\n"
+        "    return res.scalar()\n"
+    )
+    db_file.write_text(original_code)
+
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    # Patch with bare @@ header reproduced from live run
+    raw_diff = (
+        "--- a/src/backend/database.py\n"
+        "+++ b/src/backend/database.py\n"
+        "@@\n"
+        " from sqlalchemy import create_engine, text\n"
+        "\n"
+        " engine = create_engine('sqlite:///:memory:')\n"
+        "\n"
+        "-def init_db():\n"
+        "-    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))\n"
+        "-    engine.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))\n"
+        "-\n"
+        "-def get_user_count():\n"
+        "-    res = engine.execute(text('SELECT count(*) FROM users'))\n"
+        "-    return res.scalar()\n"
+        "+def init_db():\n"
+        "+    with engine.begin() as conn:\n"
+        "+        conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))\n"
+        "+        conn.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))\n"
+        "+\n"
+        "+def get_user_count():\n"
+        "+    with engine.begin() as conn:\n"
+        "+        res = conn.execute(text('SELECT count(*) FROM users'))\n"
+        "+        return res.scalar()\n"
+    )
+
+    clean_diff = _strip_code_block(raw_diff, source_files={"src/backend/database.py": original_code})
+    assert "@@ -1," in clean_diff
+    patch_file = repo_dir / "candidate.patch"
+    patch_file.write_text(clean_diff)
+
+    cmd = ["git", "apply", "--recount", "--whitespace=nowarn", str(patch_file)]
+    res = subprocess.run(cmd, cwd=str(repo_dir), capture_output=True, text=True)
+    assert res.returncode == 0
+    updated_code = db_file.read_text()
+    assert "with engine.begin() as conn:" in updated_code
+    assert "return res.scalar()" in updated_code
+
+
+def test_normalize_diff_context_trailing_delimiter_and_unidiff_zero(tmp_path):
+    """Offline regression proving trailing @@ delimiter removal and unidiff zero application."""
+    import subprocess
+    from src.engine.candidate_generator import _strip_code_block
+
+    repo_dir = tmp_path / "repo_trailing_delimiter"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    src_dir = repo_dir / "src" / "backend"
+    src_dir.mkdir(parents=True)
+    db_file = src_dir / "database.py"
+    original_code = (
+        "from sqlalchemy import create_engine, text\n"
+        "\n"
+        "engine = create_engine('sqlite:///:memory:')\n"
+        "\n"
+        "def init_db():\n"
+        "    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))\n"
+        "    engine.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))\n"
+        "\n"
+        "def get_user_count():\n"
+        "    res = engine.execute(text('SELECT count(*) FROM users'))\n"
+        "    return res.scalar()\n"
+    )
+    db_file.write_text(original_code)
+
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+
+    # Patch with trailing @@ delimiter and zero context lines as reproduced from run 5
+    raw_diff = (
+        "--- a/src/backend/database.py\n"
+        "+++ b/src/backend/database.py\n"
+        "@@ -5,4 +5,4 @@\n"
+        "-def init_db():\n"
+        "-    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))\n"
+        "-    engine.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))\n"
+        "+def init_db():\n"
+        "+    with engine.begin() as conn:\n"
+        "+        conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))\n"
+        "+        conn.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))\n"
+        "@@\n"
+    )
+
+    clean_diff = _strip_code_block(raw_diff, source_files={"src/backend/database.py": original_code})
+    # Trailing empty @@ delimiter should be removed
+    assert clean_diff.strip().endswith("conn.execute(text(\"INSERT INTO users (name) VALUES ('alice')\"))")
+    patch_file = repo_dir / "candidate.patch"
+    patch_file.write_text(clean_diff)
+
+    cmd = ["git", "apply", "--recount", "--unidiff-zero", "--whitespace=nowarn", str(patch_file)]
+    res = subprocess.run(cmd, cwd=str(repo_dir), capture_output=True, text=True)
+    assert res.returncode == 0
+    updated_code = db_file.read_text()
+    assert "with engine.begin() as conn:" in updated_code

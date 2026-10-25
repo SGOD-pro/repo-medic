@@ -11,9 +11,11 @@ dependencies = [
     "contree-sdk>=0.3.6",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
+    "libsql>=0.1.11",
     "pydantic>=2.14.0",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.4",
+    "turso-serverless>=0.1.0",
     "uvicorn>=0.30.0",
 ]
 

@@ -5,4 +5,7 @@ db-worker/.wrangler/
 db-worker/node_modules/
 db-worker/.dev.vars*
 *.sqlite
+*.db
 artifacts/
+__pycache__/
+*.pyc

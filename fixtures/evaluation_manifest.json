@@ -1,0 +1,171 @@
+{
+  "manifest_version": "1.0.0",
+  "created_at": "2026-10-24T20:55:00Z",
+  "history_classification": "Development and debugging history across progressive adapter versions, not six comparable benchmark trials on fixed code",
+  "spending_caps": {
+    "global_budget_ceiling_usd": 25.00,
+    "default_run_ceiling_usd": 2.00,
+    "total_estimated_settled_usd": 0.3500,
+    "billing_status": "Internal estimated budget reservations; not measured cloud provider invoices"
+  },
+  "scenarios": [
+    {
+      "task_id": "TASK-091",
+      "name": "Controlled Sequential Dependency Migration",
+      "search_mode": "sequential",
+      "target": {
+        "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+        "commit_sha": "453a0b6c6b125177504cdd941902b8d48266ed1c",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.48",
+        "to_version": "2.0.19",
+        "test_command": ["pytest", "tests/"],
+        "allowed_source_paths": ["src/backend/database.py", "src/backend/models.py"],
+        "expected_failure": "AttributeError: 'Engine' object has no attribute 'execute'",
+        "timeout_seconds": 600,
+        "spending_cap_usd": 2.00
+      },
+      "execution_status": "succeeded",
+      "attempts": [
+        {
+          "attempt_index": 1,
+          "run_id": "run_k4_live_1792865805",
+          "state": "failed",
+          "tested_engine_iteration": "Iteration 1 baseline engine without source file context in repair prompt",
+          "failure_reason": "Missing source file context in repair prompt resulted in conversational response without diff hunks",
+          "model_calls": 1,
+          "token_telemetry": "unavailable (provider omitted token usage in streaming metadata)",
+          "elapsed_seconds": 48,
+          "estimated_allocation_usd": 0.35,
+          "artifacts": ["patch.diff", "verify.log", "evidence.json"]
+        },
+        {
+          "attempt_index": 2,
+          "run_id": "run_k4_live_1792866478",
+          "state": "failed",
+          "tested_engine_iteration": "Iteration 2 prompt with source files but missing trailing newline and interfunction blank line context",
+          "failure_reason": "Generated diff missing trailing newline and interfunction blank line context resulting in corrupt patch error",
+          "model_calls": 1,
+          "token_telemetry": "unavailable (provider omitted token usage in streaming metadata)",
+          "elapsed_seconds": 44,
+          "estimated_allocation_usd": 0.35,
+          "artifacts": ["patch.diff", "verify.log", "evidence.json"]
+        },
+        {
+          "attempt_index": 3,
+          "run_id": "run_k4_live_1792866652",
+          "state": "failed",
+          "tested_engine_iteration": "Iteration 3 blank line normalization added but prompt lacking transaction begin guidance",
+          "failure_reason": "Patch applied cleanly but generated engine.connect() without commit resulting in verification assertion failure",
+          "model_calls": 1,
+          "token_telemetry": "unavailable (provider omitted token usage in streaming metadata)",
+          "elapsed_seconds": 44,
+          "estimated_allocation_usd": 0.35,
+          "artifacts": ["patch.diff", "verify.log", "evidence.json"]
+        },
+        {
+          "attempt_index": 4,
+          "run_id": "run_k4_live_1792868362",
+          "state": "failed",
+          "tested_engine_iteration": "Iteration 4 transaction begin guidance added but parser missing bare hunk delimiter support",
+          "failure_reason": "Model emitted bare @@ hunk delimiter without line numbers which git apply rejected",
+          "model_calls": 1,
+          "token_telemetry": "unavailable (provider omitted token usage in streaming metadata)",
+          "elapsed_seconds": 123,
+          "estimated_allocation_usd": 0.35,
+          "artifacts": ["patch.diff", "verify.log", "evidence.json"]
+        },
+        {
+          "attempt_index": 5,
+          "run_id": "run_k4_live_1792868945",
+          "state": "failed",
+          "tested_engine_iteration": "Iteration 5 bare hunk parsing added but trailing empty delimiter and zero context lines unhandled",
+          "failure_reason": "Trailing empty @@ delimiter and zero context lines rejected by git apply without unidiff zero flag",
+          "model_calls": 1,
+          "token_telemetry": "unavailable (provider omitted token usage in streaming metadata)",
+          "elapsed_seconds": 49,
+          "estimated_allocation_usd": 0.35,
+          "artifacts": ["patch.diff", "verify.log", "evidence.json"]
+        },
+        {
+          "attempt_index": 6,
+          "run_id": "run_k4_live_1792870515",
+          "state": "succeeded",
+          "tested_engine_iteration": "Iteration 6 empty trailing hunks stripped with unidiff zero and recount flags enabled in contree sandbox",
+          "failure_reason": null,
+          "model_calls": 1,
+          "token_telemetry": "unavailable (provider omitted token usage in streaming metadata)",
+          "elapsed_seconds": 50,
+          "estimated_allocation_usd": 0.35,
+          "verification_outcome": {
+            "tests_passed": true,
+            "exit_code": 0,
+            "collected_count": 1,
+            "passed_count": 1,
+            "verified_version": "2.0.19",
+            "import_origin": "site-packages"
+          },
+          "artifact_hashes": {
+            "patch.diff": "b89dbf660e3cb364d24e6fb13f226007e5b04c7701ea7277e62daf5a04272650",
+            "verify.log": "c2f695bba8fe2f3c4c63260dc5078f92fec38a855b83081e671799236df4e753",
+            "evidence.json": "29063cfc1cfb977c51a9b61f7001ce9cdf312e28859af78c42fc272a185d58d4"
+          }
+        }
+      ]
+    },
+    {
+      "task_id": "TASK-092",
+      "name": "Accessible External Project Migration (encode/databases)",
+      "search_mode": "sequential",
+      "target": {
+        "repository_url": "https://github.com/encode/databases.git",
+        "commit_sha": "6b0c767588f501d5edaabb1bdf665fcf1ded88ea",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.42",
+        "to_version": "2.0.19",
+        "test_command": [
+          "env",
+          "TEST_DATABASE_URLS=sqlite:///testsuite,sqlite+aiosqlite:///testsuite",
+          "pytest",
+          "tests/test_databases.py"
+        ],
+        "allowed_source_paths": [
+          "databases/core.py",
+          "databases/backends/sqlite.py"
+        ],
+        "expected_failure": "AttributeError: type object 'Row' has no attribute '_default_key_style'",
+        "timeout_seconds": 600,
+        "spending_cap_usd": 2.00
+      },
+      "execution_status": "pending_execution",
+      "attempts": []
+    },
+    {
+      "task_id": "TASK-093",
+      "name": "Bounded Live Branch and Refine Scenario",
+      "search_mode": "branch_refine",
+      "target": {
+        "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+        "commit_sha": "453a0b6c6b125177504cdd941902b8d48266ed1c",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.48",
+        "to_version": "2.0.19",
+        "test_command": [
+          "pytest",
+          "tests/"
+        ],
+        "allowed_source_paths": [
+          "src/backend/database.py",
+          "src/backend/models.py"
+        ],
+        "expected_failure": "AttributeError: 'Engine' object has no attribute 'execute'",
+        "max_candidates": 3,
+        "max_refinements": 1,
+        "timeout_seconds": 600,
+        "spending_cap_usd": 2.00
+      },
+      "execution_status": "pending_execution",
+      "attempts": []
+    }
+  ]
+}

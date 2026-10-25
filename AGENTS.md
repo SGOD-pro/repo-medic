@@ -69,7 +69,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 **Respect package boundaries and avoid stepping on teammates' toes.**
 
 - **A owns frontend**: Task/progress/results/history UI, API client, UI checks.
-- **B owns backend**: Public API, D1 bridge/repositories/migrations, queue/HostPorts, artifact downloads.
+- **B owns backend**: Public API, Turso storage adapter/D1 bridge, repositories/migrations, queue/HostPorts, artifact downloads.
 - **C owns engine**: Baseline/upgrade/repair/verifier, sequential and branch/refine logic, model/sandbox adapters.
 - **Lead owns integration**: Shared contracts/config/fixtures, checkpoint tags, operator credentials, and overall orchestration.
 
@@ -83,5 +83,5 @@ Parallel offline slices integrating at fixed checkpoints (K0 to K5).
 
 - [backend/src/engine/AGENTS.md](backend/src/engine/AGENTS.md): Engine baseline, upgrade, verifier, branch/refine, and provider adapters
 - [frontend/AGENTS.md](frontend/AGENTS.md): Package A frontend UI, dashboard, and browser checks
-- [backend/AGENTS.md](backend/AGENTS.md): Package B backend service, D1 repository, and worker queue
+- [backend/AGENTS.md](backend/AGENTS.md): Package B backend service, Turso storage repository, and worker queue
 - [db-worker/AGENTS.md](db-worker/AGENTS.md): Cloudflare Worker D1 database bridge

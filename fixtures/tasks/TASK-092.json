@@ -1,0 +1,23 @@
+{
+  "task_id": "TASK-092",
+  "title": "sqlalchemy v1.4.42 to v2.0.19 in encode/databases external project",
+  "repository_url": "https://github.com/encode/databases.git",
+  "commit_sha": "6b0c767588f501d5edaabb1bdf665fcf1ded88ea",
+  "dependency": "sqlalchemy",
+  "from_version": "1.4.42",
+  "to_version": "2.0.19",
+  "test_command": [
+    "env",
+    "TEST_DATABASE_URLS=sqlite:///testsuite,sqlite+aiosqlite:///testsuite",
+    "pytest",
+    "tests/test_databases.py"
+  ],
+  "allowed_source_paths": [
+    "databases/core.py",
+    "databases/backends/sqlite.py"
+  ],
+  "expected_failure": "AttributeError: type object 'Row' has no attribute '_default_key_style'",
+  "timeout_seconds": 600,
+  "max_candidates": 3,
+  "max_refinements": 1
+}

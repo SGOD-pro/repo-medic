@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 from pathlib import Path
 
 from collections.abc import Awaitable, Callable
@@ -16,6 +17,7 @@ from src.engine.contree_sandbox import ConTreeSandboxAdapter
 from src.engine.repair import repair as engine_repair
 from src.engine.token_factory_model import TokenFactoryModelAdapter
 from src.fixtures import find_task_fixture_dir
+from src.storage.exceptions import StorageError
 from src.storage.repository import D1HostPorts, D1StorageRepository
 
 logger = logging.getLogger("repomedic.worker")
@@ -82,6 +84,14 @@ def load_task_recipe(task_id: str, repo: D1StorageRepository) -> TaskRecipe:
     )
 
 
+def _is_409_conflict(err: Exception) -> bool:
+    if getattr(err, "status_code", None) == 409:
+        return True
+    if hasattr(err, "response") and getattr(err.response, "status_code", None) == 409:
+        return True
+    return False
+
+
 class QueueWorker:
     """Asynchronous background worker that claims and processes queued repair runs."""
 
@@ -130,12 +140,16 @@ class QueueWorker:
     async def process_one(self) -> bool:
         """Claim and process at most one queued run. Returns True if a run was processed."""
         if self.acceptance_prefix:
-            queued_runs = self.repo.list_runs(limit=1, state="queued", run_prefix=self.acceptance_prefix)
+            queued_runs = await asyncio.to_thread(
+                self.repo.list_runs, limit=1, state="queued", run_prefix=self.acceptance_prefix
+            )
             if not queued_runs or not queued_runs[0].run_id.startswith(self.acceptance_prefix):
                 return False
             run = queued_runs[0]
         else:
-            queued_runs = self.repo.list_runs(limit=1, state="queued")
+            queued_runs = await asyncio.to_thread(
+                self.repo.list_runs, limit=1, state="queued"
+            )
             if not queued_runs:
                 return False
             run = queued_runs[0]
@@ -145,9 +159,9 @@ class QueueWorker:
 
         # Transition state to running with compare and swap
         try:
-            self.repo.update_run_state(run_id, state="running", from_state="queued")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 409:
+            await asyncio.to_thread(self.repo.update_run_state, run_id, state="running", from_state="queued")
+        except (httpx.HTTPStatusError, StorageError) as e:
+            if _is_409_conflict(e):
                 logger.info("Run %s already claimed by another worker, skipping", run_id)
                 return False
             logger.warning("Failed to claim run %s: %s", run_id, e)
@@ -170,15 +184,22 @@ class QueueWorker:
                 search_mode=run.search_mode,
                 max_run_usd=max_run_usd,
             )
-            recipe = load_task_recipe(run.task_id, self.repo)
+            recipe = await asyncio.to_thread(load_task_recipe, run.task_id, self.repo)
             host = D1HostPorts(run_id=run_id, repo=self.repo)
 
             # In live execution mode, enforce explicit live adapters with zero fake fallback
             if run.mode == "live":
-                token_factory_key = (settings.token_factory_api_key or settings.nebius_api_key).strip()
-                nebius_key = settings.nebius_api_key.strip()
+                token_factory_key = (
+                    os.getenv("TOKEN_FACTORY_API_KEY")
+                    or settings.token_factory_api_key
+                    or os.getenv("NEBIUS_API_KEY")
+                    or settings.nebius_api_key
+                ).strip()
+                nebius_key = (os.getenv("NEBIUS_API_KEY") or settings.nebius_api_key).strip()
                 project_id = (
-                    settings.nebius_project_id or settings.token_factory_sandbox_project_id
+                    os.getenv("NEBIUS_PROJECT_ID")
+                    or settings.nebius_project_id
+                    or settings.token_factory_sandbox_project_id
                 ).strip()
                 missing = []
                 if not token_factory_key:
@@ -192,7 +213,7 @@ class QueueWorker:
                         f"Live mode execution failed: missing required credentials: {', '.join(missing)}"
                     )
                     logger.error("Run %s failed closed: %s", run_id, fail_reason)
-                    self.repo.finish_run(run_id, state="failed", reason=fail_reason)
+                    await asyncio.to_thread(self.repo.finish_run, run_id, state="failed", reason=fail_reason)
                     return True
 
                 if self.repair_fn is not None:
@@ -228,10 +249,10 @@ class QueueWorker:
             logger.exception("Run %s failed with exception: %s", run_id, e)
             error_reason = f"Unhandled error: {repr(e)}"
             try:
-                self.repo.finish_run(run_id, state="failed", reason=error_reason)
-            except httpx.HTTPStatusError as status_err:
+                await asyncio.to_thread(self.repo.finish_run, run_id, state="failed", reason=error_reason)
+            except (httpx.HTTPStatusError, StorageError) as status_err:
                 # If run was already transitioned to terminal state (e.g. cancelled), 409 is expected
-                if status_err.response.status_code == 409:
+                if _is_409_conflict(status_err):
                     logger.info("Run %s already in terminal state; skipping failed update", run_id)
                 else:
                     raise
@@ -247,9 +268,9 @@ class QueueWorker:
         # the run was concurrently moved to a terminal state (e.g. cancelled) and is
         # safely ignored.
         try:
-            self.repo.finish_run(run_id, state=result.state, reason=result.reason)
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 409:
+            await asyncio.to_thread(self.repo.finish_run, run_id, state=result.state, reason=result.reason)
+        except (httpx.HTTPStatusError, StorageError) as e:
+            if _is_409_conflict(e):
                 logger.info("Run %s already in terminal state; skipping terminal update", run_id)
             else:
                 raise

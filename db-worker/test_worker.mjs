@@ -51,12 +51,13 @@ class MockD1 {
               const a = mock.artifacts.find(x => x.run_id === args[0] && x.artifact_id === args[1]);
               return a || null;
             }
-            if (q.includes("SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END), 0) AS committed FROM operations WHERE run_id = ?")) {
+            if (q.includes("SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END), 0) AS committed FROM operations WHERE run_id = ?") ||
+                q.includes("FROM operations WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')")) {
               const runId = args[0];
               const committed = mock.operations.filter(o => o.run_id === runId && ["reserved", "settled", "uncertain"].includes(o.status)).reduce((s, o) => {
                 return s + (o.status === "settled" ? o.settled_micro_usd : o.reserved_micro_usd);
               }, 0);
-              return { committed };
+              return { committed, total_micro: committed };
             }
             if (q.includes("SELECT operation_id, status, settled_micro_usd, provider_ref FROM operations WHERE operation_id = ?")) {
               const op = mock.operations.find(o => o.operation_id === args[0]);
@@ -606,6 +607,13 @@ async function runTests() {
   assert.strictEqual(usageData.settled_micro_usd, 500000);
   assert.strictEqual(usageData.reserved_micro_usd, 600000);
   assert.strictEqual(usageData.total_micro_usd, 1100000);
+
+  // Verify GET /api/runs/:run_id derives estimated_usd from operation ledger
+  const resRunOps = await worker.fetch(req("/api/runs/run-100"), env, ctx);
+  assert.strictEqual(resRunOps.status, 200);
+  const runOpsJson = await resRunOps.json();
+  assert.strictEqual(runOpsJson.usage.estimated_usd, 1.10);
+  assert.ok(runOpsJson.usage.estimated_usd > 0, "Run usage must not remain zero when operations exist");
 
   // Test global budget denial across runs: request reservation with global_budget_micro_usd = 1,200,000
   // Current total is 1,100,000. Reserving 200,000 would make 1,300,000 > 1,200,000 -> 409

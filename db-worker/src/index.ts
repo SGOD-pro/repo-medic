@@ -283,6 +283,24 @@ export default {
             } catch {
               // fallback default
             }
+
+            const opsResult = await env.DB.prepare(
+              "SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END), 0) AS total_micro " +
+              "FROM operations WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')"
+            ).bind(run.run_id).first<{ total_micro: number | null }>();
+            const opsMicro = opsResult?.total_micro ?? 0;
+            if (opsMicro > 0 || usage.estimated_usd === 0) {
+              usage.estimated_usd = opsMicro / 1000000;
+            }
+
+            const modelOpsResult = await env.DB.prepare(
+              "SELECT COUNT(*) AS model_ops_count FROM operations WHERE run_id = ? AND kind = 'model' AND status IN ('reserved', 'settled', 'uncertain')"
+            ).bind(run.run_id).first<{ model_ops_count: number | null }>();
+            const modelOpsCount = modelOpsResult?.model_ops_count ?? 0;
+            if (modelOpsCount > 0 && usage.model_calls === 0) {
+              usage.model_calls = modelOpsCount;
+            }
+
             return {
               run_id: run.run_id,
               task_id: run.task_id,
@@ -383,6 +401,23 @@ export default {
           // fallback default
         }
 
+        const opsResult = await env.DB.prepare(
+          "SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_micro_usd ELSE reserved_micro_usd END), 0) AS total_micro " +
+          "FROM operations WHERE run_id = ? AND status IN ('reserved', 'settled', 'uncertain')"
+        ).bind(runId).first<{ total_micro: number | null }>();
+        const opsMicro = opsResult?.total_micro ?? 0;
+        if (opsMicro > 0 || usage.estimated_usd === 0) {
+          usage.estimated_usd = opsMicro / 1000000;
+        }
+
+        const modelOpsResult = await env.DB.prepare(
+          "SELECT COUNT(*) AS model_ops_count FROM operations WHERE run_id = ? AND kind = 'model' AND status IN ('reserved', 'settled', 'uncertain')"
+        ).bind(runId).first<{ model_ops_count: number | null }>();
+        const modelOpsCount = modelOpsResult?.model_ops_count ?? 0;
+        if (modelOpsCount > 0 && usage.model_calls === 0) {
+          usage.model_calls = modelOpsCount;
+        }
+
         return jsonResponse({
           run_id: run.run_id,
           task_id: run.task_id,
@@ -481,6 +516,12 @@ export default {
 
         if (!res) {
           return errorResponse("internal_error", "Failed to insert event", 500);
+        }
+
+        if (body.type === "usage.updated" && body.payload && typeof body.payload === "object") {
+          await env.DB.prepare(
+            "UPDATE runs SET usage_json = ?, updated_at = ? WHERE run_id = ?"
+          ).bind(payloadJson, now, runId).run();
         }
 
         return jsonResponse({ ok: true, seq: res.seq, ts: res.ts }, 201);

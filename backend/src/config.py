@@ -5,10 +5,19 @@ class Settings(BaseSettings):
     repomedic_mode: str = "offline"
     repomedic_app_origin: str = "http://localhost:3000"
 
-    # Cloudflare D1 Worker bridge
+    # Cloudflare D1 Worker bridge (legacy/bridge fallback)
     repomedic_db_worker_url: str = "http://127.0.0.1:8787"
     repomedic_db_worker_token: str = "local-bridge-token"
     db_bridge_token: str = "local-bridge-token"
+
+    # Turso / libSQL Persistence
+    turso_database_url: str = ""
+    turso_auth_token: str = ""
+    repomedic_database_url: str = ""
+    repomedic_database_auth_token: str = ""
+    db_url: str = ""
+    api_key: str = ""
+    repomedic_storage_backend: str = "turso"
 
     # Budgets, deadlines & safety limits
     repomedic_max_run_usd: float = 2.0

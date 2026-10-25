@@ -1,8 +1,8 @@
 {
   "task_id": "TASK-091",
-  "title": "sqlalchemy v1.4.48 → v2.0.19 in backend-core",
-  "repository_url": "https://github.com/pallets/backend-core",
-  "commit_sha": "c39b104",
+  "title": "sqlalchemy v1.4.48 to v2.0.19 in repo-medic fixture",
+  "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+  "commit_sha": "453a0b6c6b125177504cdd941902b8d48266ed1c",
   "dependency": "sqlalchemy",
   "from_version": "1.4.48",
   "to_version": "2.0.19",
@@ -14,7 +14,7 @@
     "src/backend/database.py",
     "src/backend/models.py"
   ],
-  "expected_failure": "RemovedIn20Warning escalated to error: engine.execute() removed in 2.0",
+  "expected_failure": "AttributeError: 'Engine' object has no attribute 'execute'",
   "timeout_seconds": 600,
   "max_candidates": 3,
   "max_refinements": 1

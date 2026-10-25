@@ -1,6 +1,8 @@
 import asyncio
+import faulthandler
 import json
 import logging
+import signal
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -24,9 +26,13 @@ from src.contracts import (
     TaskSummary,
 )
 from src.fixtures import find_task_fixture_dir
+from src.storage.exceptions import StorageError
 from src.storage.repository import D1StorageRepository
 from src.worker import QueueWorker
 
+faulthandler.register(signal.SIGUSR1, all_threads=True)
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("repomedic.api")
 
 
@@ -151,10 +157,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     worker = getattr(app.state, "worker", None)
     if worker is None and getattr(settings, "repomedic_worker_enabled", True):
         poll_interval = getattr(settings, "repomedic_worker_poll_interval_seconds", 1.0)
+        use_real = getattr(settings, "repomedic_use_real_engine", False)
         worker = QueueWorker(
             repo=repo,
             poll_interval_seconds=poll_interval,
             acceptance_prefix=acceptance_prefix,
+            use_real_engine=use_real,
         )
         app.state.worker = worker
     if worker is not None and getattr(settings, "repomedic_worker_enabled", True):
@@ -237,6 +245,19 @@ def create_app(
         )
         return JSONResponse(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            content=envelope.model_dump(),
+        )
+
+    @app.exception_handler(StorageError)
+    async def storage_error_handler(
+        request: Request,
+        exc: StorageError,
+    ) -> JSONResponse:
+        envelope = APIErrorEnvelope(
+            error=ErrorDetail(code=exc.code, message=exc.message)
+        )
+        return JSONResponse(
+            status_code=exc.status_code,
             content=envelope.model_dump(),
         )
 
@@ -329,7 +350,7 @@ def create_app(
         after: int = Query(default=0, ge=0),
         repo: D1StorageRepository = Depends(get_repository),
     ) -> StreamingResponse:
-        run = repo.get_run(id)
+        run = await asyncio.to_thread(repo.get_run, id)
         if run is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -356,8 +377,14 @@ def create_app(
                     if ev.seq > cursor:
                         cursor = ev.seq
 
-                current_run = await asyncio.to_thread(repo.get_run, id)
-                if current_run and current_run.state in ("succeeded", "failed", "cancelled"):
+                terminal_event = any(ev.type in ("run.finished", "run.failed", "run.cancelled") for ev in events)
+                if not terminal_event:
+                    run_state = await asyncio.to_thread(repo.get_run_state, id)
+                    is_terminal = run_state in ("succeeded", "failed", "cancelled")
+                else:
+                    is_terminal = True
+
+                if is_terminal:
                     trailing = await asyncio.to_thread(repo.list_events, id, after=cursor)
                     for ev in trailing:
                         yield f"id: {ev.seq}\nevent: {ev.type}\ndata: {ev.model_dump_json()}\n\n"
@@ -465,6 +492,40 @@ def create_app(
     ) -> RunsResponse:
         runs = repo.list_runs(limit=limit, task_id=task_id, state=state)
         return RunsResponse(runs=runs)
+
+    @app.get("/api/budget/usage")
+    def get_budget_usage(
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> dict[str, Any]:
+        return repo.client.get_budget_usage()
+
+    @app.post("/api/runs/{id}/operations", status_code=status.HTTP_201_CREATED)
+    async def create_operation(
+        id: str,
+        request: Request,
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> dict[str, Any]:
+        body = await request.json()
+        op_id = body.get("operation_id")
+        kind = body.get("kind", "model")
+        reserved_micro_usd = body.get("reserved_micro_usd", 0)
+        global_budget_micro_usd = body.get("global_budget_micro_usd")
+
+        global_budget_usd = (
+            float(global_budget_micro_usd) / 1_000_000.0
+            if global_budget_micro_usd is not None
+            else None
+        )
+        estimated_usd = float(reserved_micro_usd) / 1_000_000.0
+
+        return await asyncio.to_thread(
+            repo.client.reserve_budget,
+            run_id=id,
+            operation_id=op_id,
+            kind=kind,
+            estimated_usd=estimated_usd,
+            global_budget_usd=global_budget_usd,
+        )
 
     return app
 

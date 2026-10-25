@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 import httpx
 from src.config import settings
@@ -17,7 +18,15 @@ class TokenFactoryModelAdapter(ModelAdapter):
         model: Optional[str] = None,
         timeout_seconds: float = 60.0,
     ):
-        self.api_key = (api_key or settings.token_factory_api_key or settings.nebius_api_key).strip()
+        if api_key is not None:
+            self.api_key = api_key.strip()
+        else:
+            self.api_key = (
+                os.getenv("TOKEN_FACTORY_API_KEY")
+                or settings.token_factory_api_key
+                or os.getenv("NEBIUS_API_KEY")
+                or settings.nebius_api_key
+            ).strip()
         raw_base_url = (base_url or settings.token_factory_base_url).strip()
         if not raw_base_url.endswith("/"):
             raw_base_url += "/"
@@ -59,7 +68,15 @@ class TokenFactoryModelAdapter(ModelAdapter):
         payload = {
             "model": self.model,
             "messages": [
-                {"role": "user", "content": prompt}
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an automated code repair system. "
+                        "Return strictly a minimal unified diff patch. "
+                        "Do not output any conversational analysis, explanations, or markdown outside the diff."
+                    ),
+                },
+                {"role": "user", "content": prompt},
             ],
             "max_tokens": max_tokens,
             "temperature": 0.0,

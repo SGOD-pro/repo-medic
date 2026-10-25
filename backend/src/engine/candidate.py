@@ -44,6 +44,8 @@ class TestPreservationRecord:
     file_hashes: Dict[str, str] = field(default_factory=dict)
     node_ids: List[str] = field(default_factory=list)
     collected_count: int = 0
+    skipped_count: int = 0
+    xfailed_count: int = 0
 
 
 @dataclass(frozen=True)

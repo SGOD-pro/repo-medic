@@ -2,7 +2,7 @@
 
 ## Overview
 
-Package B provides the Python backend service, database storage abstractions, and orchestration logic. It integrates with Cloudflare D1 through the database worker bridge and manages runs, events, artifacts, and budget accounting.
+Package B provides the Python backend service, database storage abstractions, and orchestration logic. It integrates with Turso libSQL storage (with Cloudflare D1 compatibility) and manages runs, events, artifacts, and budget accounting.
 
 ## Key files
 
@@ -10,6 +10,8 @@ Package B provides the Python backend service, database storage abstractions, an
 |---|---|
 | `src/contracts.py` | Shared domain models and type contracts |
 | `src/config.py` | Environment configuration and service settings |
+| `src/storage/turso_client.py` | Turso and libSQL database client adapter |
+| `src/storage/migrations.py` | Repeatable database schema migrations |
 | `src/storage/db_client.py` | HTTP client for the database worker bridge |
 | `src/storage/repository.py` | High level repository mapping D1 responses to domain contracts |
 | `src/storage/fake_host.py` | In memory host adapter for tests |
@@ -17,6 +19,8 @@ Package B provides the Python backend service, database storage abstractions, an
 | `src/worker.py` | Queue worker claiming loop, repair execution, and host ports |
 | `src/preflight.py` | Environment, credential, and provider preflight checks |
 | `tests/test_storage.py` | Storage, budget, and event integration tests |
+| `tests/test_turso_storage.py` | Turso adapter unit tests and budget concurrency tests |
+| `tests/test_k3_remote_turso.py` | Remote Turso persistence acceptance test suite |
 
 ## Commands
 
@@ -38,7 +42,7 @@ uv run mypy src
 
 * Python version 3.13 with strict type annotations
 * Costs are tracked in micro USD where 1 USD equals 1,000,000 micro USD
-* All database interactions use `D1StorageRepository` or `RepoMedicDB`
+* All database interactions use `TursoStorageRepository` or `D1StorageRepository`
 * Respect package boundaries, Package B owns backend and storage persistence
 
 ## Gotchas
@@ -53,5 +57,6 @@ uv run mypy src
 * [0003. FakeEngine queue worker](../docs/specs/0003-fakeengine-queue-worker/index.md)
 * [0005. Remote Cloudflare D1 integration](../docs/specs/0005-remote-cloudflare-d1-integration/index.md)
 * [0006. Live provider integration and sequential repair](../docs/specs/0006-live-provider-integration/index.md)
+* [0007. Remote Turso persistence](../docs/specs/0007-remote-turso-persistence.md)
 
 _Drafted by /audit from the repo, worth a quick human pass. Edit freely: once a line stops matching this draft, later runs treat it as curated and will flag rather than overwrite it._
