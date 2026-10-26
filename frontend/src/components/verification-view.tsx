@@ -123,6 +123,8 @@ export interface VerificationViewModel {
   headerTitle: string;
   regressionsBadgeText: string | null;
   astBadgeVisible: boolean;
+  testFilesUnchangedVisible: boolean;
+  hashCheckBadgeText: string;
   astProofSupported: boolean;
   astProofText: string;
   characterizationTestsText: string;
@@ -194,7 +196,9 @@ export function resolveVerificationViewModel(
   }
 
   const checks = evidenceData?.checks as Record<string, boolean> | undefined;
-  const astBadgeVisible = isPass && Boolean(checks?.post_patch_hash_match);
+  const testFilesUnchangedVisible = isPass && Boolean(checks?.post_patch_hash_match);
+  const hashCheckBadgeText = "Test files unchanged";
+  const astBadgeVisible = testFilesUnchangedVisible;
 
   let astProofSupported = false;
   let astProofText = "Evidence proof unavailable";
@@ -246,6 +250,8 @@ export function resolveVerificationViewModel(
     headerTitle,
     regressionsBadgeText,
     astBadgeVisible,
+    testFilesUnchangedVisible,
+    hashCheckBadgeText,
     astProofSupported,
     astProofText,
     characterizationTestsText,
@@ -499,9 +505,9 @@ export function VerificationView({
                 {vm.regressionsBadgeText}
               </Badge>
             )}
-            {vm.astBadgeVisible && (
+            {vm.testFilesUnchangedVisible && (
               <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
-                AST VERIFIED
+                {vm.hashCheckBadgeText}
               </Badge>
             )}
           </div>

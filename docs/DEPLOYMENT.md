@@ -53,7 +53,7 @@ BACKEND_URL=http://127.0.0.1:8000
 PORT=3000
 ```
 
-When hosting the frontend and backend on distinct domains, configure `NEXT_PUBLIC_API_URL` to point to the public backend URL and ensure `REPOMEDIC_APP_ORIGIN` matches the public frontend domain for CORS authorization.
+When hosting the frontend and backend on distinct domains, configure `NEXT_PUBLIC_API_URL` to point to the public backend URL and ensure it includes the `/api` prefix (for example `https://api.example.com/api` or `/api` when proxying through Next.js rewrites). Frontend API client calls append endpoint routes such as `/runs` directly to this base URL, so omitting `/api` results in invalid routing. Ensure `REPOMEDIC_APP_ORIGIN` matches the public frontend domain for CORS authorization.
 
 ## Backend Service Deployment
 

@@ -62,6 +62,8 @@ describe("evidence accuracy and real component behavior", () => {
     const vm = resolveVerificationViewModel(mockLiveRun, liveEvidence);
 
     assert.equal(vm.astBadgeVisible, true);
+    assert.equal(vm.testFilesUnchangedVisible, true);
+    assert.equal(vm.hashCheckBadgeText, "Test files unchanged");
     assert.equal(vm.astProofSupported, true);
     assert.equal(vm.astProofText, "AST Proof: 0 test files modified · exact dependency verified");
     assert.equal(vm.signatureBadgeText, "Verification Checks Passed");
