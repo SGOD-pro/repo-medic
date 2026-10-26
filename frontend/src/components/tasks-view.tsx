@@ -185,7 +185,7 @@ export function TasksView({
               <span className="size-2 rounded-full bg-[#5FCB8A]" />
               {(process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock"
                 ? "Mock Runtime"
-                : "Local D1 / Worker Bridge"}
+                : "Turso Storage / Python Engine"}
             </div>
           </div>
         </div>

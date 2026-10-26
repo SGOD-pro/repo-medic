@@ -264,6 +264,7 @@ export default function Home() {
       <Navbar
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        activeRun={activeRun}
         onOpenDocs={() => {
           window.open(
             process.env.NEXT_PUBLIC_DOCS_URL ||

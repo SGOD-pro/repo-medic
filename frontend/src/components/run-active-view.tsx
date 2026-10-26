@@ -471,7 +471,7 @@ export function RunActiveView({
             >
               <span className="size-1.5 rounded-full bg-[#7FB3D5] mr-1.5" />
               {activeRun?.mode === "offline"
-                ? "OFFLINE MODE (LOCAL D1 / EMULATION)"
+                ? "OFFLINE MODE (TURSO PERSISTENCE)"
                 : activeRun?.mode === "replay"
                 ? "REPLAY MODE"
                 : (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock"

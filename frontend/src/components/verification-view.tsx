@@ -239,18 +239,35 @@ export function VerificationView({
   const patchArtifact = activeRun?.artifacts?.find((a) => a.kind === "patch");
   const evidenceArtifact = activeRun?.artifacts?.find((a) => a.kind === "evidence");
 
+  const effectiveMode = activeRun?.mode || (evidenceData?.execution_mode as string) || "offline";
   const modeLabel = useMemo(() => {
-    if (activeRun?.mode === "offline") return "OFFLINE MODE";
-    if (activeRun?.mode === "replay") return "REPLAY MODE";
     if ((process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock") return "MOCK TRANSPORT";
-    if (activeRun?.mode === "live") return "LIVE SANDBOX";
-    return "OFFLINE MODE";
-  }, [activeRun?.mode]);
+    if (effectiveMode === "live") return "LIVE SANDBOX (NEBIUS)";
+    if (effectiveMode === "replay") return "REPLAY MODE";
+    return "OFFLINE MODE (TURSO)";
+  }, [effectiveMode]);
 
-  const testsPassed = (evidenceData?.tests_passed as number) ?? (isPass ? 42 : 0);
-  const testsFailed = (evidenceData?.tests_failed as number) ?? (isFail ? 1 : 0);
-  const costUsd = activeRun?.usage?.estimated_usd ?? (evidenceData?.cost_usd as number) ?? 0.04;
-  const executionTime = (evidenceData?.execution_time as string) || "24.2s";
+  const testSummary = evidenceData?.test_summary as Record<string, number> | undefined;
+  const testsPassed = typeof testSummary?.passed_count === "number"
+    ? testSummary.passed_count
+    : (typeof evidenceData?.tests_passed === "number"
+      ? (evidenceData.tests_passed as number)
+      : (isPass ? 1 : 0));
+  const testsFailed = typeof testSummary?.failed_count === "number"
+    ? testSummary.failed_count
+    : (typeof evidenceData?.tests_failed === "number"
+      ? (evidenceData.tests_failed as number)
+      : (isFail ? 1 : 0));
+  const totalCollected = typeof testSummary?.collected_count === "number"
+    ? testSummary.collected_count
+    : (testsPassed + testsFailed > 0 ? testsPassed + testsFailed : (isPass ? 1 : 0));
+
+  const costUsd = activeRun?.usage?.estimated_usd ?? (typeof evidenceData?.cost_usd === "number" ? evidenceData.cost_usd : 0.0);
+  const executionTime = typeof evidenceData?.duration_seconds === "number"
+    ? `${evidenceData.duration_seconds.toFixed(1)}s`
+    : typeof evidenceData?.execution_time === "string"
+    ? evidenceData.execution_time
+    : "0.0s";
 
   return (
     <div className="mx-auto w-full max-w-[1280px] px-6 py-8">
@@ -375,7 +392,7 @@ export function VerificationView({
 
         <h2 className="text-2xl font-semibold text-[#F7F7F2] mb-6">
           {isPass
-            ? `Behavior preserved (${testsPassed}/${testsPassed} tests passing)`
+            ? `Behavior preserved (${testsPassed}/${totalCollected} tests passing)`
             : isFail
             ? `Verification check failed (${testsFailed} tests failing)`
             : `Execution halted (${runState})`}
@@ -393,7 +410,7 @@ export function VerificationView({
                   isPass ? "text-[#5FCB8A]" : "text-[#E5736A]"
                 }`}
               >
-                {testsPassed} / {testsPassed + testsFailed}
+                {testsPassed} / {totalCollected}
               </span>
               {isPass ? (
                 <CheckCircle2 className="size-4 text-[#5FCB8A]" />
@@ -665,10 +682,17 @@ export function VerificationView({
           </Button>
         </div>
 
-        <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
-          <ShieldCheck className="size-3.5" />
-          Patch Sig: ed25519 verified
-        </Badge>
+        {(evidenceData?.signature as string | undefined) ? (
+          <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
+            <ShieldCheck className="size-3.5" />
+            Signature: {String(evidenceData?.signature)}
+          </Badge>
+        ) : (evidenceData?.checks as Record<string, boolean> | undefined)?.tests_passed ? (
+          <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
+            <ShieldCheck className="size-3.5" />
+            Verification Checks Passed
+          </Badge>
+        ) : null}
       </div>
 
       <p className="mt-4 text-[11px] font-mono text-[#A9B8AD]">

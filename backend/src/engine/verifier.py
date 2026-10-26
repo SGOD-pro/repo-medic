@@ -491,53 +491,17 @@ async def verify_candidate_patch(
             "verify.log": hashlib.sha256(log_bytes).hexdigest(),
         }
 
-        checks = VerificationChecks(
-            checkpoint_isolated=checkpoint_isolated,
-            pre_patch_hash_match=pre_patch_hash_match,
-            patch_applied=patch_applied,
-            post_patch_hash_match=post_patch_hash_match,
-            collection_node_ids_match=collection_node_ids_match,
-            tests_passed=tests_passed,
-            zero_new_skips=zero_new_skips,
-            post_test_hash_match=post_test_hash_match,
-            version_intact=version_intact,
-            artifacts_persisted=False,
-        )
+        patch_name = f"{artifact_prefix}patch.diff" if artifact_prefix else "patch.diff"
+        log_name = f"{artifact_prefix}verify.log" if artifact_prefix else "verify.log"
+        manifest_name = f"{artifact_prefix}evidence.json" if artifact_prefix else "evidence.json"
 
-        manifest = build_evidence_manifest(
-            candidate=candidate,
-            recipe=recipe,
-            checks=checks,
-            test_res=test_res,
-            artifact_hashes=artifact_hashes,
-            checkpoint_id=checkpoint_id,
-            mode=mode,
-            duration_seconds=time.monotonic() - start_time,
-        )
-        manifest_bytes = json.dumps(manifest.to_dict(), indent=2).encode("utf-8")
-        artifact_hashes["evidence.json"] = hashlib.sha256(manifest_bytes).hexdigest()
-
-        # Update manifest with evidence.json hash
-        manifest = build_evidence_manifest(
-            candidate=candidate,
-            recipe=recipe,
-            checks=checks,
-            test_res=test_res,
-            artifact_hashes=artifact_hashes,
-            checkpoint_id=checkpoint_id,
-            mode=mode,
-            duration_seconds=time.monotonic() - start_time,
-        )
-        manifest_bytes = json.dumps(manifest.to_dict(), indent=2).encode("utf-8")
-
-        # 11. Persist artifacts through host ports
-        storage_succeeded = await _save_all_artifacts(
-            host=host,
-            patch_bytes=patch_bytes,
-            log_bytes=log_bytes,
-            manifest_bytes=manifest_bytes,
-            artifact_prefix=artifact_prefix,
-        )
+        # 11. Persist external artifacts first to verify storage before recording completion
+        storage_succeeded = True
+        try:
+            await host.save_artifact("patch", patch_name, patch_bytes)
+            await host.save_artifact("log", log_name, log_bytes)
+        except Exception:
+            storage_succeeded = False
 
         if not storage_succeeded:
             # AC-9: Storage failure prevents declaring candidate successfully verified
@@ -551,6 +515,44 @@ async def verify_candidate_patch(
                 )
         else:
             artifacts_persisted = True
+
+        checks = VerificationChecks(
+            checkpoint_isolated=checkpoint_isolated,
+            pre_patch_hash_match=pre_patch_hash_match,
+            patch_applied=patch_applied,
+            post_patch_hash_match=post_patch_hash_match,
+            collection_node_ids_match=collection_node_ids_match,
+            tests_passed=tests_passed,
+            zero_new_skips=zero_new_skips,
+            post_test_hash_match=post_test_hash_match,
+            version_intact=version_intact,
+            artifacts_persisted=artifacts_persisted,
+        )
+
+        manifest = build_evidence_manifest(
+            candidate=candidate,
+            recipe=recipe,
+            checks=checks,
+            test_res=test_res,
+            artifact_hashes=artifact_hashes,
+            checkpoint_id=checkpoint_id,
+            mode=mode,
+            duration_seconds=time.monotonic() - start_time,
+        )
+        manifest_bytes = json.dumps(manifest.to_dict(), indent=2).encode("utf-8")
+
+        # Persist evidence.json manifest
+        try:
+            await host.save_artifact("evidence", manifest_name, manifest_bytes)
+        except Exception:
+            artifacts_persisted = False
+            if passed:
+                passed = False
+                failure_reason = "artifact_persistence_failed"
+                summary = (
+                    f"Candidate {candidate_id} tests passed cleanly, but artifact persistence "
+                    f"failed (evidence artifact could not be saved)"
+                )
 
         # Final checks update
         final_checks = VerificationChecks(
@@ -675,10 +677,34 @@ async def _terminate_verification(
         "patch.diff": hashlib.sha256(patch_bytes).hexdigest(),
         "verify.log": hashlib.sha256(log_bytes).hexdigest(),
     }
+    patch_name = f"{artifact_prefix}patch.diff" if artifact_prefix else "patch.diff"
+    log_name = f"{artifact_prefix}verify.log" if artifact_prefix else "verify.log"
+    manifest_name = f"{artifact_prefix}evidence.json" if artifact_prefix else "evidence.json"
+
+    persisted_ok = True
+    try:
+        await host.save_artifact("patch", patch_name, patch_bytes)
+        await host.save_artifact("log", log_name, log_bytes)
+    except Exception:
+        persisted_ok = False
+
+    checks_with_persistence = VerificationChecks(
+        checkpoint_isolated=checks.checkpoint_isolated,
+        pre_patch_hash_match=checks.pre_patch_hash_match,
+        patch_applied=checks.patch_applied,
+        post_patch_hash_match=checks.post_patch_hash_match,
+        collection_node_ids_match=checks.collection_node_ids_match,
+        tests_passed=checks.tests_passed,
+        zero_new_skips=checks.zero_new_skips,
+        post_test_hash_match=checks.post_test_hash_match,
+        version_intact=checks.version_intact,
+        artifacts_persisted=persisted_ok,
+    )
+
     manifest = build_evidence_manifest(
         candidate=candidate,
         recipe=recipe,
-        checks=checks,
+        checks=checks_with_persistence,
         test_res=test_res,
         artifact_hashes=artifact_hashes,
         checkpoint_id=checkpoint_id,
@@ -686,15 +712,12 @@ async def _terminate_verification(
         duration_seconds=time.monotonic() - start_time,
     )
     manifest_bytes = json.dumps(manifest.to_dict(), indent=2).encode("utf-8")
-    artifact_hashes["evidence.json"] = hashlib.sha256(manifest_bytes).hexdigest()
 
-    await _save_all_artifacts(
-        host=host,
-        patch_bytes=patch_bytes,
-        log_bytes=log_bytes,
-        manifest_bytes=manifest_bytes,
-        artifact_prefix=artifact_prefix,
-    )
+    try:
+        await host.save_artifact("evidence", manifest_name, manifest_bytes)
+    except Exception:
+        pass
+
     await _emit_completion(host, candidate.candidate_id, False, summary, emit_stage_event=emit_stage_event)
 
     return CandidateVerification(

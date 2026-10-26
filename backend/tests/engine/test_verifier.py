@@ -239,7 +239,7 @@ async def test_evidence_manifest_structure_and_offline_mode(
     assert manifest.execution_mode == "offline"
     assert manifest.dependency == "urllib3"
     assert manifest.to_version == "2.0.0"
-    assert "evidence.json" in manifest.artifact_hashes
+    assert "evidence.json" not in manifest.artifact_hashes
     assert "patch.diff" in manifest.artifact_hashes
     assert "verify.log" in manifest.artifact_hashes
     assert manifest.checks.tests_passed is True

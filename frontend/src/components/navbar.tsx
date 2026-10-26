@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { User, FileText, History } from "lucide-react";
 import { useHistoryStore } from "@/lib/history-store";
+import { RunSummary } from "@/lib/contracts";
 
 export type ActiveTab = "tasks" | "run_active" | "verification";
 
@@ -13,11 +14,27 @@ interface NavbarProps {
   activeTab: ActiveTab;
   onTabChange: (tab: ActiveTab) => void;
   onOpenDocs?: () => void;
+  activeRun?: RunSummary | null;
 }
 
-export function Navbar({ activeTab, onTabChange, onOpenDocs }: NavbarProps) {
+export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: NavbarProps) {
   const { runs, setHistoryOpen } = useHistoryStore();
   const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock";
+  const mode = activeRun?.mode;
+
+  let modeBadgeText = "TURSO PERSISTENCE / OFFLINE";
+  let modeSubtitle = "Remote Turso · Python Engine";
+
+  if (isMock) {
+    modeBadgeText = "MOCK TRANSPORT (SYNTHETIC)";
+    modeSubtitle = "Offline Fixtures · Client In Memory";
+  } else if (mode === "live") {
+    modeBadgeText = "LIVE MODE (TURSO / NEBIUS)";
+    modeSubtitle = "Remote Turso · Nebius Token Factory";
+  } else if (mode === "replay") {
+    modeBadgeText = "REPLAY MODE (TURSO)";
+    modeSubtitle = "Remote Turso · Recorded Sandbox Traces";
+  }
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-[rgba(183,201,173,0.16)] bg-[#0D1915]/95 backdrop-blur-none px-6 py-3">
@@ -40,18 +57,16 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs }: NavbarProps) {
             {isMock ? (
               <Badge className="bg-[#7FB3D5]/15 text-[#7FB3D5] border-transparent font-medium gap-1.5 px-2.5 py-0.5 rounded-full">
                 <span className="size-1.5 rounded-full bg-[#7FB3D5]" />
-                MOCK TRANSPORT (SYNTHETIC)
+                {modeBadgeText}
               </Badge>
             ) : (
               <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-medium gap-1.5 px-2.5 py-0.5 rounded-full">
                 <span className="size-1.5 rounded-full bg-[#5FCB8A] animate-pulse" />
-                LOCAL D1 / OFFLINE MODE
+                {modeBadgeText}
               </Badge>
             )}
             <span className="font-mono text-[#A9B8AD] text-[12px]">
-              {isMock
-                ? "Offline Fixtures · Client In-Memory"
-                : "Cloudflare D1 Bridge · Python Engine"}
+              {modeSubtitle}
             </span>
           </div>
         </div>
