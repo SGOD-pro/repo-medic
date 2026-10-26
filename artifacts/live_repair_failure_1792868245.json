@@ -1,0 +1,9 @@
+{
+  "run_id": "run_k4_live_1792868187",
+  "task_id": "TASK-091",
+  "state": "failed",
+  "reason": "Candidate candidate_1 verification failed: non-zero test exit code (1)",
+  "total_estimated_usd": 0.35,
+  "timestamp": 1792868245,
+  "sanitized_log": "STDOUT:\n============================= test session starts ==============================\nplatform linux -- Python 3.12.15, pytest-9.1.1, pluggy-1.7.0\nrootdir: /workspace\ncollected 1 item\n\ntests/test_database.py F                                                 [100%]\n\n=================================== FAILURES ===================================\n___________________________ test_database_operations ___________________________\n\n    def test_database_operations():\n        init_db()\n        count = get_user_count()\n>       assert count == 1\nE       assert 0 == 1\n\ntests/test_database.py:7: AssertionError\n=========================== short test summary info ============================\nFAILED tests/test_database.py::test_database_operations - assert 0 == 1\n============================== 1 failed in 0.19s ===============================\n\nSTDERR:"
+}

@@ -1,0 +1,23 @@
+STDOUT:
+============================= test session starts ==============================
+platform linux -- Python 3.12.15, pytest-9.1.1, pluggy-1.7.0
+rootdir: /workspace
+collected 1 item
+
+tests/test_database.py F                                                 [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_database_operations ___________________________
+
+    def test_database_operations():
+        init_db()
+        count = get_user_count()
+>       assert count == 1
+E       assert 0 == 1
+
+tests/test_database.py:7: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_database.py::test_database_operations - assert 0 == 1
+============================== 1 failed in 0.19s ===============================
+
+STDERR:

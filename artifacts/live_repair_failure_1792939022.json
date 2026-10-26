@@ -1,0 +1,140 @@
+{
+  "run_id": "run_k4_live_1792938908",
+  "task_id": "TASK-093",
+  "state": "failed",
+  "reason": "All 3 candidate branches and 2 refinements failed verification",
+  "total_estimated_usd": 0.75,
+  "timestamp": 1792939022,
+  "events": [
+    {
+      "seq": 1,
+      "type": "stage.completed",
+      "payload": {
+        "stage": "baseline",
+        "passed": true,
+        "summary": "Baseline tests passed cleanly twice with stable collection"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "stage.completed",
+      "payload": {
+        "stage": "upgrade",
+        "passed": true,
+        "summary": "Upgrade to 2.0.19 verified and reproduced expected failure 'AttributeError: 'Engine' object has no attribute 'execute''"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 1,
+        "input_tokens": 614,
+        "output_tokens": 2048,
+        "estimated_usd": 0.05
+      }
+    },
+    {
+      "seq": 4,
+      "type": "candidate.completed",
+      "payload": {
+        "candidate_id": "candidate_1",
+        "passed": false,
+        "summary": "No modified file targets found in patch header"
+      }
+    },
+    {
+      "seq": 5,
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 2,
+        "input_tokens": 1228,
+        "output_tokens": 4096,
+        "estimated_usd": 0.05
+      }
+    },
+    {
+      "seq": 6,
+      "type": "candidate.completed",
+      "payload": {
+        "candidate_id": "candidate_2",
+        "passed": false,
+        "summary": "Candidate patch failed to apply cleanly (error: patch failed: src/backend/database.py:1\nerror: src/backend/database.py: patch does not apply\n)"
+      }
+    },
+    {
+      "seq": 7,
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 3,
+        "input_tokens": 2015,
+        "output_tokens": 6144,
+        "estimated_usd": 0.05
+      }
+    },
+    {
+      "seq": 8,
+      "type": "candidate.completed",
+      "payload": {
+        "candidate_id": "candidate_2_refine_1",
+        "passed": false,
+        "summary": "No modified file targets found in patch header"
+      }
+    },
+    {
+      "seq": 9,
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 4,
+        "input_tokens": 2629,
+        "output_tokens": 8192,
+        "estimated_usd": 0.05
+      }
+    },
+    {
+      "seq": 10,
+      "type": "candidate.completed",
+      "payload": {
+        "candidate_id": "candidate_3",
+        "passed": false,
+        "summary": "Collected test IDs mismatch baseline: collected 0 tests, baseline had 1"
+      }
+    },
+    {
+      "seq": 11,
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 5,
+        "input_tokens": 3073,
+        "output_tokens": 9395,
+        "estimated_usd": 0.05
+      }
+    },
+    {
+      "seq": 12,
+      "type": "candidate.completed",
+      "payload": {
+        "candidate_id": "candidate_3_refine_1",
+        "passed": false,
+        "summary": "Candidate candidate_3_refine_1 verification failed: non-zero test exit code (1)"
+      }
+    },
+    {
+      "seq": 13,
+      "type": "stage.completed",
+      "payload": {
+        "stage": "verification",
+        "passed": false,
+        "summary": "All 3 candidate branches and 2 refinements failed verification"
+      }
+    },
+    {
+      "seq": 14,
+      "type": "run.finished",
+      "payload": {
+        "state": "failed",
+        "reason": "All 3 candidate branches and 2 refinements failed verification"
+      }
+    }
+  ]
+}

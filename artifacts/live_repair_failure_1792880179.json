@@ -1,0 +1,8 @@
+{
+  "run_id": "run_k4_live_1792880074",
+  "task_id": "TASK-092",
+  "state": "failed",
+  "reason": "No modified file targets found in patch header",
+  "total_estimated_usd": 0.25,
+  "timestamp": 1792880179
+}

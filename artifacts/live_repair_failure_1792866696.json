@@ -1,0 +1,9 @@
+{
+  "run_id": "run_k4_live_1792866652",
+  "task_id": "TASK-091",
+  "state": "failed",
+  "reason": "Candidate patch failed to apply cleanly (error: corrupt patch at line 16\n)",
+  "total_estimated_usd": 0.35,
+  "timestamp": 1792866696,
+  "sanitized_log": "Candidate patch failed to apply cleanly (error: corrupt patch at line 16\n)"
+}

@@ -1,0 +1,28 @@
+STDOUT:
+============================= test session starts ==============================
+platform linux -- Python 3.12.15, pytest-9.1.1, pluggy-1.7.0
+rootdir: /workspace
+collected 1 item
+
+tests/test_database.py F                                                 [100%]
+
+=================================== FAILURES ===================================
+___________________________ test_database_operations ___________________________
+
+    def test_database_operations():
+>       init_db()
+
+tests/test_database.py:5: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def init_db():
+>       engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
+        ^^^^^^^^^^^^^^
+E       AttributeError: 'Engine' object has no attribute 'execute'
+
+src/backend/database.py:6: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_database.py::test_database_operations - AttributeError: 'En...
+============================== 1 failed in 0.21s ===============================
+
+STDERR:

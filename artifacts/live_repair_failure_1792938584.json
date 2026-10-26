@@ -1,0 +1,18 @@
+{
+  "run_id": "test_fail_run_test_run_live_failure_saves_sa0",
+  "task_id": "TASK-091",
+  "state": "failed",
+  "reason": "Failure with token ***REDACTED***",
+  "total_estimated_usd": 0.0,
+  "timestamp": 1792938584,
+  "events": [
+    {
+      "seq": 1,
+      "type": "run.finished",
+      "payload": {
+        "state": "failed",
+        "reason": "Failure with token secret_nebius_key_token_999"
+      }
+    }
+  ]
+}

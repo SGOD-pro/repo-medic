@@ -1,0 +1,11 @@
+--- a/src/backend/database.py
++++ b/src/backend/database.py
+@@ -5,4 +5,4 @@
+-def init_db():
+-    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
+-    engine.execute(text("INSERT INTO users (name) VALUES ('alice')"))
++def init_db():
++    with engine.begin() as conn:
++        conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
++        conn.execute(text("INSERT INTO users (name) VALUES ('alice')"))
+@@ -1,0 +1,0 @@

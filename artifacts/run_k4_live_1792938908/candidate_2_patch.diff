@@ -1,0 +1,64 @@
+--- a/src/backend/database.py
++++ b/src/backend/database.py
+@@ -1,7 +1,7 @@
+ from sqlalchemy import create_engine, text
+
+ engine = create_engine('sqlite:///:memory:')
+
+-def init_db():
+-    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
+-    engine.execute(text("INSERT INTO users (name) VALUES ('alice')"))
++def init_db():
++    with engine.begin() as conn:
++        conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
++        conn.execute(text("INSERT INTO users (name) VALUES ('alice')"))
+
+-def get_user_count():
+-    res = engine.execute(text('SELECT count(*) FROM users'))
+-    return res.scalar()
++def get_user_count():
++    with engine.begin() as conn:
++        res = conn.execute(text('SELECT count(*) FROM users'))
++        return res.scalar()
+
+ However, note that the above diff changes the entire functions. But we must preserve the context.
+
+ Alternatively, we can break it into two hunks? But the changes are consecutive? Actually, the two functions are consecutive.
+
+ But note: the lines between the two functions are blank? We have:
+
+        def init_db():
+            ... (two lines)
+        [blank line?]
+        def get_user_count():
+            ... (two lines)
+
+ In the original, there is a blank line between the two functions? Let's see:
+
+        def init_db():
+            engine.execute(...)
+            engine.execute(text("INSERT ..."))
+
+        def get_user_count():
+            ...
+
+ So there is a blank line after the `init_db` function.
+
+ We can write one hunk that covers from the line before `init_db` to the end of `get_user_count`? But note that we are changing the indentation and adding lines.
+
+ Alternatively, we can write two separate hunks? But the changes are in two separate functions.
+
+ However, the rule says to output a minimal unified diff. We can do one hunk that covers the entire changed region? But note that the two functions are separated by a blank line.
+
+ Let's try to write one hunk:
+
+        --- a/src/backend/database.py
+        +++ b/src/backend/database.py
+        @@ -1,12 +1,14 @@
+         from sqlalchemy import create_engine, text
+
+         engine = create_engine('sqlite:///:memory:')
+
+        -def init_db():
+        -    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
+        -

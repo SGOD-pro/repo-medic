@@ -1,0 +1,65 @@
+{
+  "run_id": "run_k4_live_1792938631",
+  "task_id": "TASK-092",
+  "state": "failed",
+  "reason": "Collected test IDs mismatch baseline: collected 77 tests, baseline had 4",
+  "total_estimated_usd": 0.35,
+  "timestamp": 1792938743,
+  "events": [
+    {
+      "seq": 1,
+      "type": "stage.completed",
+      "payload": {
+        "stage": "baseline",
+        "passed": true,
+        "summary": "Baseline tests passed cleanly twice with stable collection"
+      }
+    },
+    {
+      "seq": 2,
+      "type": "stage.completed",
+      "payload": {
+        "stage": "upgrade",
+        "passed": true,
+        "summary": "Upgrade to 2.0.19 verified and reproduced expected failure 'AttributeError: type object 'Row' has no attribute '_default_key_style''"
+      }
+    },
+    {
+      "seq": 3,
+      "type": "usage.updated",
+      "payload": {
+        "model_calls": 1,
+        "input_tokens": 4291,
+        "output_tokens": 2048,
+        "estimated_usd": 0.05
+      }
+    },
+    {
+      "seq": 4,
+      "type": "candidate.completed",
+      "payload": {
+        "candidate_id": "candidate_1",
+        "passed": false,
+        "summary": "Collected test IDs mismatch baseline: collected 77 tests, baseline had 4"
+      }
+    },
+    {
+      "seq": 5,
+      "type": "stage.completed",
+      "payload": {
+        "stage": "verification",
+        "passed": false,
+        "summary": "Collected test IDs mismatch baseline: collected 77 tests, baseline had 4"
+      }
+    },
+    {
+      "seq": 6,
+      "type": "run.finished",
+      "payload": {
+        "state": "failed",
+        "reason": "Collected test IDs mismatch baseline: collected 77 tests, baseline had 4"
+      }
+    }
+  ],
+  "sanitized_log": "tests/test_databases.py::test_queries[sqlite:///testsuite]\ntests/test_databases.py::test_queries[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_queries_raw[sqlite:///testsuite]\ntests/test_databases.py::test_queries_raw[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_ddl_queries[sqlite:///testsuite]\ntests/test_databases.py::test_ddl_queries[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_queries_after_error[sqlite:///testsuite-Exception]\ntests/test_databases.py::test_queries_after_error[sqlite:///testsuite-CancelledError]\ntests/test_databases.py::test_queries_after_error[sqlite+aiosqlite:///testsuite-Exception]\ntests/test_databases.py::test_queries_after_error[sqlite+aiosqlite:///testsuite-CancelledError]\ntests/test_databases.py::test_results_support_mapping_interface[sqlite:///testsuite]\ntests/test_databases.py::test_results_support_mapping_interface[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_results_support_column_reference[sqlite:///testsuite]\ntests/test_databases.py::test_results_support_column_reference[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_result_values_allow_duplicate_names[sqlite:///testsuite]\ntests/test_databases.py::test_result_values_allow_duplicate_names[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_fetch_one_returning_no_results[sqlite:///testsuite]\ntests/test_databases.py::test_fetch_one_returning_no_results[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_execute_return_val[sqlite:///testsuite]\ntests/test_databases.py::test_execute_return_val[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_rollback_isolation[sqlite:///testsuite]\ntests/test_databases.py::test_rollback_isolation[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_rollback_isolation_with_contextmanager[sqlite:///testsuite]\ntests/test_databases.py::test_rollback_isolation_with_contextmanager[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_transaction_commit[sqlite:///testsuite]\ntests/test_databases.py::test_transaction_commit[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_transaction_commit_serializable[sqlite:///testsuite]\ntests/test_databases.py::test_transaction_commit_serializable[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_transaction_rollback[sqlite:///testsuite]\ntests/test_databases.py::test_transaction_rollback[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_transaction_commit_low_level[sqlite:///testsuite]\ntests/test_databases.py::test_transaction_commit_low_level[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_transaction_rollback_low_level[sqlite:///testsuite]\ntests/test_databases.py::test_transaction_rollback_low_level[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_transaction_decorator[sqlite:///testsuite]\ntests/test_databases.py::test_transaction_decorator[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_datetime_field[sqlite:///testsuite]\ntests/test_databases.py::test_datetime_field[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_decimal_field[sqlite:///testsuite]\ntests/test_databases.py::test_decimal_field[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_json_field[sqlite:///testsuite]\ntests/test_databases.py::test_json_field[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_custom_field[sqlite:///testsuite]\ntests/test_databases.py::test_custom_field[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_connections_isolation[sqlite:///testsuite]\ntests/test_databases.py::test_connections_isolation[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_commit_on_root_transaction[sqlite:///testsuite]\ntests/test_databases.py::test_commit_on_root_transaction[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_connect_and_disconnect[sqlite:///testsuite]\ntests/test_databases.py::test_connect_and_disconnect[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_connection_context[sqlite:///testsuite]\ntests/test_databases.py::test_connection_context[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_connection_context_with_raw_connection[sqlite:///testsuite]\ntests/test_databases.py::test_connection_context_with_raw_connection[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_queries_with_expose_backend_connection[sqlite:///testsuite]\ntests/test_databases.py::test_queries_with_expose_backend_connection[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_database_url_interface[sqlite:///testsuite]\ntests/test_databases.py::test_database_url_interface[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_concurrent_access_on_single_connection[sqlite:///testsuite]\ntests/test_databases.py::test_concurrent_access_on_single_connection[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_global_connection_is_initialized_lazily[sqlite:///testsuite]\ntests/test_databases.py::test_global_connection_is_initialized_lazily[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_iterate_outside_transaction_with_values[sqlite:///testsuite]\ntests/test_databases.py::test_iterate_outside_transaction_with_values[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_iterate_outside_transaction_with_temp_table[sqlite:///testsuite]\ntests/test_databases.py::test_iterate_outside_transaction_with_temp_table[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_column_names[select_query0-sqlite:///testsuite]\ntests/test_databases.py::test_column_names[select_query0-sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_column_names[SELECT * FROM notes-sqlite:///testsuite]\ntests/test_databases.py::test_column_names[SELECT * FROM notes-sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_posgres_interface[sqlite:///testsuite]\ntests/test_databases.py::test_posgres_interface[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_postcompile_queries[sqlite:///testsuite]\ntests/test_databases.py::test_postcompile_queries[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_result_named_access[sqlite:///testsuite]\ntests/test_databases.py::test_result_named_access[sqlite+aiosqlite:///testsuite]\ntests/test_databases.py::test_mapping_property_interface[sqlite:///testsuite]\ntests/test_databases.py::test_mapping_property_interface[sqlite+aiosqlite:///testsuite]\n\n78 tests collected in 0.14s\n"
+}

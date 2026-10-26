@@ -1,0 +1,16 @@
+--- a/src/backend/database.py
++++ b/src/backend/database.py
+@@ -5,4 +5,5 @@
+ def init_db():
+-    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
+-    engine.execute(text("INSERT INTO users (name) VALUES ('alice')"))
++    with engine.begin() as conn:
++        conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
++        conn.execute(text("INSERT INTO users (name) VALUES ('alice')"))
+@@ -9,3 +9,4 @@
+ def get_user_count():
+-    res = engine.execute(text('SELECT count(*) FROM users'))
+-    return res.scalar()
++    with engine.begin() as conn:
++        res = conn.execute(text('SELECT count(*) FROM users'))
++        return res.scalar()

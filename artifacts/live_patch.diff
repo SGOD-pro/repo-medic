@@ -1,0 +1,20 @@
+--- a/src/backend/database.py
++++ b/src/backend/database.py
+@@ -3,9 +3,11 @@
+ engine = create_engine('sqlite:///:memory:')
+ 
+-def init_db():
+-    engine.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
+-    engine.execute(text("INSERT INTO users (name) VALUES ('alice')"))
++def init_db():
++    with engine.begin() as conn:
++        conn.execute(text('CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)'))
++        conn.execute(text("INSERT INTO users (name) VALUES ('alice')"))
+ 
+-def get_user_count():
+-    res = engine.execute(text('SELECT count(*) FROM users'))
+-    return res.scalar()
++def get_user_count():
++    with engine.begin() as conn:
++        res = conn.execute(text('SELECT count(*) FROM users'))
++        return res.scalar()

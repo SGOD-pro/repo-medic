@@ -6,6 +6,6 @@ db-worker/node_modules/
 db-worker/.dev.vars*
 *.sqlite
 *.db
-artifacts/
+.playwright-mcp/
 __pycache__/
 *.pyc

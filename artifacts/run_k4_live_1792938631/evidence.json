@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0.0",
+  "candidate_id": "candidate_1",
+  "task_id": "TASK-092",
+  "commit_hash": "6b0c767588f501d5edaabb1bdf665fcf1ded88ea",
+  "dependency": "sqlalchemy",
+  "from_version": "1.4.42",
+  "to_version": "2.0.19",
+  "verified_version": "",
+  "import_origin": "",
+  "checkpoint_id": "b4c3ee49-144f-4ecf-b4e8-cf49bc1d097d",
+  "execution_mode": "live",
+  "checks": {
+    "checkpoint_isolated": true,
+    "pre_patch_hash_match": true,
+    "patch_applied": true,
+    "post_patch_hash_match": true,
+    "collection_node_ids_match": false,
+    "tests_passed": false,
+    "zero_new_skips": false,
+    "post_test_hash_match": false,
+    "version_intact": false,
+    "artifacts_persisted": false
+  },
+  "test_summary": {
+    "exit_code": 1,
+    "collected_count": 0,
+    "passed_count": 0,
+    "failed_count": 0,
+    "skipped_count": 0,
+    "xfailed_count": 0
+  },
+  "artifact_hashes": {
+    "patch.diff": "0037fbced8e0168a7aa352e645ed9caf78956a361e81316cc6a7d4a49743cd5d",
+    "verify.log": "6435fd765278b2c049a3b9f0f3d9b1ff26a31b58ec48d7cde1bffa24cb3e0e68"
+  },
+  "duration_seconds": 6.251444090999939,
+  "created_at": "2026-10-25T14:32:23Z"
+}
