@@ -408,7 +408,7 @@ export class HttpTransport implements RepoMedicApiClient {
 export function createEventStreamFetcher(
   apiClient: RepoMedicApiClient,
   runId: string,
-  baseUrl = "/api"
+  baseUrl = process.env.NEXT_PUBLIC_API_URL || "/api"
 ): (lastEventId: string | null) => AsyncIterable<EventEnvelope> {
   return async function* (lastEventId: string | null): AsyncIterable<EventEnvelope> {
     if (typeof window !== "undefined" && typeof fetch === "function") {
@@ -471,7 +471,8 @@ export function createEventStreamFetcher(
 export function createApiClient(): RepoMedicApiClient {
   const transportType = process.env.NEXT_PUBLIC_API_TRANSPORT || "mock";
   if (transportType === "http") {
-    return new HttpTransport();
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
+    return new HttpTransport(apiUrl);
   }
   return new MockTransport();
 }

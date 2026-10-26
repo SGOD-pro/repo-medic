@@ -110,6 +110,151 @@ function parseUnifiedDiff(diffText: string): ParsedDiffFile[] {
   return files;
 }
 
+export interface VerificationViewModel {
+  runState: string;
+  isPass: boolean;
+  isFail: boolean;
+  isCancelled: boolean;
+  modeLabel: string;
+  testsPassed: number | null;
+  testsFailed: number | null;
+  totalCollected: number | null;
+  ratioDisplay: string;
+  headerTitle: string;
+  regressionsBadgeText: string | null;
+  astBadgeVisible: boolean;
+  astProofSupported: boolean;
+  astProofText: string;
+  characterizationTestsText: string;
+  verificationTimeText: string;
+  costText: string;
+  signatureBadgeText: string | null;
+}
+
+export function resolveVerificationViewModel(
+  activeRun?: RunSummary | null,
+  evidenceData?: Record<string, unknown> | null
+): VerificationViewModel {
+  const runState = activeRun?.state || "unknown";
+  const isPass = runState === "succeeded";
+  const isFail = runState === "failed";
+  const isCancelled = runState === "cancelled";
+
+  const effectiveMode = activeRun?.mode || (evidenceData?.execution_mode as string) || "offline";
+  let modeLabel = "OFFLINE MODE (TURSO)";
+  if ((process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock") {
+    modeLabel = "MOCK TRANSPORT";
+  } else if (effectiveMode === "live") {
+    modeLabel = "LIVE SANDBOX (NEBIUS)";
+  } else if (effectiveMode === "replay") {
+    modeLabel = "REPLAY MODE";
+  }
+
+  const testSummary = evidenceData?.test_summary as Record<string, number> | undefined;
+  const testsPassed = typeof testSummary?.passed_count === "number"
+    ? testSummary.passed_count
+    : (typeof evidenceData?.tests_passed === "number"
+      ? (evidenceData.tests_passed as number)
+      : null);
+
+  const testsFailed = typeof testSummary?.failed_count === "number"
+    ? testSummary.failed_count
+    : (typeof evidenceData?.tests_failed === "number"
+      ? (evidenceData.tests_failed as number)
+      : null);
+
+  const totalCollected = typeof testSummary?.collected_count === "number"
+    ? testSummary.collected_count
+    : (testsPassed !== null && testsFailed !== null
+      ? testsPassed + testsFailed
+      : null);
+
+  const ratioDisplay = testsPassed !== null && totalCollected !== null
+    ? `${testsPassed} / ${totalCollected}`
+    : "Unavailable";
+
+  let headerTitle: string;
+  if (isPass) {
+    headerTitle = testsPassed !== null && totalCollected !== null
+      ? `Behavior preserved (${testsPassed}/${totalCollected} tests passing)`
+      : "Verified Source Repair Completed";
+  } else if (isFail) {
+    headerTitle = testsFailed !== null
+      ? `Verification check failed (${testsFailed} tests failing)`
+      : "Source Repair Failed";
+  } else if (isCancelled) {
+    headerTitle = "Run Cancelled";
+  } else {
+    headerTitle = `Run State: ${runState}`;
+  }
+
+  let regressionsBadgeText: string | null = null;
+  if (testsFailed !== null) {
+    regressionsBadgeText = testsFailed === 0 ? "0 REGRESSIONS" : `${testsFailed} FAILURES`;
+  }
+
+  const checks = evidenceData?.checks as Record<string, boolean> | undefined;
+  const astBadgeVisible = isPass && Boolean(checks?.post_patch_hash_match);
+
+  let astProofSupported = false;
+  let astProofText = "Evidence proof unavailable";
+  if (checks?.post_patch_hash_match && checks?.version_intact) {
+    astProofSupported = true;
+    astProofText = "AST Proof: 0 test files modified · exact dependency verified";
+  } else if (checks?.post_patch_hash_match) {
+    astProofSupported = true;
+    astProofText = "AST Proof: 0 test files modified";
+  } else if (checks) {
+    astProofSupported = false;
+    astProofText = "Verification checks evaluated without AST proof";
+  }
+
+  const characterizationTestsText = typeof evidenceData?.contract_assertions === "number"
+    ? `+${evidenceData.contract_assertions} generated`
+    : "Unavailable";
+
+  const verificationTimeText = typeof evidenceData?.duration_seconds === "number"
+    ? `${evidenceData.duration_seconds.toFixed(1)}s`
+    : typeof evidenceData?.execution_time === "string"
+    ? evidenceData.execution_time
+    : "Unavailable";
+
+  let costText = "Unavailable";
+  if (typeof activeRun?.usage?.estimated_usd === "number") {
+    costText = `$${activeRun.usage.estimated_usd.toFixed(2)}`;
+  } else if (typeof evidenceData?.cost_usd === "number") {
+    costText = `$${(evidenceData.cost_usd as number).toFixed(2)}`;
+  }
+
+  let signatureBadgeText: string | null = null;
+  if (typeof evidenceData?.signature === "string") {
+    signatureBadgeText = `Signature: ${evidenceData.signature}`;
+  } else if (checks?.tests_passed) {
+    signatureBadgeText = "Verification Checks Passed";
+  }
+
+  return {
+    runState,
+    isPass,
+    isFail,
+    isCancelled,
+    modeLabel,
+    testsPassed,
+    testsFailed,
+    totalCollected,
+    ratioDisplay,
+    headerTitle,
+    regressionsBadgeText,
+    astBadgeVisible,
+    astProofSupported,
+    astProofText,
+    characterizationTestsText,
+    verificationTimeText,
+    costText,
+    signatureBadgeText,
+  };
+}
+
 export function VerificationView({
   onRunAnotherTask,
   activeRun,
@@ -173,6 +318,11 @@ export function VerificationView({
     return patchContent ? parseUnifiedDiff(patchContent) : [];
   }, [patchContent]);
 
+  const vm = useMemo(
+    () => resolveVerificationViewModel(activeRun, evidenceData),
+    [activeRun, evidenceData]
+  );
+
   const toggleCollapse = (filename: string) => {
     setCollapsedFiles((prev) => {
       const next = new Set(prev);
@@ -231,54 +381,19 @@ export function VerificationView({
     }
   };
 
-  const runState = activeRun?.state || "unknown";
-  const isPass = runState === "succeeded";
-  const isFail = runState === "failed";
-  const isCancelled = runState === "cancelled";
-
   const patchArtifact = activeRun?.artifacts?.find((a) => a.kind === "patch");
   const evidenceArtifact = activeRun?.artifacts?.find((a) => a.kind === "evidence");
-
-  const effectiveMode = activeRun?.mode || (evidenceData?.execution_mode as string) || "offline";
-  const modeLabel = useMemo(() => {
-    if ((process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock") return "MOCK TRANSPORT";
-    if (effectiveMode === "live") return "LIVE SANDBOX (NEBIUS)";
-    if (effectiveMode === "replay") return "REPLAY MODE";
-    return "OFFLINE MODE (TURSO)";
-  }, [effectiveMode]);
-
-  const testSummary = evidenceData?.test_summary as Record<string, number> | undefined;
-  const testsPassed = typeof testSummary?.passed_count === "number"
-    ? testSummary.passed_count
-    : (typeof evidenceData?.tests_passed === "number"
-      ? (evidenceData.tests_passed as number)
-      : (isPass ? 1 : 0));
-  const testsFailed = typeof testSummary?.failed_count === "number"
-    ? testSummary.failed_count
-    : (typeof evidenceData?.tests_failed === "number"
-      ? (evidenceData.tests_failed as number)
-      : (isFail ? 1 : 0));
-  const totalCollected = typeof testSummary?.collected_count === "number"
-    ? testSummary.collected_count
-    : (testsPassed + testsFailed > 0 ? testsPassed + testsFailed : (isPass ? 1 : 0));
-
-  const costUsd = activeRun?.usage?.estimated_usd ?? (typeof evidenceData?.cost_usd === "number" ? evidenceData.cost_usd : 0.0);
-  const executionTime = typeof evidenceData?.duration_seconds === "number"
-    ? `${evidenceData.duration_seconds.toFixed(1)}s`
-    : typeof evidenceData?.execution_time === "string"
-    ? evidenceData.execution_time
-    : "0.0s";
 
   return (
     <div className="mx-auto w-full max-w-[1280px] px-6 py-8">
       {/* Top Banner Card: Render Selected Run State and Reason */}
       <Card
         className={`rounded-[20px] p-6 mb-6 border ${
-          isPass
+          vm.isPass
             ? "bg-[#15271F] border-[rgba(183,201,173,0.2)]"
-            : isFail
+            : vm.isFail
             ? "bg-[#271515] border-[#E5736A]/30"
-            : isCancelled
+            : vm.isCancelled
             ? "bg-[#272015] border-[#E0B45A]/30"
             : "bg-[#15271F] border-[rgba(183,201,173,0.2)]"
         }`}
@@ -287,16 +402,16 @@ export function VerificationView({
           <div className="flex items-start gap-3.5">
             <div
               className={`mt-0.5 rounded-full p-1.5 border ${
-                isPass
+                vm.isPass
                   ? "bg-[#5FCB8A]/20 border-[#5FCB8A]/30"
-                  : isFail
+                  : vm.isFail
                   ? "bg-[#E5736A]/20 border-[#E5736A]/30"
                   : "bg-[#E0B45A]/20 border-[#E0B45A]/30"
               }`}
             >
-              {isPass ? (
+              {vm.isPass ? (
                 <CheckCircle className="size-5 text-[#5FCB8A]" />
-              ) : isFail ? (
+              ) : vm.isFail ? (
                 <XCircle className="size-5 text-[#E5736A]" />
               ) : (
                 <AlertTriangle className="size-5 text-[#E0B45A]" />
@@ -305,24 +420,24 @@ export function VerificationView({
             <div>
               <div className="flex flex-wrap items-center gap-2.5">
                 <h1 className="text-xl font-semibold text-[#F7F7F2]">
-                  {isPass
+                  {vm.isPass
                     ? "Verified Source Repair Completed"
-                    : isFail
+                    : vm.isFail
                     ? "Source Repair Failed"
-                    : isCancelled
+                    : vm.isCancelled
                     ? "Run Cancelled"
-                    : `Run State: ${runState}`}
+                    : `Run State: ${vm.runState}`}
                 </h1>
                 <Badge
                   className={`border-transparent font-mono text-xs font-semibold px-2 py-0.5 ${
-                    isPass
+                    vm.isPass
                       ? "bg-[#5FCB8A]/20 text-[#5FCB8A]"
-                      : isFail
+                      : vm.isFail
                       ? "bg-[#E5736A]/20 text-[#E5736A]"
                       : "bg-[#E0B45A]/20 text-[#E0B45A]"
                   }`}
                 >
-                  {runState.toUpperCase()}
+                  {vm.runState.toUpperCase()}
                 </Badge>
                 {activeRun?.run_id && (
                   <Badge
@@ -336,7 +451,7 @@ export function VerificationView({
                   variant="outline"
                   className="border-[rgba(183,201,173,0.24)] bg-transparent font-mono text-[11px] text-[#A9B8AD] px-2 py-0.5"
                 >
-                  {modeLabel}
+                  {vm.modeLabel}
                 </Badge>
               </div>
 
@@ -358,10 +473,10 @@ export function VerificationView({
           <div className="flex items-center gap-1.5 font-mono text-xs text-[#A9B8AD] whitespace-nowrap">
             <span
               className={`size-2 rounded-full ${
-                isPass ? "bg-[#5FCB8A]" : isFail ? "bg-[#E5736A]" : "bg-[#E0B45A]"
+                vm.isPass ? "bg-[#5FCB8A]" : vm.isFail ? "bg-[#E5736A]" : "bg-[#E0B45A]"
               }`}
             />
-            <span>{isPass ? "Sandbox Terminated Cleanly" : "Process Halted"}</span>
+            <span>{vm.isPass ? "Sandbox Terminated Cleanly" : "Process Halted"}</span>
           </div>
         </div>
       </Card>
@@ -373,16 +488,18 @@ export function VerificationView({
             VERIFICATION REPORT
           </span>
           <div className="flex items-center gap-2">
-            <Badge
-              className={`border-transparent font-mono text-xs px-2 py-0.5 ${
-                testsFailed === 0
-                  ? "bg-[#5FCB8A]/15 text-[#5FCB8A]"
-                  : "bg-[#E5736A]/15 text-[#E5736A]"
-              }`}
-            >
-              {testsFailed === 0 ? "0 REGRESSIONS" : `${testsFailed} FAILURES`}
-            </Badge>
-            {isPass && (
+            {vm.regressionsBadgeText && (
+              <Badge
+                className={`border-transparent font-mono text-xs px-2 py-0.5 ${
+                  vm.testsFailed === 0
+                    ? "bg-[#5FCB8A]/15 text-[#5FCB8A]"
+                    : "bg-[#E5736A]/15 text-[#E5736A]"
+                }`}
+              >
+                {vm.regressionsBadgeText}
+              </Badge>
+            )}
+            {vm.astBadgeVisible && (
               <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
                 AST VERIFIED
               </Badge>
@@ -391,11 +508,7 @@ export function VerificationView({
         </div>
 
         <h2 className="text-2xl font-semibold text-[#F7F7F2] mb-6">
-          {isPass
-            ? `Behavior preserved (${testsPassed}/${totalCollected} tests passing)`
-            : isFail
-            ? `Verification check failed (${testsFailed} tests failing)`
-            : `Execution halted (${runState})`}
+          {vm.headerTitle}
         </h2>
 
         {/* 5 Metric Cards */}
@@ -407,12 +520,12 @@ export function VerificationView({
             <div className="flex items-center justify-between">
               <span
                 className={`font-mono text-sm font-semibold ${
-                  isPass ? "text-[#5FCB8A]" : "text-[#E5736A]"
+                  vm.isPass ? "text-[#5FCB8A]" : "text-[#E5736A]"
                 }`}
               >
-                {testsPassed} / {totalCollected}
+                {vm.ratioDisplay}
               </span>
-              {isPass ? (
+              {vm.isPass ? (
                 <CheckCircle2 className="size-4 text-[#5FCB8A]" />
               ) : (
                 <XCircle className="size-4 text-[#E5736A]" />
@@ -426,7 +539,7 @@ export function VerificationView({
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                +{(evidenceData?.contract_assertions as number) ?? 0} generated
+                {vm.characterizationTestsText}
               </span>
               <FileCode className="size-4 text-[#A9B8AD]" />
             </div>
@@ -446,11 +559,11 @@ export function VerificationView({
 
           <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
             <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Execution Time
+              Verification Time
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                {executionTime}
+                {vm.verificationTimeText}
               </span>
               <Clock className="size-4 text-[#A9B8AD]" />
             </div>
@@ -462,7 +575,7 @@ export function VerificationView({
             </span>
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                ${costUsd.toFixed(2)}
+                {vm.costText}
               </span>
               <Cpu className="size-4 text-[#A9B8AD]" />
             </div>
@@ -472,14 +585,18 @@ export function VerificationView({
         {/* Proof Detail Bar */}
         <div className="rounded-xl bg-[#0D1915] border border-[rgba(183,201,173,0.12)] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono text-[#A9B8AD]">
           <div className="flex items-center gap-2">
-            <ShieldCheck className="size-4 text-[#5FCB8A] shrink-0" />
-            <span>
-              AST Proof: 0 test files modified · exact dependency verified
+            <ShieldCheck
+              className={`size-4 shrink-0 ${
+                vm.astProofSupported ? "text-[#5FCB8A]" : "text-[#A9B8AD]"
+              }`}
+            />
+            <span className={vm.astProofSupported ? "text-[#F7F7F2]" : "text-[#A9B8AD]"}>
+              {vm.astProofText}
             </span>
           </div>
           <div className="whitespace-nowrap">
             <span>Mode: </span>
-            <span className="text-[#F7F7F2]">{modeLabel}</span>
+            <span className="text-[#F7F7F2]">{vm.modeLabel}</span>
           </div>
         </div>
       </Card>
@@ -682,17 +799,12 @@ export function VerificationView({
           </Button>
         </div>
 
-        {(evidenceData?.signature as string | undefined) ? (
+        {vm.signatureBadgeText && (
           <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
             <ShieldCheck className="size-3.5" />
-            Signature: {String(evidenceData?.signature)}
+            {vm.signatureBadgeText}
           </Badge>
-        ) : (evidenceData?.checks as Record<string, boolean> | undefined)?.tests_passed ? (
-          <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
-            <ShieldCheck className="size-3.5" />
-            Verification Checks Passed
-          </Badge>
-        ) : null}
+        )}
       </div>
 
       <p className="mt-4 text-[11px] font-mono text-[#A9B8AD]">
