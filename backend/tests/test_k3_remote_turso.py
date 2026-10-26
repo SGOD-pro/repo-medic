@@ -2,7 +2,11 @@ import asyncio
 import hashlib
 import json
 import os
+import socket
+import subprocess
+import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List
 import pytest
@@ -90,7 +94,11 @@ def k3_turso_client_and_repo(tmp_path):
         url = os.getenv("TURSO_DATABASE_URL", getattr(settings, "turso_database_url", ""))
         token = os.getenv("TURSO_AUTH_TOKEN", getattr(settings, "turso_auth_token", ""))
         if not url:
-            pytest.skip("REPOMEDIC_RUN_REMOTE_TURSO=true but TURSO_DATABASE_URL is not configured")
+            pytest.fail("REPOMEDIC_RUN_REMOTE_TURSO=true but TURSO_DATABASE_URL is not configured")
+        if not url.startswith(("libsql://", "https://", "http://")):
+            pytest.fail(f"REPOMEDIC_RUN_REMOTE_TURSO=true requires a remote database URL, got '{url}'")
+        if not token:
+            pytest.fail("REPOMEDIC_RUN_REMOTE_TURSO=true but TURSO_AUTH_TOKEN is not configured")
         client = TursoClient(database=url, auth_token=token)
     else:
         db_file = str(tmp_path / "k3_turso_local.db")
@@ -342,3 +350,224 @@ async def test_remote_acceptance_e2e_workflow(k3_turso_client_and_repo, k3_turso
 
     content = repo.get_artifact_content(run_id, art_id)
     assert content == patch_bytes
+
+
+def test_concurrent_conflicting_settlement_cannot_overwrite(k3_turso_client_and_repo, k3_turso_manifest):
+    """Verify concurrent conflicting settlements atomically commit exactly one amount."""
+    client, repo, is_remote = k3_turso_client_and_repo
+    prefix = k3_turso_manifest.prefix
+
+    task_id = k3_turso_manifest.record_task(f"{prefix}task_settle_race")
+    repo.upsert_task({
+        "task_id": task_id,
+        "title": "Settlement Race Task",
+        "repository_url": "https://github.com/example/repo.git",
+        "commit_sha": "abc1234",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+
+    run_id = k3_turso_manifest.record_run(f"{prefix}run_settle_race")
+    repo.create_run(run_id=run_id, task_id=task_id, mode="offline", search_mode="sequential", max_run_usd=2.0)
+
+    op_id = k3_turso_manifest.record_operation(f"{prefix}op_settle_race")
+    client.reserve_budget(
+        run_id=run_id,
+        operation_id=op_id,
+        kind="model",
+        estimated_usd=0.50,
+        global_budget_usd=25.0,
+    )
+
+    amounts = [0.10, 0.20, 0.30, 0.40]
+    outcomes: dict[float, str] = {}
+    lock = threading.Lock()
+
+    def attempt_settle(amt: float) -> None:
+        try:
+            client.settle_budget(op_id, amt)
+            with lock:
+                outcomes[amt] = "success"
+        except StorageConflictError as e:
+            with lock:
+                outcomes[amt] = f"conflict:{e.code}"
+        except Exception as e:
+            with lock:
+                outcomes[amt] = f"error:{type(e).__name__}"
+
+    threads = [threading.Thread(target=attempt_settle, args=(a,)) for a in amounts]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Exactly one amount succeeds, others receive conflict
+    successes = [a for a, s in outcomes.items() if s == "success"]
+    conflicts = [a for a, s in outcomes.items() if s.startswith("conflict")]
+    assert len(successes) == 1
+    assert len(conflicts) == len(amounts) - 1
+
+    winning_amt = successes[0]
+    losing_amt = conflicts[0]
+
+    # Verify winning amount is committed
+    cur = client._conn.execute(
+        "SELECT settled_micro_usd, status FROM operations WHERE operation_id = ?",
+        (op_id,),
+    )
+    row = cur.fetchone()
+    assert row[1] == "settled"
+    assert row[0] == int(winning_amt * 1_000_000)
+
+    # Idempotent retry with winning amount succeeds
+    retry_ok = client.settle_budget(op_id, winning_amt)
+    assert retry_ok.get("ok") is True
+
+    # Conflicting retry with losing amount fails
+    with pytest.raises(StorageConflictError) as exc_info:
+        client.settle_budget(op_id, losing_amt)
+    assert exc_info.value.code == "operation_already_settled"
+
+
+def test_actual_backend_process_termination_and_startup_recovery(k3_turso_client_and_repo, k3_turso_manifest):
+    """Verify actual backend process SIGTERM termination and startup recovery against Turso."""
+    client, repo, is_remote = k3_turso_client_and_repo
+    prefix = f"{k3_turso_manifest.prefix}restart_"
+
+    task_id = k3_turso_manifest.record_task(f"{prefix}task")
+    repo.upsert_task({
+        "task_id": task_id,
+        "title": "Process Restart Task",
+        "repository_url": "https://github.com/example/repo.git",
+        "commit_sha": "abc1234",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+
+    # Step 1: Seed first interrupted run before backend launch
+    seed_run_1 = k3_turso_manifest.record_run(f"{prefix}proc1")
+    repo.create_run(
+        run_id=seed_run_1,
+        task_id=task_id,
+        mode="offline",
+        search_mode="sequential",
+        state="running",
+    )
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        test_port = s.getsockname()[1]
+
+    backend_cwd = Path(__file__).resolve().parent.parent
+    base_env = os.environ.copy()
+    base_env["PORT"] = str(test_port)
+    base_env["REPOMEDIC_STORAGE_BACKEND"] = "turso"
+    base_env["TURSO_DATABASE_URL"] = client.database
+    if client.auth_token:
+        base_env["TURSO_AUTH_TOKEN"] = client.auth_token
+    base_env["REPOMEDIC_MODE"] = "offline"
+    base_env["REPOMEDIC_WORKER_ENABLED"] = "false"
+    base_env["REPOMEDIC_ACCEPTANCE_PREFIX"] = prefix
+
+    proc1: subprocess.Popen[bytes] | None = None
+    proc2: subprocess.Popen[bytes] | None = None
+    seed_run_2 = k3_turso_manifest.record_run(f"{prefix}proc2")
+
+    def _wait_healthy(port: int, timeout_sec: float = 15.0) -> bool:
+        start_t = time.time()
+        while time.time() - start_t < timeout_sec:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/budget/usage", timeout=1.0) as resp:
+                    if resp.status == 200:
+                        return True
+            except Exception:
+                time.sleep(0.2)
+        return False
+
+    try:
+        # Step 2: Spawn first backend process
+        proc1 = subprocess.Popen(
+            [
+                "uv", "run", "python", "-m", "uvicorn", "src.main:create_app",
+                "--factory", "--host", "127.0.0.1", "--port", str(test_port),
+            ],
+            cwd=str(backend_cwd),
+            env=base_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert _wait_healthy(test_port), f"First backend process failed to become healthy on port {test_port}"
+
+        # Step 3: Verify first run was recovered on backend startup
+        run1 = repo.get_run(seed_run_1)
+        assert run1.state == "failed", f"Expected seed_run_1 to be failed, got {run1.state}"
+        assert "restarted" in (run1.reason or "").lower(), f"Expected restart reason, got {run1.reason}"
+
+        # Step 4: Seed second run in running state while backend is active
+        repo.create_run(
+            run_id=seed_run_2,
+            task_id=task_id,
+            mode="offline",
+            search_mode="branch_refine",
+            state="running",
+        )
+        with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/runs/{seed_run_2}", timeout=2.0) as resp:
+            data = json.loads(resp.read().decode())
+            assert data.get("state") == "running", f"Seed run 2 must be running initially, got {data.get('state')}"
+
+        # Step 5: Terminate first backend process via SIGTERM
+        proc1.terminate()
+        proc1.wait(timeout=10)
+        proc1 = None
+
+        # Step 6: Verify second run remains running in storage while backend process is stopped
+        run2_stopped = repo.get_run(seed_run_2)
+        assert run2_stopped.state == "running", f"Seed run 2 must remain running while stopped, got {run2_stopped.state}"
+
+        # Step 7: Restart backend process
+        proc2 = subprocess.Popen(
+            [
+                "uv", "run", "python", "-m", "uvicorn", "src.main:create_app",
+                "--factory", "--host", "127.0.0.1", "--port", str(test_port),
+            ],
+            cwd=str(backend_cwd),
+            env=base_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        assert _wait_healthy(test_port), f"Restarted backend process failed to become healthy on port {test_port}"
+
+        # Step 8: Verify second run is recovered upon process restart
+        with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/runs/{seed_run_2}", timeout=2.0) as resp:
+            data = json.loads(resp.read().decode())
+            assert data.get("state") == "failed", f"Expected seed_run_2 to be failed, got {data.get('state')}"
+            assert "restarted" in (data.get("reason") or "").lower(), f"Expected restart reason, got {data.get('reason')}"
+
+    except Exception as exc:
+        artifacts_dir = backend_cwd.parent / "artifacts"
+        artifacts_dir.mkdir(parents=True, exist_ok=True)
+        failure_path = artifacts_dir / f"k3_proc_restart_failure_{int(time.time() * 1000)}.json"
+        failure_info = {
+            "test": "test_actual_backend_process_termination_and_startup_recovery",
+            "is_remote": is_remote,
+            "prefix": prefix,
+            "seed_run_1": seed_run_1,
+            "seed_run_2": seed_run_2,
+            "error": str(exc),
+            "proc1_stdout": proc1.stdout.read().decode(errors="replace") if proc1 and proc1.stdout else "",
+            "proc1_stderr": proc1.stderr.read().decode(errors="replace") if proc1 and proc1.stderr else "",
+            "proc2_stdout": proc2.stdout.read().decode(errors="replace") if proc2 and proc2.stdout else "",
+            "proc2_stderr": proc2.stderr.read().decode(errors="replace") if proc2 and proc2.stderr else "",
+        }
+        failure_path.write_text(json.dumps(failure_info, indent=2), encoding="utf-8")
+        raise
+    finally:
+        for p in (proc1, proc2):
+            if p is not None and p.poll() is None:
+                try:
+                    p.terminate()
+                    p.wait(timeout=5)
+                except Exception:
+                    p.kill()

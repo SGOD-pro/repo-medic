@@ -426,11 +426,27 @@ async function runAcceptanceSuite() {
     const backendCwd = path.resolve(REPO_ROOT, "backend");
     const testPort = Number(process.env.TEST_BACKEND_PORT) || 8009;
     const testBackendUrl = `http://127.0.0.1:${testPort}`;
-    const check9Db = path.resolve(backendCwd, `test_check9_${Date.now()}.db`);
+
+    const isRemote = Boolean(
+      process.env.TURSO_DATABASE_URL &&
+      (process.env.TURSO_DATABASE_URL.startsWith("libsql://") ||
+       process.env.TURSO_DATABASE_URL.startsWith("https://") ||
+       process.env.TURSO_DATABASE_URL.startsWith("http://"))
+    );
+    const check9Db = isRemote
+      ? process.env.TURSO_DATABASE_URL
+      : path.resolve(backendCwd, `test_check9_${Date.now()}.db`);
+
+    const runPrefix = `run_k3_restart_${Date.now()}_`;
+    const seedRun1 = `${runPrefix}proc1`;
+    const seedRun2 = `${runPrefix}proc2`;
+
     const check9Env = {
       ...process.env,
       TURSO_DATABASE_URL: check9Db,
       REPOMEDIC_STORAGE_BACKEND: "turso",
+      REPOMEDIC_ACCEPTANCE_PREFIX: runPrefix,
+      REPOMEDIC_WORKER_ENABLED: "false",
     };
 
     let testProc = null;
@@ -479,7 +495,6 @@ async function runAcceptanceSuite() {
       }
 
       // Step 1: Seed first interrupted run in persistent storage
-      const seedRun1 = `run_interrupted_proc1_${Date.now()}`;
       execSync(`uv run python -m src.storage.turso_client seed-run ${seedRun1} TASK-084 offline sequential running`, {
         cwd: backendCwd,
         env: check9Env,
@@ -499,7 +514,6 @@ async function runAcceptanceSuite() {
       console.log(`  ✔ First run recovered upon startup: state=${check1.state}, reason="${check1.reason}"`);
 
       // Step 3: Seed second run in persistent storage while backend is active
-      const seedRun2 = `run_interrupted_proc2_${Date.now()}`;
       execSync(`uv run python -m src.storage.turso_client seed-run ${seedRun2} TASK-084 offline branch_refine running`, {
         cwd: backendCwd,
         env: check9Env,
@@ -535,17 +549,49 @@ async function runAcceptanceSuite() {
       assert.equal(check2.state, "failed", "Restarted backend process must recover interrupted run in persistent storage");
       assert.ok(check2.reason.includes("restarted"), `Reason must mention process restart, got: ${check2.reason}`);
       console.log(`  ✔ Second run recovered upon process restart: state=${check2.state}, reason="${check2.reason}"`);
+    } catch (err) {
+      if (!fs.existsSync(ARTIFACT_DIR)) {
+        fs.mkdirSync(ARTIFACT_DIR, { recursive: true });
+      }
+      const failureReport = {
+        check: "check_9_backend_process_termination_and_startup_recovery",
+        timestamp: new Date().toISOString(),
+        is_remote: isRemote,
+        database_url: isRemote ? "libsql://[remote_turso]" : check9Db,
+        prefix: runPrefix,
+        seedRun1,
+        seedRun2,
+        error: String(err && (err.stack || err.message) || err),
+      };
+      fs.writeFileSync(
+        path.resolve(ARTIFACT_DIR, `k3_check9_failure_${Date.now()}.json`),
+        JSON.stringify(failureReport, null, 2),
+        "utf8"
+      );
+      throw err;
     } finally {
       await cleanTestProc();
-      for (const suffix of ["", "-wal", "-shm"]) {
-        const p = `${check9Db}${suffix}`;
-        if (fs.existsSync(p)) {
-          try {
-            fs.unlinkSync(p);
-          } catch {}
+      if (isRemote) {
+        try {
+          execSync(`uv run python -m src.storage.turso_client cleanup-runs ${seedRun1} ${seedRun2}`, {
+            cwd: backendCwd,
+            env: check9Env,
+          });
+          console.log("  ✔ Remote acceptance records cleaned up");
+        } catch (cleanupErr) {
+          console.warn("  ⚠ Failed to clean up remote acceptance records:", cleanupErr.message);
         }
+      } else {
+        for (const suffix of ["", "-wal", "-shm"]) {
+          const p = `${check9Db}${suffix}`;
+          if (fs.existsSync(p)) {
+            try {
+              fs.unlinkSync(p);
+            } catch {}
+          }
+        }
+        console.log("  ✔ Test backend process and isolated database cleaned up");
       }
-      console.log("  ✔ Test backend process and isolated database cleaned up");
     }
 
     console.log("\n========================================================");

@@ -4,6 +4,8 @@ class Settings(BaseSettings):
     # Execution mode & frontend integration
     repomedic_mode: str = "offline"
     repomedic_app_origin: str = "http://localhost:3000"
+    repomedic_env: str = "development"
+    environment: str = "development"
 
     # Cloudflare D1 Worker bridge (legacy/bridge fallback)
     repomedic_db_worker_url: str = "http://127.0.0.1:8787"

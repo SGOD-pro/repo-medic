@@ -784,11 +784,24 @@ export default {
             return errorResponse("invalid_state", `Cannot settle operation in '${op.status}' state`, 409);
           }
 
-          await env.DB.prepare(
+          const updateRes = await env.DB.prepare(
             `UPDATE operations
              SET settled_micro_usd = ?, status = 'settled', updated_at = ?, provider_ref = COALESCE(?, provider_ref)
-             WHERE operation_id = ?`
+             WHERE operation_id = ? AND status IN ('reserved', 'uncertain')`
           ).bind(settled, now, providerRef, operationId).run();
+
+          if (!updateRes.meta || updateRes.meta.changes === 0) {
+            const currentOp = await env.DB.prepare(
+              "SELECT status, settled_micro_usd FROM operations WHERE operation_id = ?"
+            ).bind(operationId).first<{ status: string; settled_micro_usd: number | null }>();
+            if (currentOp && currentOp.status === "settled") {
+              if (currentOp.settled_micro_usd !== settled) {
+                return errorResponse("operation_already_settled", "Operation is already settled with a different amount", 409);
+              }
+              return jsonResponse({ ok: true }, 200);
+            }
+            return errorResponse("invalid_state", `Cannot settle operation in '${currentOp?.status || "unknown"}' state`, 409);
+          }
         } else if (providerRef !== null) {
           // Guard against updating provider_ref on non-active operations
           if (op.status !== "reserved" && op.status !== "uncertain") {

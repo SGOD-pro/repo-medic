@@ -740,36 +740,38 @@ class TursoClient:
         now = _now_iso()
 
         with self._op_lock():
-            cur = self._conn.execute(
-                "SELECT operation_id, status, settled_micro_usd FROM operations WHERE operation_id = ?",
-                (operation_id,),
-            )
-            row = cur.fetchone()
-            if not row:
-                raise StorageNotFoundError("not_found", f"Operation '{operation_id}' not found")
-
-            status = row[1]
-            existing_settled = row[2]
-
-            if status == "settled":
-                if existing_settled != settled_micro:
-                    raise StorageConflictError(
-                        "operation_already_settled",
-                        "Operation is already settled with a different amount",
-                    )
-                return {"ok": True}
-
-            if status not in ("reserved", "uncertain"):
-                raise StorageConflictError("invalid_state", f"Cannot settle operation in '{status}' state")
-
-            self._conn.execute(
-                "UPDATE operations SET settled_micro_usd = ?, status = 'settled', updated_at = ? "
-                "WHERE operation_id = ?",
+            # Atomic Compare And Swap: update only if currently active (reserved or uncertain)
+            res = self._conn.execute(
+                """UPDATE operations
+                   SET settled_micro_usd = ?, status = 'settled', updated_at = ?
+                   WHERE operation_id = ? AND status IN ('reserved', 'uncertain')""",
                 (settled_micro, now, operation_id),
             )
             self._conn.commit()
 
-        return {"ok": True}
+            if res.rowcount == 0:
+                cur = self._conn.execute(
+                    "SELECT operation_id, status, settled_micro_usd FROM operations WHERE operation_id = ?",
+                    (operation_id,),
+                )
+                row = cur.fetchone()
+                if not row:
+                    raise StorageNotFoundError("not_found", f"Operation '{operation_id}' not found")
+
+                status = row[1]
+                existing_settled = row[2]
+
+                if status == "settled":
+                    if existing_settled != settled_micro:
+                        raise StorageConflictError(
+                            "operation_already_settled",
+                            "Operation is already settled with a different amount",
+                        )
+                    return {"ok": True}
+
+                raise StorageConflictError("invalid_state", f"Cannot settle operation in '{status}' state")
+
+            return {"ok": True}
 
     def record_provider_ref(
         self,
@@ -855,6 +857,10 @@ if __name__ == "__main__":
     elif args[0] == "reserve-budget" and len(args) >= 5:
         run_id, op_id, kind, est = args[1:5]
         res = client.reserve_budget(run_id=run_id, operation_id=op_id, kind=kind, estimated_usd=float(est))
+        print(json.dumps(res))
+    elif args[0] == "cleanup-runs" and len(args) >= 2:
+        run_ids = args[1:]
+        res = client.cleanup_manifest({"runs": run_ids, "tasks": [], "operations": [], "artifacts": []})
         print(json.dumps(res))
     elif args[0] == "budget-usage":
         print(json.dumps(client.get_budget_usage()))

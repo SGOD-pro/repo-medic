@@ -296,3 +296,108 @@ def test_turso_exact_manifest_cleanup(turso_client):
 
     with pytest.raises(StorageNotFoundError):
         turso_client.get_run("run_clean_1")
+
+
+def test_turso_concurrent_conflicting_settlement_cannot_overwrite(turso_client):
+    """Prove that concurrent conflicting settlements cannot overwrite each other."""
+    turso_client.upsert_task({
+        "task_id": "TASK-TURSO-RACE",
+        "title": "Race task",
+        "repository_url": "https://github.com/example/repo.git",
+        "commit_sha": "abc1234",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+    turso_client.create_run(
+        run_id="run_settle_race",
+        task_id="TASK-TURSO-RACE",
+        mode="offline",
+        search_mode="sequential",
+        max_run_usd=2.0,
+    )
+    turso_client.reserve_budget("run_settle_race", "op_race_1", "model", 0.50, global_budget_usd=10.0)
+
+    # 1. Race two conflicting amounts: $0.05 vs $0.10
+    amounts = [0.05, 0.10]
+    results = {}
+    errors = {}
+
+    def settle_worker(amt: float):
+        try:
+            res = turso_client.settle_budget("op_race_1", amt)
+            results[amt] = res
+        except Exception as exc:
+            errors[amt] = exc
+
+    t1 = threading.Thread(target=settle_worker, args=(amounts[0],))
+    t2 = threading.Thread(target=settle_worker, args=(amounts[1],))
+
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    # Exactly one amount won and the other was rejected with conflict
+    assert len(results) == 1
+    assert len(errors) == 1
+    losing_amt = amounts[1] if amounts[0] in results else amounts[0]
+    winning_amt = amounts[0] if amounts[0] in results else amounts[1]
+
+    assert isinstance(errors[losing_amt], StorageConflictError)
+    assert errors[losing_amt].code == "operation_already_settled"
+
+    # Verify database strictly preserved the winner's amount and did not overwrite
+    cur = turso_client._conn.execute(
+        "SELECT settled_micro_usd, status FROM operations WHERE operation_id = ?",
+        ("op_race_1",),
+    )
+    row = cur.fetchone()
+    assert row[1] == "settled"
+    assert row[0] == int(winning_amt * 1_000_000)
+
+    # 2. Idempotent retry with winning amount succeeds
+    retry_res = turso_client.settle_budget("op_race_1", winning_amt)
+    assert retry_res["ok"] is True
+
+    # 3. Conflicting retry with losing amount still fails
+    with pytest.raises(StorageConflictError) as exc_info:
+        turso_client.settle_budget("op_race_1", losing_amt)
+    assert exc_info.value.code == "operation_already_settled"
+
+
+def test_operation_endpoint_disabled_in_production(turso_repo, monkeypatch):
+    """Verify internal operation reservation endpoint is disabled in production."""
+    from fastapi.testclient import TestClient
+    from src.main import create_app
+
+    turso_repo.create_run(
+        run_id="run_op_prod",
+        task_id="TASK-TURSO-1",
+        mode="offline",
+        search_mode="sequential",
+        max_run_usd=2.0,
+    )
+
+    app = create_app(repository=turso_repo)
+    client = TestClient(app)
+
+    # 1. In production mode, endpoint must return 404
+    monkeypatch.setenv("REPOMEDIC_ENV", "production")
+    resp_prod = client.post(
+        "/api/runs/run_op_prod/operations",
+        json={"operation_id": "op_test_prod", "kind": "model", "reserved_micro_usd": 50000},
+    )
+    assert resp_prod.status_code == 404
+    error_msg = resp_prod.json().get("error", {}).get("message", "") or resp_prod.json().get("detail", "")
+    assert "disabled in production" in error_msg
+
+    # 2. In development mode, endpoint works and enforces server budget
+    monkeypatch.setenv("REPOMEDIC_ENV", "development")
+    resp_dev = client.post(
+        "/api/runs/run_op_prod/operations",
+        json={"operation_id": "op_test_dev", "kind": "model", "reserved_micro_usd": 50000},
+    )
+    assert resp_dev.status_code == 201
+    assert resp_dev.json().get("ok") is True
+

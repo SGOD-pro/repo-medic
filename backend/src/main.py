@@ -2,6 +2,7 @@ import asyncio
 import faulthandler
 import json
 import logging
+import os
 import signal
 import uuid
 from collections.abc import AsyncIterator
@@ -505,18 +506,27 @@ def create_app(
         request: Request,
         repo: D1StorageRepository = Depends(get_repository),
     ) -> dict[str, Any]:
+        env_name = (
+            os.getenv("REPOMEDIC_ENV")
+            or os.getenv("ENVIRONMENT")
+            or getattr(settings, "repomedic_env", "")
+            or getattr(settings, "environment", "")
+            or ""
+        ).strip().lower()
+        if env_name in ("production", "prod"):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Internal operation reservation endpoint is disabled in production",
+            )
+
         body = await request.json()
         op_id = body.get("operation_id")
         kind = body.get("kind", "model")
         reserved_micro_usd = body.get("reserved_micro_usd", 0)
-        global_budget_micro_usd = body.get("global_budget_micro_usd")
-
-        global_budget_usd = (
-            float(global_budget_micro_usd) / 1_000_000.0
-            if global_budget_micro_usd is not None
-            else None
-        )
         estimated_usd = float(reserved_micro_usd) / 1_000_000.0
+
+        # Global spending limits must strictly come from server configuration
+        global_budget_usd = getattr(settings, "repomedic_total_budget_usd", 25.0)
 
         return await asyncio.to_thread(
             repo.client.reserve_budget,

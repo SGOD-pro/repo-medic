@@ -87,14 +87,17 @@ Expected output:
 
 ## 6. Execute Remote Persistence Acceptance
 
-Once your credentials are configured, execute the dedicated acceptance test suite:
+Once your credentials are configured, execute the dedicated acceptance test suite with the remote flag enabled:
 
 ```bash
 cd backend
+REPOMEDIC_RUN_REMOTE_TURSO=true \
 TURSO_DATABASE_URL=libsql://repomedic-db-[your-org].turso.io \
 TURSO_AUTH_TOKEN=your_token_here \
 uv run pytest tests/test_k3_remote_turso.py -v
 ```
+
+Setting `REPOMEDIC_RUN_REMOTE_TURSO=true` is required to run explicit remote persistence acceptance. When this flag is set, missing credentials or invalid configuration cause immediate test failure rather than silently falling back to local storage or skipping.
 
 This validates:
 1. Isolated test prefix execution without polluting existing data.
