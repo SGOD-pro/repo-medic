@@ -5,12 +5,13 @@
 * Target Duration: 2 minutes 30 seconds
 * Application Target: `TASK-091` (Upgrade sqlalchemy from 1.4.48 to 2.0.19)
 * Live Providers: Nebius Token Factory (`nvidia/nemotron-3-super-120b-a12b`), Nebius ConTree Sandbox (`python:3.12-bookworm`), and remote Turso libSQL database
+* Public Deployment: Vercel frontend at `https://repo-medic-gamma.vercel.app` and AWS Lambda HTTP API with SQS queue worker
 
 ## Scene Breakdown
 
 ### Scene 1: Introduction and Problem Overview (0:00 to 0:30)
 
-* Visual: Open the RepoMedic home dashboard at `http://localhost:3000`. Show the task grid displaying available upgrade challenges.
+* Visual: Open the RepoMedic public dashboard at `https://repo-medic-gamma.vercel.app`. Show the task discovery grid displaying available upgrade challenges.
 * Narration:
   "Welcome to RepoMedic, an autonomous dependency upgrade and self repair engine. Upgrading core libraries often breaks production code due to breaking API removals. Here, we see curated benchmark tasks pinned to real repository commits. We focus on `TASK-091`, migrating sqlalchemy from version 1.4.48 to 2.0.19 in the official repository fixture."
 
@@ -18,7 +19,7 @@
 
 * Visual: Click on `TASK-091`. Show the right hand sidebar with the pre flight summary: pinned commit SHA `453a0b6c6b125177504cdd941902b8d48266ed1c`, target dependency `sqlalchemy==2.0.19`, and budget ceiling. Select Sequential Direct strategy and click Start repair run.
 * Narration:
-  "The application uses a single backend process with an embedded queue worker and remote Turso storage. When we launch the repair, a strict budget cap of two dollars is reserved. The run starts and transitions immediately to our live progress interface."
+  "The application runs on AWS Serverless with an SQS queue worker and remote Turso storage. When we launch the repair, a strict budget cap of two dollars is reserved. The run starts and transitions immediately to our live progress interface."
 
 ### Scene 3: Live Pipeline Execution (0:55 to 1:35)
 
@@ -45,4 +46,4 @@
 
 * Visual: Reload the browser page at the run URL to show instant hydration from remote Turso. Transition to the terminal to show `git apply` of the downloaded patch and `pytest` passing on a fresh clone.
 * Narration:
-  "Reloading the page proves full persistence from remote Turso libSQL. To guarantee integrity, we independently applied the downloaded patch against a clean clone of the repository, confirming the test suite passes with exit code zero. RepoMedic delivers provable, deterministic dependency repairs."
+  "Reloading the page proves full persistence from remote Turso libSQL. To guarantee integrity, we independently applied the downloaded patch against a clean clone of the repository, confirming the test suite passes with exit code zero. RepoMedic delivers provable, deterministic dependency repairs on deployed cloud infrastructure."
