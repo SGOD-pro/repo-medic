@@ -573,3 +573,21 @@ def test_create_run_marks_failed_on_sqs_error(monkeypatch):
     assert len(runs) == 1
     assert runs[0].state == "failed"
     assert "Failed to enqueue task to SQS" in (runs[0].reason or "")
+
+
+def test_health_endpoint(test_app_and_repo):
+    """Verify /health and /api/health return healthy status with storage check."""
+    app, _ = test_app_and_repo
+    client = TestClient(app)
+
+    res_root = client.get("/health")
+    assert res_root.status_code == 200
+    data_root = res_root.json()
+    assert data_root["status"] == "healthy"
+    assert "storage" in data_root
+
+    res_api = client.get("/api/health")
+    assert res_api.status_code == 200
+    data_api = res_api.json()
+    assert data_api["status"] == "healthy"
+    assert "storage" in data_api

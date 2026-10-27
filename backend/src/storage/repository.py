@@ -68,6 +68,11 @@ class D1StorageRepository:
         )
         return self.get_run(run_id)
 
+    def health(self) -> dict[str, Any]:
+        if hasattr(self.client, "health"):
+            return self.client.health()
+        return {"ok": True, "status": "healthy"}
+
     def _map_run_summary(self, data: dict[str, Any]) -> RunSummary:
         raw_usage = data.get("usage") or {}
         usage = UsageSummary(

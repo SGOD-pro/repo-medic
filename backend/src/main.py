@@ -300,6 +300,17 @@ def create_app(
             content=envelope.model_dump(),
         )
 
+    @app.get("/health")
+    @app.get("/api/health")
+    def health_check(
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> dict[str, Any]:
+        storage_status = repo.health()
+        return {
+            "status": "healthy",
+            "storage": storage_status,
+        }
+
     @app.get("/api/tasks", response_model=TasksResponse)
     def list_tasks(
         repo: D1StorageRepository = Depends(get_repository),

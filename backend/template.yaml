@@ -9,7 +9,7 @@ Parameters:
     Description: Deployment stage environment name
   AppOrigin:
     Type: String
-    Default: https://repo-medic.vercel.app
+    Default: https://repo-medic.vercel.app,https://repo-medic-gamma.vercel.app
     Description: Allowed frontend origins separated by comma
   TursoDatabaseUrl:
     Type: String

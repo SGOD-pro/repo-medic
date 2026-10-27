@@ -5,7 +5,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     # Execution mode & frontend integration
     repomedic_mode: str = "offline"
-    repomedic_app_origin: str = "http://localhost:3000"
+    repomedic_app_origin: str = "http://localhost:3000,https://repo-medic.vercel.app,https://repo-medic-gamma.vercel.app"
     repomedic_env: str = "development"
     environment: str = "development"
 
