@@ -119,7 +119,6 @@ Resources:
           TURSO_DATABASE_URL: !Ref TursoDatabaseUrl
           TURSO_AUTH_TOKEN: !Ref TursoAuthToken
           NEBIUS_API_KEY: !Ref NebiusApiKey
-          TOKEN_FACTORY_API_KEY: !Ref NebiusApiKey
           NEBIUS_PROJECT_ID: !Ref NebiusProjectId
       Policies:
         - SQSSendMessagePolicy:
