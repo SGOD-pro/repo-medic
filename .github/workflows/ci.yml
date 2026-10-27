@@ -147,7 +147,6 @@ jobs:
               AppOrigin="${{ secrets.REPOMEDIC_APP_ORIGIN || 'https://repo-medic.vercel.app' }}" \
               TursoDatabaseUrl="${{ secrets.TURSO_DATABASE_URL }}" \
               TursoAuthToken="${{ secrets.TURSO_AUTH_TOKEN }}" \
-              TokenFactoryApiKey="${{ secrets.TOKEN_FACTORY_API_KEY }}" \
               NebiusApiKey="${{ secrets.NEBIUS_API_KEY }}" \
               NebiusProjectId="${{ secrets.NEBIUS_PROJECT_ID }}"
 

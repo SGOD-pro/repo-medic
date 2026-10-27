@@ -215,7 +215,7 @@ def verify_live_providers(
         errors.append("TOKEN_FACTORY_MODEL is not specified")
 
     # 4. Nebius API Key for ConTree SDK
-    neb_key = (source_env.get("NEBIUS_API_KEY") or "").strip()
+    neb_key = (source_env.get("NEBIUS_API_KEY") or source_env.get("TOKEN_FACTORY_API_KEY") or "").strip()
     neb_key_ok = bool(neb_key and not neb_key.startswith("placeholder"))
     checks.append({
         "name": "nebius_api_key",

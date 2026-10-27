@@ -1,4 +1,5 @@
 import logging
+import os
 from typing import Dict, Optional
 from src.config import settings
 from src.contracts import HostPorts, RepairRequest, RepairResult, TaskRecipe
@@ -50,14 +51,9 @@ async def repair(
     # 3. Resolve adapters (explicit live selection with zero fake fallback)
     owned_sandbox = False
     if request.mode == "live":
-        token_factory_key = (settings.token_factory_api_key or settings.nebius_api_key).strip()
-        nebius_key = settings.nebius_api_key.strip()
-        project_id = (
-            settings.nebius_project_id or settings.token_factory_sandbox_project_id
-        ).strip()
+        nebius_key = (settings.nebius_api_key or "").strip()
+        project_id = (settings.nebius_project_id or "").strip()
         missing = []
-        if not token_factory_key:
-            missing.append("TOKEN_FACTORY_API_KEY (or NEBIUS_API_KEY)")
         if not nebius_key:
             missing.append("NEBIUS_API_KEY")
         if not project_id:
@@ -83,7 +79,7 @@ async def repair(
             active_model = model
         else:
             active_model = TokenFactoryModelAdapter(
-                api_key=token_factory_key,
+                api_key=nebius_key,
                 base_url=settings.token_factory_base_url,
                 model=settings.token_factory_model,
             )

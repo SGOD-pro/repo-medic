@@ -19,16 +19,11 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Remote Turso libSQL authorization token
-  TokenFactoryApiKey:
-    Type: String
-    NoEcho: true
-    Default: ""
-    Description: Nebius Token Factory API key for inference
   NebiusApiKey:
     Type: String
     NoEcho: true
     Default: ""
-    Description: Nebius API key for ConTree sandbox access
+    Description: Nebius API key for both Token Factory model inference and ConTree sandbox
   NebiusProjectId:
     Type: String
     Default: ""
@@ -123,8 +118,8 @@ Resources:
           REPOMEDIC_STORAGE_BACKEND: turso
           TURSO_DATABASE_URL: !Ref TursoDatabaseUrl
           TURSO_AUTH_TOKEN: !Ref TursoAuthToken
-          TOKEN_FACTORY_API_KEY: !Ref TokenFactoryApiKey
           NEBIUS_API_KEY: !Ref NebiusApiKey
+          TOKEN_FACTORY_API_KEY: !Ref NebiusApiKey
           NEBIUS_PROJECT_ID: !Ref NebiusProjectId
       Policies:
         - SQSSendMessagePolicy:

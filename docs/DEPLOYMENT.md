@@ -65,7 +65,6 @@ sam deploy \
     AppOrigin=https://repo-medic.vercel.app \
     TursoDatabaseUrl=libsql://repo-medic-swyra-07.aws-ap-south-1.turso.io \
     TursoAuthToken="<YOUR_TURSO_AUTH_TOKEN>" \
-    TokenFactoryApiKey="<YOUR_TOKEN_FACTORY_API_KEY>" \
     NebiusApiKey="<YOUR_NEBIUS_API_KEY>" \
     NebiusProjectId="<YOUR_NEBIUS_PROJECT_ID>" \
     RepairMode=live \
