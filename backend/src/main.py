@@ -191,15 +191,20 @@ def create_app(
         "http://127.0.0.1:3000",
     ]
     app_origin = getattr(settings, "repomedic_app_origin", None)
-    if app_origin and app_origin not in origins:
-        origins.append(app_origin)
+    if app_origin:
+        for orig in app_origin.split(","):
+            cleaned = orig.strip()
+            if cleaned and cleaned not in origins:
+                origins.append(cleaned)
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
+        allow_origin_regex=r"^https://.*\.vercel\.app$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
     )
 
     @app.exception_handler(RequestValidationError)

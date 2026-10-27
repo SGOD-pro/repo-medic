@@ -241,6 +241,18 @@ def test_cors_headers_present(test_app_and_repo):
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
+def test_cors_headers_vercel_origin(test_app_and_repo):
+    """Verify CORS middleware permits Vercel deployment origins."""
+    app, _ = test_app_and_repo
+    client = TestClient(app)
+    response = client.get(
+        "/api/tasks",
+        headers={"Origin": "https://repomedic-demo.vercel.app"},
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "https://repomedic-demo.vercel.app"
+
+
 def test_cancel_run(test_app_and_repo):
     app, repo = test_app_and_repo
     repo.upsert_task({

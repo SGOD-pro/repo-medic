@@ -191,6 +191,30 @@ export function TasksView({
         </div>
       </div>
 
+      {/* Public Demonstration Banner for Judges */}
+      <div className="mb-6 rounded-xl border border-[#5FCB8A]/30 bg-[#15271F] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="size-2 rounded-full bg-[#5FCB8A] animate-pulse" />
+            <span className="font-semibold text-sm text-[#F7F7F2]">
+              Validated Benchmark Demo: TASK-091 (run_93c660238e3443a6a18249167eb1939b)
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-[#A9B8AD]">
+            Judges can inspect the full verified live repair, change manifest, test results, and downloadable artifacts without consuming live budget.
+          </p>
+        </div>
+        <Button
+          size="sm"
+          onClick={() => {
+            window.location.href = "/?runId=run_93c660238e3443a6a18249167eb1939b";
+          }}
+          className="bg-[#5FCB8A] text-[#0D1915] hover:bg-[#5FCB8A]/90 font-medium text-xs shrink-0 cursor-pointer"
+        >
+          View Validated Results
+        </Button>
+      </div>
+
       {/* Control Bar: Strategy, Mode, Budget, Determinism */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] p-3 mb-8">
         <div className="flex flex-wrap items-center gap-4">
