@@ -469,7 +469,8 @@ export function createEventStreamFetcher(
 }
 
 export function createApiClient(): RepoMedicApiClient {
-  const transportType = process.env.NEXT_PUBLIC_API_TRANSPORT || "mock";
+  const defaultTransport = process.env.NODE_ENV === "production" ? "http" : "mock";
+  const transportType = process.env.NEXT_PUBLIC_API_TRANSPORT || defaultTransport;
   if (transportType === "http") {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "/api";
     return new HttpTransport(apiUrl);

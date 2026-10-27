@@ -17,7 +17,9 @@ const nextConfig: NextConfig = {
     },
   },
   async rewrites() {
-    const backendUrl = process.env.BACKEND_URL || "http://127.0.0.1:8000";
+    const backendUrl =
+      process.env.BACKEND_URL ||
+      "https://oflqusaa1e.execute-api.ap-south-1.amazonaws.com";
     return [
       {
         source: "/api/:path*",

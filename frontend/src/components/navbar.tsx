@@ -19,7 +19,8 @@ interface NavbarProps {
 
 export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: NavbarProps) {
   const { runs, setHistoryOpen } = useHistoryStore();
-  const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock";
+  const defaultTransport = process.env.NODE_ENV === "production" ? "http" : "mock";
+  const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || defaultTransport) === "mock";
   const mode = activeRun?.mode;
 
   let modeBadgeText = "TURSO PERSISTENCE / OFFLINE MODE";

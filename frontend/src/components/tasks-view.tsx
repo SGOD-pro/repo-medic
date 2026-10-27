@@ -183,7 +183,7 @@ export function TasksView({
             </div>
             <div className="flex items-center gap-1.5 text-sm font-semibold text-[#F7F7F2]">
               <span className="size-2 rounded-full bg-[#5FCB8A]" />
-              {(process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock"
+              {((process.env.NEXT_PUBLIC_API_TRANSPORT || (process.env.NODE_ENV === "production" ? "http" : "mock")) === "mock")
                 ? "Mock Runtime"
                 : "Turso Storage / Python Engine"}
             </div>
