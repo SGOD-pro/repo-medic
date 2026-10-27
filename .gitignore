@@ -9,3 +9,4 @@ db-worker/.dev.vars*
 .playwright-mcp/
 __pycache__/
 *.pyc
+.aws-sam/

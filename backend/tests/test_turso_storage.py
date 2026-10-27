@@ -400,4 +400,3 @@ def test_operation_endpoint_disabled_in_production(turso_repo, monkeypatch):
     )
     assert resp_dev.status_code == 201
     assert resp_dev.json().get("ok") is True
-

@@ -8,10 +8,12 @@ authors = [
 ]
 requires-python = ">=3.13"
 dependencies = [
+    "boto3>=1.43.120",
     "contree-sdk>=0.3.6",
     "fastapi>=0.115.0",
     "httpx>=0.28.1",
     "libsql>=0.1.11",
+    "mangum>=0.22.0",
     "pydantic>=2.14.0",
     "pydantic-settings>=2.15.0",
     "python-dotenv>=1.2.4",

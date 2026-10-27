@@ -241,9 +241,18 @@ def test_cors_headers_present(test_app_and_repo):
     assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
 
 
-def test_cors_headers_vercel_origin(test_app_and_repo):
-    """Verify CORS middleware permits Vercel deployment origins."""
-    app, _ = test_app_and_repo
+def test_cors_headers_vercel_origin(monkeypatch):
+    """Verify CORS middleware permits configured Vercel deployment origins."""
+    from src.config import settings
+    monkeypatch.setattr(settings, "repomedic_app_origin", "https://repomedic-demo.vercel.app")
+    transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
+    mock_db = RepoMedicDB(
+        base_url="http://test-bridge",
+        api_key="test-bridge-token",
+        transport=transport,
+    )
+    repo = D1StorageRepository(mock_db)
+    app = create_app(repository=repo)
     client = TestClient(app)
     response = client.get(
         "/api/tasks",
@@ -423,3 +432,144 @@ def test_startup_recovery_interrupted_runs(monkeypatch):
         assert "restarted" in (r1.reason or "")
         r2 = repo.get_run("run-queued-1")
         assert r2.state == "queued"
+
+
+def test_startup_recovery_disabled_when_flag_false(monkeypatch):
+    """Verify AC-3: startup recovery can be disabled via repomedic_startup_recovery_enabled=False."""
+    from src.config import settings
+    monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+    monkeypatch.setattr(settings, "repomedic_startup_recovery_enabled", False)
+
+    transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
+    mock_db = RepoMedicDB(
+        base_url="http://test-bridge",
+        api_key="test-bridge-token",
+        transport=transport,
+    )
+    repo = D1StorageRepository(mock_db)
+    repo.upsert_task({
+        "task_id": "task-interrupted",
+        "title": "Interrupted test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+    repo.create_run("run-interrupted-2", "task-interrupted", "offline", "sequential", state="running")
+
+    app = create_app(repository=repo)
+    with TestClient(app):
+        # Run must remain 'running' because recovery was disabled
+        r = repo.get_run("run-interrupted-2")
+        assert r.state == "running"
+
+
+def test_cors_strict_origins_rejects_untrusted_vercel(monkeypatch):
+    """Verify AC-6: CORS strictly checks configured origins and rejects arbitrary *.vercel.app sites."""
+    from src.config import settings
+    monkeypatch.setattr(settings, "repomedic_app_origin", "https://repo-medic.vercel.app")
+
+    transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
+    mock_db = RepoMedicDB(
+        base_url="http://test-bridge",
+        api_key="test-bridge-token",
+        transport=transport,
+    )
+    repo = D1StorageRepository(mock_db)
+    app = create_app(repository=repo)
+    client = TestClient(app)
+
+    # 1. Configured Vercel origin is allowed
+    resp1 = client.get("/api/tasks", headers={"Origin": "https://repo-medic.vercel.app"})
+    assert resp1.headers.get("access-control-allow-origin") == "https://repo-medic.vercel.app"
+
+    # 2. Local dev origin is allowed
+    resp2 = client.get("/api/tasks", headers={"Origin": "http://localhost:3000"})
+    assert resp2.headers.get("access-control-allow-origin") == "http://localhost:3000"
+
+    # 3. Arbitrary/untrusted Vercel origin is rejected
+    resp3 = client.get("/api/tasks", headers={"Origin": "https://evil-untrusted-site.vercel.app"})
+    assert resp3.headers.get("access-control-allow-origin") is None
+
+
+def test_create_run_enqueues_to_sqs_when_configured(monkeypatch):
+    """Verify AC-2: create_run sends message to SQS queue when repair_queue_url is set."""
+    import json
+    from unittest.mock import MagicMock
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "repair_queue_url", "https://sqs.us-east-1.amazonaws.com/123456789/RepoMedicQueue")
+    monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+
+    transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
+    mock_db = RepoMedicDB(
+        base_url="http://test-bridge",
+        api_key="test-bridge-token",
+        transport=transport,
+    )
+    repo = D1StorageRepository(mock_db)
+    repo.upsert_task({
+        "task_id": "task-sqs-test",
+        "title": "SQS Task",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+
+    app = create_app(repository=repo)
+    mock_sqs = MagicMock()
+    app.state.sqs_client = mock_sqs
+
+    client = TestClient(app)
+    resp = client.post("/api/runs", json={"task_id": "task-sqs-test", "search_mode": "sequential"})
+    assert resp.status_code == 202
+    run_id = resp.json()["run_id"]
+
+    mock_sqs.send_message.assert_called_once()
+    call_kwargs = mock_sqs.send_message.call_args.kwargs
+    assert call_kwargs["QueueUrl"] == "https://sqs.us-east-1.amazonaws.com/123456789/RepoMedicQueue"
+    message_data = json.loads(call_kwargs["MessageBody"])
+    assert message_data == {"run_id": run_id}
+
+
+def test_create_run_marks_failed_on_sqs_error(monkeypatch):
+    """Verify AC-2: if SQS enqueue fails, run is marked failed in storage and 500 returned."""
+    from unittest.mock import MagicMock
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "repair_queue_url", "https://sqs.us-east-1.amazonaws.com/123456789/RepoMedicQueue")
+    monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+
+    transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
+    mock_db = RepoMedicDB(
+        base_url="http://test-bridge",
+        api_key="test-bridge-token",
+        transport=transport,
+    )
+    repo = D1StorageRepository(mock_db)
+    repo.upsert_task({
+        "task_id": "task-sqs-fail",
+        "title": "SQS Fail Task",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
+
+    app = create_app(repository=repo)
+    mock_sqs = MagicMock()
+    mock_sqs.send_message.side_effect = RuntimeError("SQS connectivity failure")
+    app.state.sqs_client = mock_sqs
+
+    client = TestClient(app)
+    resp = client.post("/api/runs", json={"task_id": "task-sqs-fail", "search_mode": "sequential"})
+    assert resp.status_code == 500
+
+    runs = repo.list_runs(task_id="task-sqs-fail")
+    assert len(runs) == 1
+    assert runs[0].state == "failed"
+    assert "Failed to enqueue task to SQS" in (runs[0].reason or "")

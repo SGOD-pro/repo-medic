@@ -524,7 +524,9 @@ def test_actual_backend_process_termination_and_startup_recovery(k3_turso_client
 
         # Step 6: Verify second run remains running in storage while backend process is stopped
         run2_stopped = repo.get_run(seed_run_2)
-        assert run2_stopped.state == "running", f"Seed run 2 must remain running while stopped, got {run2_stopped.state}"
+        assert run2_stopped.state == "running", (
+            f"Seed run 2 must remain running while stopped, got {run2_stopped.state}"
+        )
 
         # Step 7: Restart backend process
         proc2 = subprocess.Popen(
@@ -543,7 +545,9 @@ def test_actual_backend_process_termination_and_startup_recovery(k3_turso_client
         with urllib.request.urlopen(f"http://127.0.0.1:{test_port}/api/runs/{seed_run_2}", timeout=2.0) as resp:
             data = json.loads(resp.read().decode())
             assert data.get("state") == "failed", f"Expected seed_run_2 to be failed, got {data.get('state')}"
-            assert "restarted" in (data.get("reason") or "").lower(), f"Expected restart reason, got {data.get('reason')}"
+            assert "restarted" in (data.get("reason") or "").lower(), (
+                f"Expected restart reason, got {data.get('reason')}"
+            )
 
     except Exception as exc:
         artifacts_dir = backend_cwd.parent / "artifacts"

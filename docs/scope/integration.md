@@ -54,7 +54,7 @@ Verify inference keys, sandbox access, and run a capped live test.
 ### 6. K5: Evaluation, deployment and recording · in progress
 Evaluation manifest preparation, demo deployment readiness, and video recording.
 **Done when:** Evaluation scenarios are bounded and verified, demo deployment is ready, and demo recording is complete.
-- [ ] Design it (spec): `/architect k5 deployment and recording`
+- [x] Design it (spec): [0008. Deploy RepoMedic on AWS SAM and Vercel](../specs/0008-aws-sam-and-vercel-deployment.md)
 - [x] Prepare evaluation manifest and run usage reconciliation: `/develop Prepare RepoMedic for bounded K5 evaluation`
   - [x] Derive estimated run allocation from operation ledger and reconcile $0.3500 allocation with API and UI
   - [x] Keep token counts, estimated allocations, and measured provider billing distinct

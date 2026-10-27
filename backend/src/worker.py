@@ -92,6 +92,115 @@ def _is_409_conflict(err: Exception) -> bool:
     return False
 
 
+async def execute_claimed_run(
+    run_id: str,
+    repo: D1StorageRepository,
+    repair_fn: Callable[[RepairRequest, TaskRecipe, HostPorts], Awaitable[RepairResult]] | None = None,
+    use_real_engine: bool | None = None,
+) -> bool:
+    """Execute repair pipeline for an already-claimed running run."""
+    run = await asyncio.to_thread(repo.get_run, run_id)
+    try:
+        max_run_usd = settings.repomedic_max_run_usd
+        run_budget = getattr(run, "max_run_micro_usd", None)
+        # Per-run budget overrides the global default when set on the run record.
+        if run_budget is not None and run_budget > 0:
+            max_run_usd = run_budget / 1_000_000.0
+
+        request = RepairRequest(
+            run_id=run_id,
+            task_id=run.task_id,
+            mode=run.mode,
+            search_mode=run.search_mode,
+            max_run_usd=max_run_usd,
+        )
+        recipe = await asyncio.to_thread(load_task_recipe, run.task_id, repo)
+        host = D1HostPorts(run_id=run_id, repo=repo)
+
+        # In live execution mode, enforce explicit live adapters with zero fake fallback
+        if run.mode == "live":
+            token_factory_key = (
+                os.getenv("TOKEN_FACTORY_API_KEY")
+                or settings.token_factory_api_key
+                or os.getenv("NEBIUS_API_KEY")
+                or settings.nebius_api_key
+            ).strip()
+            nebius_key = (os.getenv("NEBIUS_API_KEY") or settings.nebius_api_key).strip()
+            project_id = (
+                os.getenv("NEBIUS_PROJECT_ID")
+                or settings.nebius_project_id
+                or settings.token_factory_sandbox_project_id
+            ).strip()
+            missing = []
+            if not token_factory_key:
+                missing.append("TOKEN_FACTORY_API_KEY (or NEBIUS_API_KEY)")
+            if not nebius_key:
+                missing.append("NEBIUS_API_KEY")
+            if not project_id:
+                missing.append("NEBIUS_PROJECT_ID")
+            if missing:
+                fail_reason = (
+                    f"Live mode execution failed: missing required credentials: {', '.join(missing)}"
+                )
+                logger.error("Run %s failed closed: %s", run_id, fail_reason)
+                await asyncio.to_thread(repo.finish_run, run_id, state="failed", reason=fail_reason)
+                return True
+
+            if repair_fn is not None:
+                result = await repair_fn(request, recipe, host)
+            else:
+                live_sandbox = ConTreeSandboxAdapter(
+                    api_key=nebius_key,
+                    project_id=project_id,
+                    base_image=settings.nebius_sandbox_image or "python:3.12-bookworm",
+                    timeout_seconds=600,
+                )
+                live_model = TokenFactoryModelAdapter(
+                    api_key=token_factory_key,
+                    base_url=settings.token_factory_base_url,
+                    model=settings.token_factory_model,
+                )
+                try:
+                    result = await engine_repair(
+                        request, recipe, host, sandbox=live_sandbox, model=live_model
+                    )
+                finally:
+                    await live_sandbox.cleanup()
+        else:
+            if repair_fn is not None:
+                repair_callable = repair_fn
+            elif use_real_engine:
+                repair_callable = engine_repair
+            else:
+                repair_callable = fake_engine.repair
+
+            result = await repair_callable(request, recipe, host)
+    except Exception as e:
+        logger.exception("Run %s failed with exception: %s", run_id, e)
+        error_reason = f"Unhandled error: {repr(e)}"
+        try:
+            await asyncio.to_thread(repo.finish_run, run_id, state="failed", reason=error_reason)
+        except (httpx.HTTPStatusError, StorageError) as status_err:
+            # If run was already transitioned to terminal state (e.g. cancelled), 409 is expected
+            if _is_409_conflict(status_err):
+                logger.info("Run %s already in terminal state; skipping failed update", run_id)
+            else:
+                raise
+        return True
+
+    logger.info("Run %s completed with state %s: %s", run_id, result.state, result.reason)
+    # Attempt to transition run to terminal state and emit run.finished event.
+    try:
+        await asyncio.to_thread(repo.finish_run, run_id, state=result.state, reason=result.reason)
+    except (httpx.HTTPStatusError, StorageError) as e:
+        if _is_409_conflict(e):
+            logger.info("Run %s already in terminal state; skipping terminal update", run_id)
+        else:
+            raise
+
+    return True
+
+
 class QueueWorker:
     """Asynchronous background worker that claims and processes queued repair runs."""
 
@@ -170,112 +279,12 @@ class QueueWorker:
             logger.warning("Failed to claim run %s: %s", run_id, e)
             return False
 
-        try:
-            max_run_usd = settings.repomedic_max_run_usd
-            run_budget = getattr(run, "max_run_micro_usd", None)
-            # Per-run budget overrides the global default when set on the run record.
-            if run_budget is not None and run_budget > 0:
-                max_run_usd = run_budget / 1_000_000.0
-
-            request = RepairRequest(
-                run_id=run_id,
-                task_id=run.task_id,
-                mode=run.mode,
-                search_mode=run.search_mode,
-                max_run_usd=max_run_usd,
-            )
-            recipe = await asyncio.to_thread(load_task_recipe, run.task_id, self.repo)
-            host = D1HostPorts(run_id=run_id, repo=self.repo)
-
-            # In live execution mode, enforce explicit live adapters with zero fake fallback
-            if run.mode == "live":
-                token_factory_key = (
-                    os.getenv("TOKEN_FACTORY_API_KEY")
-                    or settings.token_factory_api_key
-                    or os.getenv("NEBIUS_API_KEY")
-                    or settings.nebius_api_key
-                ).strip()
-                nebius_key = (os.getenv("NEBIUS_API_KEY") or settings.nebius_api_key).strip()
-                project_id = (
-                    os.getenv("NEBIUS_PROJECT_ID")
-                    or settings.nebius_project_id
-                    or settings.token_factory_sandbox_project_id
-                ).strip()
-                missing = []
-                if not token_factory_key:
-                    missing.append("TOKEN_FACTORY_API_KEY (or NEBIUS_API_KEY)")
-                if not nebius_key:
-                    missing.append("NEBIUS_API_KEY")
-                if not project_id:
-                    missing.append("NEBIUS_PROJECT_ID")
-                if missing:
-                    fail_reason = (
-                        f"Live mode execution failed: missing required credentials: {', '.join(missing)}"
-                    )
-                    logger.error("Run %s failed closed: %s", run_id, fail_reason)
-                    await asyncio.to_thread(self.repo.finish_run, run_id, state="failed", reason=fail_reason)
-                    return True
-
-                if self.repair_fn is not None:
-                    result = await self.repair_fn(request, recipe, host)
-                else:
-                    live_sandbox = ConTreeSandboxAdapter(
-                        api_key=nebius_key,
-                        project_id=project_id,
-                        base_image=settings.nebius_sandbox_image or "python:3.12-bookworm",
-                        timeout_seconds=600,
-                    )
-                    live_model = TokenFactoryModelAdapter(
-                        api_key=token_factory_key,
-                        base_url=settings.token_factory_base_url,
-                        model=settings.token_factory_model,
-                    )
-                    try:
-                        result = await engine_repair(
-                            request, recipe, host, sandbox=live_sandbox, model=live_model
-                        )
-                    finally:
-                        await live_sandbox.cleanup()
-            else:
-                if self.repair_fn is not None:
-                    repair_callable = self.repair_fn
-                elif self.use_real_engine:
-                    repair_callable = engine_repair
-                else:
-                    repair_callable = fake_engine.repair
-
-                result = await repair_callable(request, recipe, host)
-        except Exception as e:
-            logger.exception("Run %s failed with exception: %s", run_id, e)
-            error_reason = f"Unhandled error: {repr(e)}"
-            try:
-                await asyncio.to_thread(self.repo.finish_run, run_id, state="failed", reason=error_reason)
-            except (httpx.HTTPStatusError, StorageError) as status_err:
-                # If run was already transitioned to terminal state (e.g. cancelled), 409 is expected
-                if _is_409_conflict(status_err):
-                    logger.info("Run %s already in terminal state; skipping failed update", run_id)
-                else:
-                    raise
-            return True
-
-        logger.info("Run %s completed with state %s: %s", run_id, result.state, result.reason)
-        # Attempt to transition run to terminal state and emit run.finished event.
-        # This call is deliberately outside the except Exception block above, so a
-        # programming error inside finish_run (e.g. AttributeError in append_event)
-        # propagates directly to _run_loop rather than triggering a second
-        # finish_run('failed') call that would hit the terminal state guard (409).
-        # Network/HTTP errors from update_run_state are re-raised; a 409 here means
-        # the run was concurrently moved to a terminal state (e.g. cancelled) and is
-        # safely ignored.
-        try:
-            await asyncio.to_thread(self.repo.finish_run, run_id, state=result.state, reason=result.reason)
-        except (httpx.HTTPStatusError, StorageError) as e:
-            if _is_409_conflict(e):
-                logger.info("Run %s already in terminal state; skipping terminal update", run_id)
-            else:
-                raise
-
-        return True
+        return await execute_claimed_run(
+            run_id=run_id,
+            repo=self.repo,
+            repair_fn=self.repair_fn,
+            use_real_engine=self.use_real_engine,
+        )
 
     async def _run_loop(self) -> None:
         """Main polling loop."""

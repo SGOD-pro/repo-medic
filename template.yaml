@@ -1,0 +1,160 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: RepoMedic serverless backend stack on AWS SAM
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    Description: Deployment stage environment name
+  AppOrigin:
+    Type: String
+    Default: https://repo-medic.vercel.app
+    Description: Allowed frontend origins separated by comma
+  TursoDatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: Remote Turso libSQL database URL
+  TursoAuthToken:
+    Type: String
+    NoEcho: true
+    Description: Remote Turso libSQL authorization token
+  TokenFactoryApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Nebius Token Factory API key for inference
+  NebiusApiKey:
+    Type: String
+    NoEcho: true
+    Default: ""
+    Description: Nebius API key for ConTree sandbox access
+  NebiusProjectId:
+    Type: String
+    Default: ""
+    Description: Nebius project ID for ConTree sandbox microcontainers
+  RepairMode:
+    Type: String
+    Default: live
+    AllowedValues:
+      - live
+      - offline
+      - replay
+    Description: Engine execution mode
+  UseRealEngine:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Whether to invoke real engine repair pipeline
+
+Globals:
+  Function:
+    Runtime: python3.13
+    Architectures:
+      - x86_64
+    LoggingConfig:
+      LogFormat: JSON
+
+Resources:
+  RepoMedicRepairDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub repomedic-repair-dlq-${Environment}
+      MessageRetentionPeriod: 1209600
+
+  RepoMedicRepairQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub repomedic-repair-queue-${Environment}
+      VisibilityTimeout: 960
+      MessageRetentionPeriod: 86400
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt RepoMedicRepairDLQ.Arn
+        maxReceiveCount: 3
+
+  RepoMedicApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: src.lambda_api.handler
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          REPOMEDIC_ENV: !Ref Environment
+          REPOMEDIC_STORAGE_BACKEND: turso
+          TURSO_DATABASE_URL: !Ref TursoDatabaseUrl
+          TURSO_AUTH_TOKEN: !Ref TursoAuthToken
+          REPOMEDIC_WORKER_ENABLED: "false"
+          REPOMEDIC_STARTUP_RECOVERY_ENABLED: "false"
+          REPOMEDIC_APP_ORIGIN: !Ref AppOrigin
+          REPAIR_QUEUE_URL: !Ref RepoMedicRepairQueue
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt RepoMedicRepairQueue.QueueName
+      FunctionUrlConfig:
+        AuthType: NONE
+      Events:
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            Path: /
+            Method: ANY
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+
+  RepoMedicWorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: backend/
+      Handler: src.lambda_worker.handler
+      Timeout: 900
+      MemorySize: 1024
+      Environment:
+        Variables:
+          REPOMEDIC_ENV: !Ref Environment
+          REPOMEDIC_MODE: !Ref RepairMode
+          REPOMEDIC_USE_REAL_ENGINE: !Ref UseRealEngine
+          REPOMEDIC_STORAGE_BACKEND: turso
+          TURSO_DATABASE_URL: !Ref TursoDatabaseUrl
+          TURSO_AUTH_TOKEN: !Ref TursoAuthToken
+          TOKEN_FACTORY_API_KEY: !Ref TokenFactoryApiKey
+          NEBIUS_API_KEY: !Ref NebiusApiKey
+          NEBIUS_PROJECT_ID: !Ref NebiusProjectId
+      Policies:
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt RepoMedicRepairQueue.QueueName
+      Events:
+        RepairQueueEvent:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt RepoMedicRepairQueue.Arn
+            BatchSize: 1
+            FunctionResponseTypes:
+              - ReportBatchItemFailures
+
+Outputs:
+  FunctionUrlEndpoint:
+    Description: Public Lambda Function URL endpoint
+    Value: !GetAtt RepoMedicApiFunctionUrl.FunctionUrl
+
+  HttpApiEndpoint:
+    Description: HTTP API Gateway endpoint URL
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"
+
+  RepairQueueUrl:
+    Description: Amazon SQS repair queue URL
+    Value: !Ref RepoMedicRepairQueue
+
+  RepairQueueArn:
+    Description: Amazon SQS repair queue ARN
+    Value: !GetAtt RepoMedicRepairQueue.Arn
+
+  RepairDLQArn:
+    Description: Amazon SQS repair dead letter queue ARN
+    Value: !GetAtt RepoMedicRepairDLQ.Arn

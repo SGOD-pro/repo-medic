@@ -31,6 +31,9 @@ class Settings(BaseSettings):
 
     # Worker queue & execution
     repomedic_worker_enabled: bool = True
+    repomedic_startup_recovery_enabled: bool = True
+    repair_queue_url: str = ""
+    repomedic_repair_queue_url: str = ""
     repomedic_worker_poll_interval_seconds: float = 1.0
     repomedic_use_real_engine: bool = False
     repomedic_sync_fixtures: bool = True

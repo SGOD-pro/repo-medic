@@ -150,10 +150,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         sync_task_fixtures(repo, sync_enabled=sync_enabled, acceptance_prefix=acceptance_prefix)
     except Exception as e:
         logger.warning("Error during startup task sync: %s", e)
-    try:
-        recover_interrupted_runs(repo, acceptance_prefix=acceptance_prefix)
-    except Exception as e:
-        logger.warning("Error during startup run recovery: %s", e)
+
+    recovery_enabled = getattr(settings, "repomedic_startup_recovery_enabled", True)
+    if recovery_enabled:
+        try:
+            recover_interrupted_runs(repo, acceptance_prefix=acceptance_prefix)
+        except Exception as e:
+            logger.warning("Error during startup run recovery: %s", e)
+    else:
+        logger.info("Startup run recovery skipped because repomedic_startup_recovery_enabled is false")
 
     worker = getattr(app.state, "worker", None)
     if worker is None and getattr(settings, "repomedic_worker_enabled", True):
@@ -200,7 +205,6 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=origins,
-        allow_origin_regex=r"^https://.*\.vercel\.app$",
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -305,6 +309,7 @@ def create_app(
 
     @app.post("/api/runs", status_code=status.HTTP_202_ACCEPTED, response_model=RunSummary)
     def create_run(
+        request: Request,
         payload: CreateRunRequest,
         repo: D1StorageRepository = Depends(get_repository),
     ) -> RunSummary:
@@ -340,6 +345,38 @@ def create_app(
             search_mode=payload.search_mode,
             max_run_usd=max_run_usd,
         )
+
+        queue_url = (
+            getattr(settings, "repair_queue_url", "")
+            or getattr(settings, "repomedic_repair_queue_url", "")
+        ).strip()
+        if queue_url:
+            try:
+                import boto3
+
+                sqs = getattr(request.app.state, "sqs_client", None)
+                if sqs is None:
+                    sqs = boto3.client("sqs")
+                sqs.send_message(
+                    QueueUrl=queue_url,
+                    MessageBody=json.dumps({"run_id": run_id}),
+                )
+                logger.info("Enqueued run %s to SQS queue %s", run_id, queue_url)
+            except Exception as e:
+                logger.exception("Failed to enqueue run %s to SQS %s: %s", run_id, queue_url, e)
+                try:
+                    repo.finish_run(
+                        run_id,
+                        state="failed",
+                        reason="Failed to enqueue task to SQS",
+                    )
+                except Exception as cleanup_err:
+                    logger.warning("Failed to mark run %s as failed after SQS error: %s", run_id, cleanup_err)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to enqueue repair task to background queue",
+                )
+
         return run
 
     @app.get("/api/runs/{id}", response_model=RunSummary)
