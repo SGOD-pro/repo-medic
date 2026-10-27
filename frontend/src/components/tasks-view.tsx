@@ -353,6 +353,7 @@ export function TasksView({
             return (
               <Card
                 key={task.id}
+                data-testid={`task-card-${task.id}`}
                 role="button"
                 tabIndex={0}
                 aria-label={`Select ${task.id}: ${task.title}`}

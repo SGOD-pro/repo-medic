@@ -22,7 +22,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
   const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock";
   const mode = activeRun?.mode;
 
-  let modeBadgeText = "TURSO PERSISTENCE / OFFLINE";
+  let modeBadgeText = "TURSO PERSISTENCE / OFFLINE MODE";
   let modeSubtitle = "Remote Turso · Python Engine";
 
   if (isMock) {

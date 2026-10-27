@@ -270,7 +270,7 @@ async function runAcceptanceSuite() {
     await page.waitForTimeout(500);
 
     // Select TASK-091 card
-    const task91Card = page.locator('text=TASK-091').first();
+    const task91Card = page.locator('[data-testid="task-card-TASK-091"], [role="button"]:has-text("TASK-091")').first();
     await task91Card.waitFor({ state: "visible", timeout: 5000 });
     await task91Card.click();
     await page.waitForTimeout(500);
