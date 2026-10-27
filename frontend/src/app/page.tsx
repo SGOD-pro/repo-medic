@@ -8,7 +8,7 @@ import { RunActiveView } from "@/components/run-active-view";
 import { VerificationView } from "@/components/verification-view";
 import { HistoryDrawer } from "@/components/history-drawer";
 import { createApiClient, CURATED_TASKS } from "@/lib/api";
-import { SearchMode, RunSummary } from "@/lib/contracts";
+import { SearchMode, RunSummary, Mode } from "@/lib/contracts";
 import { useHistoryStore, HistoryRunItem } from "@/lib/history-store";
 
 export default function Home() {
@@ -117,9 +117,9 @@ export default function Home() {
     window.history.replaceState(null, "", url.toString());
   };
 
-  const handleStartRun = async (taskId: string, chosenStrategy: SearchMode) => {
+  const handleStartRun = async (taskId: string, chosenStrategy: SearchMode, mode?: Mode) => {
     try {
-      const run = await apiClient.startRun(taskId, chosenStrategy);
+      const run = await apiClient.startRun(taskId, chosenStrategy, mode);
       setActiveRun(run);
       setRunStartedAt(Date.now());
 

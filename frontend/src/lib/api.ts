@@ -10,7 +10,7 @@ import {
 
 export interface RepoMedicApiClient {
   getTasks(): Promise<TaskSummary[]>;
-  startRun(taskId: string, searchMode: SearchMode): Promise<RunSummary>;
+  startRun(taskId: string, searchMode: SearchMode, mode?: Mode): Promise<RunSummary>;
   getRun(runId: string): Promise<RunSummary>;
   cancelRun(runId: string): Promise<RunSummary>;
   getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]>;
@@ -99,13 +99,13 @@ export class MockTransport implements RepoMedicApiClient {
     return Promise.resolve(CURATED_TASKS);
   }
 
-  async startRun(taskId: string, searchMode: SearchMode): Promise<RunSummary> {
+  async startRun(taskId: string, searchMode: SearchMode, mode?: Mode): Promise<RunSummary> {
     const task = CURATED_TASKS.find((t) => t.task_id === taskId) || CURATED_TASKS[0];
     const runId = `run_${task.task_id.toLowerCase().replace("-", "_")}_${Date.now()}`;
     const run: RunSummary = {
       run_id: runId,
       task_id: task.task_id,
-      mode: "live" as Mode,
+      mode: (mode || "live") as Mode,
       search_mode: searchMode,
       state: "running",
       reason: null,
@@ -317,11 +317,15 @@ export class HttpTransport implements RepoMedicApiClient {
     return data.tasks;
   }
 
-  async startRun(taskId: string, searchMode: SearchMode): Promise<RunSummary> {
+  async startRun(taskId: string, searchMode: SearchMode, mode?: Mode): Promise<RunSummary> {
     const res = await fetch(`${this.baseUrl}/runs`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ task_id: taskId, search_mode: searchMode }),
+      body: JSON.stringify({
+        task_id: taskId,
+        search_mode: searchMode,
+        ...(mode ? { mode } : {}),
+      }),
     });
     if (!res.ok) {
       const err: APIErrorEnvelope = await res.json().catch(() => ({

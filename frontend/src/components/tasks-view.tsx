@@ -26,7 +26,7 @@ import {
   Circle,
   CheckCircle,
 } from "lucide-react";
-import { SearchMode, TaskSummary } from "@/lib/contracts";
+import { SearchMode, TaskSummary, Mode } from "@/lib/contracts";
 import { RepoMedicApiClient, createApiClient } from "@/lib/api";
 
 interface TaskItem {
@@ -75,7 +75,7 @@ function mapSummaryToTaskItem(s: TaskSummary): TaskItem {
 }
 
 interface TasksViewProps {
-  onStartRun: (taskId: string, strategy: SearchMode) => void;
+  onStartRun: (taskId: string, strategy: SearchMode, mode?: Mode) => void;
   selectedTaskId: string;
   setSelectedTaskId: (taskId: string) => void;
   strategy: SearchMode;
@@ -528,7 +528,13 @@ export function TasksView({
 
             {/* Primary Action Button (The single sage primary button per DESIGN.md) */}
             <Button
-              onClick={() => onStartRun(selectedTask.id, strategy)}
+              onClick={() =>
+                onStartRun(
+                  selectedTask.id,
+                  strategy,
+                  executionMode === "sandbox_live" ? "live" : "offline"
+                )
+              }
               className="w-full h-11 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-sm rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-none"
             >
               <Play className="size-4 fill-current" />

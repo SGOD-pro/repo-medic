@@ -79,6 +79,8 @@ Resources:
       Environment:
         Variables:
           REPOMEDIC_ENV: !Ref Environment
+          REPOMEDIC_MODE: !Ref RepairMode
+          REPOMEDIC_USE_REAL_ENGINE: !Ref UseRealEngine
           REPOMEDIC_STORAGE_BACKEND: turso
           TURSO_DATABASE_URL: !Ref TursoDatabaseUrl
           TURSO_AUTH_TOKEN: !Ref TursoAuthToken

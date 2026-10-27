@@ -99,6 +99,8 @@ async def execute_claimed_run(
     use_real_engine: bool | None = None,
 ) -> bool:
     """Execute repair pipeline for an already-claimed running run."""
+    if use_real_engine is None:
+        use_real_engine = getattr(settings, "repomedic_use_real_engine", False)
     run = await asyncio.to_thread(repo.get_run, run_id)
     try:
         max_run_usd = settings.repomedic_max_run_usd

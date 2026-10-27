@@ -1,0 +1,15 @@
+version = 0.1
+
+[default.deploy.parameters]
+stack_name = "repo-medic"
+resolve_s3 = true
+s3_prefix = "repo-medic"
+region = "ap-south-1"
+profile = "aws"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "Environment=\"production\" AppOrigin=\"https://repo-medic-gamma.vercel.app/\" NebiusProjectId=\"aiproject-e00dze5s6fmv4cemqz\" RepairMode=\"live\" UseRealEngine=\"true\""
+image_repositories = []
+
+[default.global.parameters]
+region = "ap-south-1"

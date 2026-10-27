@@ -21,6 +21,7 @@ from src.config import settings
 from src.contracts import (
     APIErrorEnvelope,
     ErrorDetail,
+    Mode,
     RunState,
     RunSummary,
     SearchMode,
@@ -40,6 +41,7 @@ logger = logging.getLogger("repomedic.api")
 class CreateRunRequest(BaseModel):
     task_id: str
     search_mode: SearchMode
+    mode: Mode | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -331,7 +333,7 @@ def create_app(
                 detail=f"Task '{payload.task_id}' not found",
             )
 
-        mode = getattr(settings, "repomedic_mode", "offline")
+        mode = payload.mode or getattr(settings, "repomedic_mode", "offline")
         max_run_usd = getattr(settings, "repomedic_max_run_usd", 2.0)
         total_budget = getattr(settings, "repomedic_total_budget_usd", 25.0)
 
