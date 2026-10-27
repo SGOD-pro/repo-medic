@@ -7,7 +7,7 @@ This guide describes how to deploy RepoMedic in production using AWS Serverless 
 RepoMedic separates frontend presentation from background repair execution across two cloud platforms:
 
 1. **Frontend on Vercel**: Next.js web application deployed on Vercel with server side rendering, static asset caching, and strict cross origin request protection.
-2. **Backend on AWS SAM**: Decoupled serverless infrastructure defined in `template.yaml`:
+2. **Backend on AWS SAM**: Decoupled serverless infrastructure defined in `backend/template.yaml`:
    * **API Lambda (`RepoMedicApiFunction`)**: Handles synchronous HTTP requests via API Gateway HTTP API or Lambda Function URL. It creates runs in Turso and enqueues messages to Amazon SQS.
    * **Amazon SQS (`RepoMedicRepairQueue`)**: Reliable message queue buffering repair jobs with a 960 second visibility timeout and dead letter queue redrive (`RepoMedicRepairDLQ`) after 3 failed attempts.
    * **Worker Lambda (`RepoMedicWorkerFunction`)**: Asynchronous execution function invoked by SQS with batch size 1 and a 900 second timeout. It claims the run atomically via Compare And Swap, runs the repair pipeline against live providers, and saves artifacts.
@@ -32,11 +32,13 @@ When deploying to AWS Lambda, setting `REPOMEDIC_WORKER_ENABLED=false` and `REPO
 
 ### Build and Validate Commands
 
-Run these commands from the repository root:
+Run these commands inside the `backend` directory:
 
 ```bash
+cd backend
+
 # Export frozen backend dependencies to requirements.txt
-cd backend && uv export --no-dev --no-hashes -o requirements.txt && cd ..
+uv export --no-dev --no-hashes -o requirements.txt
 
 # Validate the SAM template
 sam validate --lint
@@ -47,9 +49,11 @@ sam build --use-container
 
 ### Deployment Command
 
-Deploy the serverless stack using `sam deploy`:
+Deploy the serverless stack from the `backend` directory using `sam deploy`:
 
 ```bash
+cd backend
+
 sam deploy \
   --stack-name repomedic-production \
   --resolve-s3 \

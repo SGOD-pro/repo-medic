@@ -104,7 +104,7 @@ flowchart TD
 
 ### 1. SAM Template Resources
 
-The template at `template.yaml` specifies the following resources:
+The template at `backend/template.yaml` specifies the following resources:
 
 1. **`RepoMedicApiFunction`**:
    * Type: `AWS::Serverless::Function`
@@ -283,7 +283,7 @@ Once deployed, execute the following verification steps:
 ## Build Plan
 
 * **Task 1 (Backend Decoupling)**: Add `REPOMEDIC_STARTUP_RECOVERY_ENABLED` flag to `backend/src/config.py` and `backend/src/main.py`. Add Lambda entrypoints `src/lambda_api.py` and `src/lambda_worker.py`. (Satisfies AC-2, AC-3)
-* **Task 2 (SAM Infrastructure Template)**: Write `template.yaml` defining API Gateway, SQS Queue, DLQ, Worker Function, and IAM policies. (Satisfies AC-1, AC-5)
+* **Task 2 (SAM Infrastructure Template)**: Write `backend/template.yaml` defining API Gateway, SQS Queue, DLQ, Worker Function, and IAM policies. (Satisfies AC-1, AC-5)
 * **Task 3 (SQS Integration in API)**: Update run creation in API Lambda to send SQS messages when `REPAIR_QUEUE_URL` is set, with CAS claiming logic in the worker. (Satisfies AC-2)
 * **Task 4 (Strict CORS Policy)**: Restrict CORS middleware to exact configured domains in `REPOMEDIC_APP_ORIGIN`, removing arbitrary wildcard regex. (Satisfies AC-6)
 * **Task 5 (CI/CD Deployment Workflow)**: Update `.github/workflows/ci.yml` with SAM build, validation, and OIDC deployment steps. (Satisfies AC-7)
