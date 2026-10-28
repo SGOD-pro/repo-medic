@@ -16,6 +16,8 @@
   ],
   "expected_failure": "AttributeError: 'Engine' object has no attribute 'execute'",
   "timeout_seconds": 600,
+  "tests_count": 1,
+  "baseline_time": "0.16s (Python 3.12)",
   "max_candidates": 3,
   "max_refinements": 1
 }

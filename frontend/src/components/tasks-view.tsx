@@ -54,11 +54,11 @@ function mapSummaryToTaskItem(s: TaskSummary): TaskItem {
   const allowlist = Array.isArray(extra.allowed_source_paths)
     ? (extra.allowed_source_paths as string[]).join(", ")
     : "src/";
-  const testsCount = typeof extra.tests_count === "number" ? extra.tests_count : 42;
+  const testsCount = typeof extra.tests_count === "number" ? extra.tests_count : (s.task_id === "TASK-DEMO-SHOP" ? 1 : 42);
   const baselineTime =
     typeof extra.baseline_time === "string"
       ? extra.baseline_time
-      : "1.48s (Python 3.11)";
+      : (s.task_id === "TASK-DEMO-SHOP" ? "0.16s (Python 3.12)" : "1.48s (Python 3.11)");
 
   return {
     id: s.task_id,
