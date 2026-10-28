@@ -5,6 +5,17 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: 'Component to run CI/CD for'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - frontend
+          - backend
 
 permissions:
   contents: read
@@ -18,8 +29,8 @@ jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
+      backend: ${{ steps.resolve.outputs.backend }}
+      frontend: ${{ steps.resolve.outputs.frontend }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -33,6 +44,29 @@ jobs:
             frontend:
               - 'frontend/**'
               - '.github/workflows/ci.yml'
+      - name: Resolve target components
+        id: resolve
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET="${{ inputs.target }}"
+            case "$TARGET" in
+              frontend)
+                echo "backend=false" >> "$GITHUB_OUTPUT"
+                echo "frontend=true" >> "$GITHUB_OUTPUT"
+                ;;
+              backend)
+                echo "backend=true" >> "$GITHUB_OUTPUT"
+                echo "frontend=false" >> "$GITHUB_OUTPUT"
+                ;;
+              *)
+                echo "backend=true" >> "$GITHUB_OUTPUT"
+                echo "frontend=true" >> "$GITHUB_OUTPUT"
+                ;;
+            esac
+          else
+            echo "backend=${{ steps.filter.outputs.backend }}" >> "$GITHUB_OUTPUT"
+            echo "frontend=${{ steps.filter.outputs.frontend }}" >> "$GITHUB_OUTPUT"
+          fi
 
   backend:
     name: Backend checks and SAM build
@@ -86,7 +120,7 @@ jobs:
   deploy_backend:
     name: Deploy existing AWS SAM stack
     needs: [changes, backend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.backend == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     environment: production
     defaults:
@@ -119,7 +153,7 @@ jobs:
   deploy_frontend:
     name: Deploy frontend to Vercel
     needs: [changes, frontend]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.frontend == 'true'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     environment: production
     env:
