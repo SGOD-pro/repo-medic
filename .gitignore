@@ -10,3 +10,5 @@ db-worker/.dev.vars*
 __pycache__/
 *.pyc
 .aws-sam/
+.vercel
+.env*
