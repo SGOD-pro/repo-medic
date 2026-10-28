@@ -20,6 +20,7 @@ class TokenFactoryModelAdapter(ModelAdapter):
         base_url: Optional[str] = None,
         model: Optional[str] = None,
         timeout_seconds: float = 60.0,
+        enable_thinking: Optional[bool] = None,
     ):
         if api_key is not None:
             self.api_key = api_key.strip()
@@ -36,6 +37,10 @@ class TokenFactoryModelAdapter(ModelAdapter):
         self.base_url = raw_base_url
         self.model = (model or settings.token_factory_model).strip()
         self.timeout_seconds = timeout_seconds
+        if enable_thinking is not None:
+            self.enable_thinking = enable_thinking
+        else:
+            self.enable_thinking = getattr(settings, "token_factory_enable_thinking", False)
 
         self.call_count: int = 0
         self.prompts: List[str] = []
@@ -69,7 +74,7 @@ class TokenFactoryModelAdapter(ModelAdapter):
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self.model,
             "messages": [
                 {
@@ -86,6 +91,8 @@ class TokenFactoryModelAdapter(ModelAdapter):
             "max_tokens": max_tokens,
             "temperature": 0.0,
         }
+        if not self.enable_thinking:
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         # Zero retries to guarantee budget compliance per operation
         transport = httpx.AsyncHTTPTransport(retries=0)
@@ -117,8 +124,12 @@ class TokenFactoryModelAdapter(ModelAdapter):
         self.last_finish_reason = finish_reason
         if finish_reason == "length":
             logger.warning(
-                "Nebius Token Factory completion truncated at token limit (finish_reason='length', model='%s')",
+                "Nebius Token Factory completion truncated at token limit (finish_reason='length', model='%s', completion_tokens=%s)",
                 self.model,
+                self.last_usage.get("completion_tokens"),
+            )
+            raise RuntimeError(
+                f"Model completion truncated at token limit (finish_reason='length', model='{self.model}')"
             )
         else:
             logger.info(

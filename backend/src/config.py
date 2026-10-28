@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     nebius_project_id: str = ""
     token_factory_base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1/"
     token_factory_model: str = "nvidia/nemotron-3-super-120b-a12b"
+    token_factory_enable_thinking: bool = False
     nebius_sandbox_image: str = "python:3.12-bookworm"
 
     @model_validator(mode="after")

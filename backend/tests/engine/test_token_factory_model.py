@@ -88,6 +88,63 @@ async def test_token_factory_complete_success():
         assert payload.get("model") == "nvidia/nemotron-3-super-120b-a12b"
         assert payload.get("max_tokens") == 1024
         assert payload.get("temperature") == 0.0
+        assert payload.get("chat_template_kwargs") == {"enable_thinking": False}
+
+
+@pytest.mark.asyncio
+async def test_token_factory_complete_raises_on_truncation_length():
+    """Verify adapter raises RuntimeError when model completion hits token ceiling with finish_reason length."""
+    adapter = TokenFactoryModelAdapter(
+        api_key="test-api-key-123456789",
+        base_url="https://api.test/v1/",
+        model="test-model",
+    )
+
+    fake_response = {
+        "choices": [
+            {
+                "message": {"role": "assistant", "content": "incomplete truncated content"},
+                "finish_reason": "length",
+            }
+        ],
+        "usage": {"prompt_tokens": 100, "completion_tokens": 2048},
+    }
+
+    mock_resp = httpx.Response(
+        status_code=200,
+        json=fake_response,
+        request=httpx.Request("POST", "https://api.test/v1/chat/completions"),
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(RuntimeError, match="finish_reason='length'"):
+            await adapter.complete("Generate candidate")
+
+    assert adapter.last_finish_reason == "length"
+
+
+@pytest.mark.asyncio
+async def test_token_factory_enable_thinking_configurable():
+    """Verify chat_template_kwargs reflects enable_thinking configuration."""
+    adapter_thinking = TokenFactoryModelAdapter(
+        api_key="test-api-key-123456789",
+        base_url="https://api.test/v1/",
+        model="test-model",
+        enable_thinking=True,
+    )
+
+    mock_resp = httpx.Response(
+        status_code=200,
+        json={"choices": [{"message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]},
+        request=httpx.Request("POST", "https://api.test/v1/chat/completions"),
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        await adapter_thinking.complete("Hello")
+        payload = mock_post.call_args[1].get("json", {})
+        assert "chat_template_kwargs" not in payload
 
 
 @pytest.mark.asyncio
