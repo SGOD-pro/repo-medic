@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import threading
+import time
 from typing import Any, Dict, Iterator, List, Optional
 
 import libsql  # type: ignore[import-untyped]
@@ -26,6 +27,52 @@ RUN_ID_REGEX = re.compile(r"^[a-zA-Z0-9_-]{1,128}$")
 
 def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+class _RetryingConnection:
+    """Connection proxy providing single retry on transient Turso network or DNS disconnection."""
+
+    def __init__(self, client: "TursoClient") -> None:
+        self._client = client
+
+    def execute(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            conn = self._client._get_connection()
+            return conn.execute(*args, **kwargs)
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            if any(term in err_msg for term in ("hrana", "connection", "temporary failure", "dns error", "broken pipe", "reset by peer")):
+                logger.warning("Transient Turso connection error encountered (%s); reconnecting and retrying once", exc)
+                self._client.reset_connection()
+                time.sleep(0.2)
+                conn = self._client._get_connection()
+                return conn.execute(*args, **kwargs)
+            raise
+
+    def commit(self, *args: Any, **kwargs: Any) -> Any:
+        try:
+            conn = self._client._get_connection()
+            return conn.commit(*args, **kwargs)
+        except Exception as exc:
+            err_msg = str(exc).lower()
+            if any(term in err_msg for term in ("hrana", "connection", "temporary failure", "dns error", "broken pipe", "reset by peer")):
+                logger.warning("Transient Turso connection error encountered on commit (%s); reconnecting and retrying once", exc)
+                self._client.reset_connection()
+                time.sleep(0.2)
+                conn = self._client._get_connection()
+                return conn.commit(*args, **kwargs)
+            raise
+
+    def rollback(self, *args: Any, **kwargs: Any) -> Any:
+        conn = self._client._get_connection()
+        return conn.rollback(*args, **kwargs)
+
+    def close(self, *args: Any, **kwargs: Any) -> Any:
+        return self._client.reset_connection()
+
+    def __getattr__(self, name: str) -> Any:
+        conn = self._client._get_connection()
+        return getattr(conn, name)
 
 
 class TursoClient:
@@ -98,9 +145,18 @@ class TursoClient:
             pass
         return conn
 
+    def reset_connection(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+            self._local.conn = None
+
     @property
     def _conn(self) -> Any:
-        return self._get_connection()
+        return _RetryingConnection(self)
 
     @contextmanager
     def _op_lock(self) -> Iterator[None]:
