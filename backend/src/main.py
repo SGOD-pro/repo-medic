@@ -172,6 +172,10 @@ def get_repository(request: Request) -> D1StorageRepository:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    from concurrent.futures import ThreadPoolExecutor
+    loop = asyncio.get_running_loop()
+    loop.set_default_executor(ThreadPoolExecutor(max_workers=64))
+
     repo = getattr(app.state, "repository", None)
     if repo is None:
         app.state.repository = D1StorageRepository()
@@ -480,6 +484,7 @@ def create_app(
             cursor = start_cursor
             loop = asyncio.get_running_loop()
             last_heartbeat = loop.time()
+            cycle_count = 0
 
             while True:
                 if await request.is_disconnected():
@@ -492,11 +497,13 @@ def create_app(
                         cursor = ev.seq
 
                 terminal_event = any(ev.type in ("run.finished", "run.failed", "run.cancelled") for ev in events)
-                if not terminal_event:
+                if terminal_event:
+                    is_terminal = True
+                elif cycle_count % 3 == 0:
                     run_state = await asyncio.to_thread(repo.get_run_state, id)
                     is_terminal = run_state in ("succeeded", "failed", "cancelled")
                 else:
-                    is_terminal = True
+                    is_terminal = False
 
                 if is_terminal:
                     trailing = await asyncio.to_thread(repo.list_events, id, after=cursor)
@@ -511,7 +518,8 @@ def create_app(
                     yield ": heartbeat\n\n"
                     last_heartbeat = now
 
-                await asyncio.sleep(0.5)
+                cycle_count += 1
+                await asyncio.sleep(1.5)
 
         return StreamingResponse(
             event_generator(),
