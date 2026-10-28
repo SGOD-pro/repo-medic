@@ -21,13 +21,17 @@ from pydantic import BaseModel, ConfigDict
 from src.config import settings
 from src.contracts import (
     APIErrorEnvelope,
+    CustomConfigValidationResponse,
+    CustomRepositoryConfig,
     ErrorDetail,
     Mode,
     RunState,
     RunSummary,
     SearchMode,
+    SUPPORTED_DEMO_TASK_IDS,
     TaskSummary,
 )
+from src.custom_validation import validate_custom_config
 from src.fixtures import find_task_fixture_dir
 from src.storage.exceptions import StorageError
 from src.storage.repository import D1StorageRepository
@@ -351,10 +355,42 @@ def create_app(
 
     @app.get("/api/tasks", response_model=TasksResponse)
     def list_tasks(
+        include_acceptance: bool = Query(default=True),
+        policy: str | None = Query(default=None),
         repo: D1StorageRepository = Depends(get_repository),
     ) -> TasksResponse:
         tasks = repo.list_tasks()
+        if policy == "supported_demo" or (not include_acceptance and policy != "all"):
+            tasks = [
+                t for t in tasks
+                if t.task_id in SUPPORTED_DEMO_TASK_IDS
+                and "example" not in (t.repository_url or "").lower()
+            ]
         return TasksResponse(tasks=tasks)
+
+    @app.post("/api/custom/validate", response_model=CustomConfigValidationResponse)
+    def validate_custom_repository(
+        payload: CustomRepositoryConfig,
+    ) -> CustomConfigValidationResponse:
+        return validate_custom_config(payload)
+
+    @app.post("/api/custom/execute")
+    @app.post("/api/custom/run")
+    def reject_custom_execution() -> JSONResponse:
+        envelope = APIErrorEnvelope(
+            error=ErrorDetail(
+                code="custom_execution_disabled",
+                message=(
+                    "Custom repository execution is disabled in this safe product slice. "
+                    "Arbitrary remote execution, background worker enqueueing, provider calls, "
+                    "and task execution are strictly gated off."
+                ),
+            )
+        )
+        return JSONResponse(
+            status_code=status.HTTP_403_FORBIDDEN,
+            content=envelope.model_dump(),
+        )
 
     @app.post("/api/runs", status_code=status.HTTP_202_ACCEPTED, response_model=RunSummary)
     def create_run(
@@ -362,6 +398,15 @@ def create_app(
         payload: CreateRunRequest,
         repo: D1StorageRepository = Depends(get_repository),
     ) -> RunSummary:
+        if (
+            payload.task_id.lower().startswith("custom")
+            or payload.task_id.lower().startswith("task-custom")
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Custom repository execution is disabled. Custom inputs cannot be enqueued or executed.",
+            )
+
         task = repo.get_task(payload.task_id)
         if task is None:
             raise HTTPException(

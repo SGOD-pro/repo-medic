@@ -10,6 +10,33 @@ TerminalRunState = Literal["succeeded", "failed", "cancelled"]
 ArtifactKind = Literal["patch", "evidence", "log"]
 StageName = Literal["baseline", "upgrade", "repair", "verification"]
 
+SUPPORTED_DEMO_TASK_IDS: tuple[str, ...] = ("TASK-DEMO-SHOP", "TASK-091")
+
+
+class CustomRepositoryConfig(BaseModel):
+    repository_url: str
+    commit_sha: str
+    dependency: str
+    from_version: str
+    to_version: str
+    pytest_args: List[str]
+    allowed_source_paths: List[str]
+    expected_failure: str
+
+
+class CustomConfigValidationResponse(BaseModel):
+    valid: bool
+    errors: List[str] = Field(default_factory=list)
+    field_errors: Dict[str, List[str]] = Field(default_factory=dict)
+    custom_execution_supported: bool = False
+    gate_status: str = "disabled"
+    gate_message: str = (
+        "Custom repository execution is disabled in this safe product slice. "
+        "Arbitrary remote execution, background worker enqueueing, provider calls, "
+        "and task execution are strictly gated off."
+    )
+
+
 
 class TaskSummary(BaseModel):
     task_id: str

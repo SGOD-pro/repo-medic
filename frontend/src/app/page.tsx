@@ -4,6 +4,7 @@ import React, { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { Navbar, ActiveTab } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { TasksView } from "@/components/tasks-view";
+import { CustomRepoForm } from "@/components/custom-repo-form";
 import { RunActiveView } from "@/components/run-active-view";
 import { VerificationView } from "@/components/verification-view";
 import { HistoryDrawer } from "@/components/history-drawer";
@@ -12,9 +13,9 @@ import { SearchMode, RunSummary, Mode } from "@/lib/contracts";
 import { useHistoryStore, HistoryRunItem } from "@/lib/history-store";
 
 export default function Home() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>("tasks");
-  const [selectedTaskId, setSelectedTaskId] = useState<string>("TASK-084");
-  const [strategy, setStrategy] = useState<SearchMode>("branch_refine");
+  const [activeTab, setActiveTab] = useState<ActiveTab>("custom_repo");
+  const [selectedTaskId, setSelectedTaskId] = useState<string>("TASK-DEMO-SHOP");
+  const [strategy, setStrategy] = useState<SearchMode>("sequential");
   const [activeRun, setActiveRun] = useState<RunSummary | null>(null);
   const [runStartedAt, setRunStartedAt] = useState<number | undefined>();
 
@@ -301,6 +302,16 @@ export default function Home() {
 
       {/* Main View Area */}
       <main className="flex-1 pb-16">
+        {activeTab === "custom_repo" && (
+          <CustomRepoForm
+            apiClient={apiClient}
+            onSelectDemoTask={(taskId) => {
+              setSelectedTaskId(taskId);
+              setActiveTab("tasks");
+            }}
+          />
+        )}
+
         {activeTab === "tasks" && (
           <TasksView
             onStartRun={handleStartRun}
@@ -309,6 +320,7 @@ export default function Home() {
             strategy={strategy}
             setStrategy={setStrategy}
             apiClient={apiClient}
+            onSwitchToCustom={() => setActiveTab("custom_repo")}
           />
         )}
 

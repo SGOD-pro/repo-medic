@@ -5,6 +5,28 @@ export type TerminalRunState = "succeeded" | "failed" | "cancelled";
 export type ArtifactKind = "patch" | "evidence" | "log";
 export type StageName = "baseline" | "upgrade" | "repair" | "verification";
 
+export const SUPPORTED_DEMO_TASK_IDS: readonly string[] = ["TASK-DEMO-SHOP", "TASK-091"];
+
+export interface CustomRepositoryConfig {
+  repository_url: string;
+  commit_sha: string;
+  dependency: string;
+  from_version: string;
+  to_version: string;
+  pytest_args: string[];
+  allowed_source_paths: string[];
+  expected_failure: string;
+}
+
+export interface CustomConfigValidationResponse {
+  valid: boolean;
+  errors: string[];
+  field_errors: Record<string, string[]>;
+  custom_execution_supported: boolean;
+  gate_status: string;
+  gate_message: string;
+}
+
 export interface TaskSummary {
   task_id: string;
   title: string;

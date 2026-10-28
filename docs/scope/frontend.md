@@ -28,3 +28,15 @@ Handle connection loss, explicit cancellation, and backend errors safely.
 - [x] StreamManager with exponential backoff and Last Event ID resumption
 - [x] Sequence deduplication and RunSummary recovery on terminal events
 - [x] User initiated cancellation handling
+
+### 5. Safe product slice · in progress
+Home navigation, custom repository validation with disabled execution gate, truthful presentation, and supported demo policy.
+spec: ../specs/0009-first-safe-product-slice.md
+**Done when:** Users can navigate saved demo runs, configure and validate custom repositories with disabled execution gate, inspect truthful terminal run results, and choose supported demo tasks without acceptance fixtures.
+- [x] Home page with links to saved demo and custom configuration flow
+- [x] Custom repository form collecting URL, commit SHA, dependency, versions, pytest args, paths, failure string
+- [x] Shared contract validation and server side disabled execution gate
+- [x] Truthful terminal run presentation without fabricated claims
+- [x] Supported demo policy hiding acceptance and example tasks
+- [x] Local tests and Playwright browser coverage
+

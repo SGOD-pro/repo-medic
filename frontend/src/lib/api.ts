@@ -6,16 +6,42 @@ import {
   APIErrorEnvelope,
   EventEnvelope,
   ArtifactKind,
+  CustomRepositoryConfig,
+  CustomConfigValidationResponse,
+  SUPPORTED_DEMO_TASK_IDS,
 } from "./contracts";
+import { validateCustomRepositoryConfig } from "./validation";
 
 export interface RepoMedicApiClient {
-  getTasks(): Promise<TaskSummary[]>;
+  getTasks(policy?: string): Promise<TaskSummary[]>;
+  validateCustomConfig(config: CustomRepositoryConfig): Promise<CustomConfigValidationResponse>;
   startRun(taskId: string, searchMode: SearchMode, mode?: Mode, idempotencyKey?: string): Promise<RunSummary>;
   getRun(runId: string): Promise<RunSummary>;
   cancelRun(runId: string): Promise<RunSummary>;
   getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]>;
   getArtifact(runId: string, artifactIdOrKind: ArtifactKind | string): Promise<string>;
 }
+
+export const SUPPORTED_DEMO_TASKS: TaskSummary[] = [
+  {
+    task_id: "TASK-DEMO-SHOP",
+    title: "Upgrade sqlalchemy 1.4.48 to 2.0.19 in repomedic-demo-shop",
+    repository_url: "https://github.com/SGOD-pro/repomedic-demo-shop.git",
+    commit_sha: "8c400721558392a23b3af71766f673da02f80040",
+    dependency: "sqlalchemy",
+    from_version: "1.4.48",
+    to_version: "2.0.19",
+  },
+  {
+    task_id: "TASK-091",
+    title: "Upgrade sqlalchemy from 1.4.48 to 2.0.19 in backend-core",
+    repository_url: "https://github.com/SGOD-pro/repo-medic.git",
+    commit_sha: "453a0b6c6b125177504cdd941902b8d48266ed1c",
+    dependency: "sqlalchemy",
+    from_version: "1.4.48",
+    to_version: "2.0.19",
+  },
+];
 
 export const CURATED_TASKS: TaskSummary[] = [
   {
@@ -95,8 +121,17 @@ export const MOCK_LOG = `[00:01.12] sandbox: creating isolated container environ
 export class MockTransport implements RepoMedicApiClient {
   private activeRuns: Map<string, RunSummary> = new Map();
 
-  async getTasks(): Promise<TaskSummary[]> {
+  async getTasks(policy?: string): Promise<TaskSummary[]> {
+    if (policy === "supported_demo") {
+      return Promise.resolve(SUPPORTED_DEMO_TASKS);
+    }
     return Promise.resolve(CURATED_TASKS);
+  }
+
+  async validateCustomConfig(
+    config: CustomRepositoryConfig
+  ): Promise<CustomConfigValidationResponse> {
+    return Promise.resolve(validateCustomRepositoryConfig(config));
   }
 
   async startRun(
@@ -310,8 +345,11 @@ export class HttpTransport implements RepoMedicApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async getTasks(): Promise<TaskSummary[]> {
-    const res = await fetch(`${this.baseUrl}/tasks`);
+  async getTasks(policy = "supported_demo"): Promise<TaskSummary[]> {
+    const url = policy
+      ? `${this.baseUrl}/tasks?policy=${encodeURIComponent(policy)}`
+      : `${this.baseUrl}/tasks`;
+    const res = await fetch(url);
     if (!res.ok) {
       const err: APIErrorEnvelope = await res.json().catch(() => ({
         error: { code: "unavailable", message: "Failed to fetch tasks" },
@@ -319,7 +357,35 @@ export class HttpTransport implements RepoMedicApiClient {
       throw new Error(err.error.message);
     }
     const data = await res.json();
-    return data.tasks;
+    let tasks: TaskSummary[] = data.tasks || [];
+    if (policy === "supported_demo") {
+      tasks = tasks.filter(
+        (t) =>
+          SUPPORTED_DEMO_TASK_IDS.includes(t.task_id) &&
+          !t.repository_url?.toLowerCase().includes("example")
+      );
+      if (tasks.length === 0) {
+        tasks = SUPPORTED_DEMO_TASKS;
+      }
+    }
+    return tasks;
+  }
+
+  async validateCustomConfig(
+    config: CustomRepositoryConfig
+  ): Promise<CustomConfigValidationResponse> {
+    const res = await fetch(`${this.baseUrl}/custom/validate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({
+        error: { code: "validation_failed", message: "Validation endpoint error" },
+      }));
+      throw new Error(err?.error?.message || err?.detail || "Validation failed");
+    }
+    return res.json();
   }
 
   async startRun(

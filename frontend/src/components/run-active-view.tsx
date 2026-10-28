@@ -81,6 +81,10 @@ export function RunActiveView({
   // Connection, Cancellation & Error States (AC-1..AC-8)
   const [isCancelling, setIsCancelling] = useState(false);
   const [isCancelled, setIsCancelled] = useState(() => activeRun?.state === "cancelled");
+  const isSuccess = activeRun?.state === "succeeded";
+  const isFailed = activeRun?.state === "failed";
+  const isRunCancelled = activeRun?.state === "cancelled" || isCancelled;
+  const isTerminal = isSuccess || isFailed || isRunCancelled;
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connected");
   const [reconnectAttempt, setReconnectAttempt] = useState<number>(0);
   const [errorDetail, setErrorDetail] = useState<ErrorDetail | null>(null);
@@ -443,8 +447,18 @@ export function RunActiveView({
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-[rgba(183,201,173,0.16)] mb-8">
         {/* Left: Active Pipeline details */}
         <div className="flex flex-wrap items-center gap-3">
-          {isCancelled ? (
-            <Badge className="bg-[#E5736A]/15 text-[#E5736A] border-transparent font-medium gap-1.5 px-2.5 py-1 rounded-full">
+          {isSuccess ? (
+            <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent font-medium gap-1.5 px-2.5 py-1 rounded-full">
+              <CheckCircle2 className="size-3.5" />
+              RUN SUCCEEDED
+            </Badge>
+          ) : isFailed ? (
+            <Badge className="bg-[#E5736A]/20 text-[#E5736A] border-transparent font-medium gap-1.5 px-2.5 py-1 rounded-full">
+              <XCircle className="size-3.5" />
+              RUN FAILED
+            </Badge>
+          ) : isRunCancelled ? (
+            <Badge className="bg-[#E0B45A]/20 text-[#E0B45A] border-transparent font-medium gap-1.5 px-2.5 py-1 rounded-full">
               <XCircle className="size-3.5" />
               RUN CANCELLED
             </Badge>
@@ -464,7 +478,7 @@ export function RunActiveView({
             </span>
           )}
 
-          {connectionStatus === "connected" && !isCancelled && (
+          {connectionStatus === "connected" && !isTerminal && (
             <Badge
               variant="outline"
               className="border-[rgba(183,201,173,0.24)] bg-[#15271F] text-[#A9B8AD] text-xs font-mono px-2 py-0.5 rounded-full"
@@ -475,12 +489,12 @@ export function RunActiveView({
                 : activeRun?.mode === "replay"
                 ? "REPLAY MODE"
                 : (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock"
-                ? "MOCK MODE (SYNTHETIC)"
+                ? "MOCK MODE (OFFLINE DEMO)"
                 : "LIVE SANDBOX (NEBIUS / CONTREE)"}
             </Badge>
           )}
 
-          {connectionStatus === "reconnecting" && !isCancelled && (
+          {connectionStatus === "reconnecting" && !isTerminal && (
             <Badge
               className="bg-[#E0B45A]/20 text-[#E0B45A] border-transparent font-mono text-xs gap-1.5 px-2.5 py-1 rounded-full animate-pulse"
             >
@@ -489,7 +503,7 @@ export function RunActiveView({
             </Badge>
           )}
 
-          {connectionStatus === "disconnected" && !isCancelled && (
+          {connectionStatus === "disconnected" && !isTerminal && (
             <Badge
               className="bg-[#E5736A]/20 text-[#E5736A] border-transparent font-mono text-xs gap-1.5 px-2.5 py-1 rounded-full"
             >
@@ -503,9 +517,12 @@ export function RunActiveView({
         <div className="flex flex-wrap items-center gap-4">
           <div className="flex items-center gap-3 font-mono text-xs">
             <div className="rounded-lg bg-[#15271F] border border-[rgba(183,201,173,0.16)] px-3 py-1.5">
-              <span className="text-[#A9B8AD] mr-1.5">SPEND MATRIX</span>
+              <span className="text-[#A9B8AD] mr-1.5">SPEND</span>
               <span className="text-[#F7F7F2] font-semibold">
-                ${(liveUsage?.estimated_usd ?? activeRun?.usage?.estimated_usd ?? 0.18).toFixed(2)}
+                ${((liveUsage?.estimated_usd ?? activeRun?.usage?.estimated_usd) != null
+                  ? (liveUsage?.estimated_usd ?? activeRun?.usage?.estimated_usd ?? 0)
+                  : 0
+                ).toFixed(2)}
               </span>
               <span className="text-[#A9B8AD]"> / $0.50 cap</span>
             </div>
@@ -519,18 +536,40 @@ export function RunActiveView({
 
             <div className="rounded-lg bg-[#15271F] border border-[rgba(183,201,173,0.16)] px-3 py-1.5">
               <span className="text-[#A9B8AD] mr-1.5">SANDBOXES</span>
-              <span className="text-[#F7F7F2] font-semibold">3 Isolated</span>
+              <span className="text-[#F7F7F2] font-semibold">
+                {activeRun?.search_mode === "sequential" ? "1 Isolated" : "Up to 3"}
+              </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            {!isCancelled ? (
+            {isTerminal ? (
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onInspectResults}
+                  className="border-[#5FCB8A]/40 bg-[#15271F] text-[#5FCB8A] hover:bg-[#1B3228] text-xs h-8 px-3 rounded-md gap-1.5 cursor-pointer"
+                >
+                  <CheckCircle2 className="size-3.5" />
+                  Inspect Results
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={onReturnToTasks}
+                  className="border-[rgba(183,201,173,0.3)] bg-transparent text-[#F7F7F2] text-xs h-8 px-3 rounded-md cursor-pointer"
+                >
+                  Return to Tasks
+                </Button>
+              </>
+            ) : (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={handleCancelClick}
                 disabled={isCancelling}
-                className="border-[rgba(229,115,106,0.3)] bg-transparent text-[#E5736A] hover:bg-[#E5736A]/10 text-xs h-8 px-3 rounded-md gap-1.5"
+                className="border-[rgba(229,115,106,0.3)] bg-transparent text-[#E5736A] hover:bg-[#E5736A]/10 text-xs h-8 px-3 rounded-md gap-1.5 cursor-pointer"
               >
                 {isCancelling ? (
                   <>
@@ -544,24 +583,7 @@ export function RunActiveView({
                   </>
                 )}
               </Button>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onReturnToTasks}
-                className="border-[rgba(183,201,173,0.3)] bg-transparent text-[#F7F7F2] text-xs h-8 px-3 rounded-md"
-              >
-                Return to Tasks
-              </Button>
             )}
-            <Button
-              variant="secondary"
-              size="sm"
-              disabled
-              className="bg-[#1B3228] text-[#A9B8AD] opacity-50 cursor-not-allowed text-xs h-8 px-3 rounded-md"
-            >
-              Run Pipeline
-            </Button>
           </div>
         </div>
       </div>
@@ -592,7 +614,7 @@ export function RunActiveView({
       )}
 
       {/* Disconnection Banner (AC-5) */}
-      {connectionStatus === "disconnected" && !isCancelled && activeRun?.state !== "succeeded" && activeRun?.state !== "failed" && (
+      {connectionStatus === "disconnected" && !isTerminal && (
         <div className="rounded-xl bg-[#261E14] border border-[#E0B45A]/40 p-4 mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-3">
             <AlertTriangle className="size-5 text-[#E0B45A] shrink-0" />

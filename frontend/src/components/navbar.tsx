@@ -8,7 +8,7 @@ import { User, FileText, History } from "lucide-react";
 import { useHistoryStore } from "@/lib/history-store";
 import { RunSummary } from "@/lib/contracts";
 
-export type ActiveTab = "tasks" | "run_active" | "verification";
+export type ActiveTab = "tasks" | "custom_repo" | "run_active" | "verification";
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -27,7 +27,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
   let modeSubtitle = "Remote Turso · Python Engine";
 
   if (isMock) {
-    modeBadgeText = "MOCK TRANSPORT (SYNTHETIC)";
+    modeBadgeText = "MOCK TRANSPORT (OFFLINE DEMO)";
     modeSubtitle = "Offline Fixtures · Client In Memory";
   } else if (mode === "live") {
     modeBadgeText = "LIVE MODE (TURSO / NEBIUS)";
@@ -35,6 +35,9 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
   } else if (mode === "replay") {
     modeBadgeText = "REPLAY MODE (TURSO)";
     modeSubtitle = "Remote Turso · Recorded Sandbox Traces";
+  } else {
+    modeBadgeText = "LIVE HTTP API (AWS / TURSO)";
+    modeSubtitle = "Remote API Gateway · Turso Persistence";
   }
 
   return (
@@ -76,6 +79,19 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
         <div className="flex items-center bg-[#15271F] p-1 rounded-lg border border-[rgba(183,201,173,0.16)]">
           <button
             type="button"
+            data-testid="nav-tab-custom-repo"
+            onClick={() => onTabChange("custom_repo")}
+            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+              activeTab === "custom_repo"
+                ? "bg-[#1B3228] text-[#F7F7F2] shadow-none"
+                : "text-[#A9B8AD] hover:text-[#F7F7F2]"
+            }`}
+          >
+            Configure Repo
+          </button>
+          <button
+            type="button"
+            data-testid="nav-tab-tasks"
             onClick={() => onTabChange("tasks")}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
               activeTab === "tasks"
@@ -83,10 +99,11 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
             }`}
           >
-            Tasks
+            Demo Tasks
           </button>
           <button
             type="button"
+            data-testid="nav-tab-run-active"
             onClick={() => onTabChange("run_active")}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
               activeTab === "run_active"
@@ -98,6 +115,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
           </button>
           <button
             type="button"
+            data-testid="nav-tab-verification"
             onClick={() => onTabChange("verification")}
             className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
               activeTab === "verification"

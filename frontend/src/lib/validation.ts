@@ -8,6 +8,8 @@ import {
   Mode,
   SearchMode,
   EventType,
+  CustomRepositoryConfig,
+  CustomConfigValidationResponse,
 } from './contracts';
 
 const VALID_MODES: Set<Mode> = new Set(["offline", "replay", "live"]);
@@ -179,4 +181,149 @@ export function validateRunHistory(input: unknown): RunHistoryItem[] {
     if (!VALID_RUN_STATES.has(item.state as RunState)) throw new Error(`Invalid state: ${String(item.state)}`);
   }
   return input as unknown as RunHistoryItem[];
+}
+
+const GITHUB_HTTPS_REGEX = /^https:\/\/github\.com\/[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(?:\.git)?\/?$/;
+const HEX_40_REGEX = /^[0-9a-fA-F]{40}$/;
+const PYTHON_PACKAGE_REGEX = /^[a-zA-Z0-9_.-]+$/;
+const DANGEROUS_COMMAND_REGEX = /(?:^|[;&|\s])(?:sh|bash|zsh|curl|wget|rm|sudo|chmod|eval|exec|python\s+-c)(?:$|[;&|\s])|[;&|><`$]/;
+
+export function validateCustomRepositoryConfig(
+  config: Partial<CustomRepositoryConfig>
+): CustomConfigValidationResponse {
+  const errors: string[] = [];
+  const fieldErrors: Record<string, string[]> = {};
+
+  const addError = (field: string, msg: string) => {
+    errors.push(msg);
+    if (!fieldErrors[field]) {
+      fieldErrors[field] = [];
+    }
+    fieldErrors[field].push(msg);
+  };
+
+  // Repository URL validation
+  const repoUrl = (config.repository_url || "").trim();
+  if (!repoUrl) {
+    addError("repository_url", "Repository URL is required");
+  } else if (!GITHUB_HTTPS_REGEX.test(repoUrl)) {
+    addError(
+      "repository_url",
+      "Repository URL must be a public GitHub HTTPS URL (e.g. https://github.com/owner/repo)"
+    );
+  }
+
+  // Commit SHA validation
+  const commitSha = (config.commit_sha || "").trim();
+  if (!commitSha) {
+    addError("commit_sha", "Commit SHA is required");
+  } else if (!HEX_40_REGEX.test(commitSha)) {
+    addError(
+      "commit_sha",
+      "Commit SHA must be a full 40 character hexadecimal string"
+    );
+  }
+
+  // Dependency name validation
+  const dependency = (config.dependency || "").trim();
+  if (!dependency) {
+    addError("dependency", "Dependency name is required");
+  } else if (!PYTHON_PACKAGE_REGEX.test(dependency)) {
+    addError(
+      "dependency",
+      "Dependency name must be a valid Python package name"
+    );
+  }
+
+  // Baseline version validation
+  const fromVersion = (config.from_version || "").trim();
+  if (!fromVersion) {
+    addError("from_version", "Baseline version is required");
+  }
+
+  // Target version validation
+  const toVersion = (config.to_version || "").trim();
+  if (!toVersion) {
+    addError("to_version", "Target version is required");
+  } else if (fromVersion && toVersion === fromVersion) {
+    addError("to_version", "Target version must differ from baseline version");
+  }
+
+  // Pytest args validation
+  if (!config.pytest_args || !Array.isArray(config.pytest_args)) {
+    addError("pytest_args", "Pytest arguments list cannot be empty");
+  } else {
+    let hasNonEmpty = false;
+    let hasUnsafe = false;
+    for (const arg of config.pytest_args) {
+      if (typeof arg !== "string") {
+        hasUnsafe = true;
+        continue;
+      }
+      const trimmed = arg.trim();
+      if (trimmed) {
+        hasNonEmpty = true;
+        if (DANGEROUS_COMMAND_REGEX.test(trimmed)) {
+          hasUnsafe = true;
+        }
+      }
+    }
+    if (!hasNonEmpty) {
+      addError("pytest_args", "Pytest arguments list cannot be empty");
+    } else if (hasUnsafe) {
+      addError(
+        "pytest_args",
+        "Pytest arguments must not contain shell operators or command escapes"
+      );
+    }
+  }
+
+  // Allowed relative source paths validation
+  if (!config.allowed_source_paths || !Array.isArray(config.allowed_source_paths)) {
+    addError("allowed_source_paths", "Allowed source paths list cannot be empty");
+  } else {
+    let hasNonEmptyPath = false;
+    let hasPathTraversal = false;
+    for (const p of config.allowed_source_paths) {
+      if (typeof p !== "string") {
+        hasPathTraversal = true;
+        continue;
+      }
+      const trimmed = p.trim();
+      if (trimmed) {
+        hasNonEmptyPath = true;
+        if (trimmed.startsWith("/") || trimmed.startsWith("\\") || trimmed.includes(":")) {
+          hasPathTraversal = true;
+        }
+        const parts = trimmed.replace(/\\/g, "/").split("/");
+        if (parts.includes("..") || parts.includes(".")) {
+          hasPathTraversal = true;
+        }
+      }
+    }
+    if (!hasNonEmptyPath) {
+      addError("allowed_source_paths", "Allowed source paths list cannot be empty");
+    } else if (hasPathTraversal) {
+      addError(
+        "allowed_source_paths",
+        "Allowed source paths must be relative paths within repository root and cannot contain parent directory traversal (..)"
+      );
+    }
+  }
+
+  // Expected failure substring validation
+  const expectedFailure = (config.expected_failure || "").trim();
+  if (!expectedFailure) {
+    addError("expected_failure", "Expected failure substring is required");
+  }
+
+  return {
+    valid: errors.length === 0,
+    errors,
+    field_errors: fieldErrors,
+    custom_execution_supported: false,
+    gate_status: "disabled",
+    gate_message:
+      "Custom repository execution is disabled in this safe product slice. Arbitrary remote execution, background worker enqueueing, provider calls, and task execution are strictly gated off.",
+  };
 }
