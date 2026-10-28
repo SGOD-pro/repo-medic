@@ -136,6 +136,145 @@ def test_api_runs_rejects_custom_task_bypass(test_app_and_repo):
     data = resp.json()
     assert "custom repository execution is disabled" in data["error"]["message"].lower()
 
+    # Also test task-custom prefix
+    resp2 = client.post(
+        "/api/runs",
+        json={
+            "task_id": "task-custom-untrusted",
+            "search_mode": "sequential",
+        },
+    )
+    assert resp2.status_code == 403
+
+
+def test_api_runs_policy_approved_demos(test_app_and_repo):
+    app, repo = test_app_and_repo
+    # Seed approved demo tasks
+    repo.upsert_task({
+        "task_id": "TASK-DEMO-SHOP",
+        "title": "demo shop",
+        "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+        "commit_sha": "8c400721558392a23b3af71766f673da02f80040",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.48",
+        "to_version": "2.0.19",
+    })
+    repo.upsert_task({
+        "task_id": "TASK-091",
+        "title": "fixture task 091",
+        "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+        "commit_sha": "453a0b6c6b125177504cdd941902b8d48266ed1c",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.48",
+        "to_version": "2.0.19",
+    })
+
+    client = TestClient(app)
+
+    # Both approved demo tasks must be accepted with 202
+    resp1 = client.post("/api/runs", json={"task_id": "TASK-DEMO-SHOP", "search_mode": "sequential"})
+    assert resp1.status_code == 202
+    data1 = resp1.json()
+    assert data1["state"] == "queued"
+    assert data1["task_id"] == "TASK-DEMO-SHOP"
+
+    resp2 = client.post("/api/runs", json={"task_id": "TASK-091", "search_mode": "sequential"})
+    assert resp2.status_code == 202
+    data2 = resp2.json()
+    assert data2["state"] == "queued"
+    assert data2["task_id"] == "TASK-091"
+
+
+def test_api_runs_policy_rejects_unknown_ids(test_app_and_repo):
+    app, repo = test_app_and_repo
+    client = TestClient(app)
+
+    # Unknown task ID must return 404
+    resp = client.post("/api/runs", json={"task_id": "nonexistent-task-999", "search_mode": "sequential"})
+    assert resp.status_code == 404
+    data = resp.json()
+    assert "not found" in data["error"]["message"].lower()
+
+
+def test_api_runs_policy_rejects_existing_non_demo_ids(test_app_and_repo):
+    app, repo = test_app_and_repo
+    # Seed existing non-demo tasks
+    repo.upsert_task({
+        "task_id": "TASK-084",
+        "title": "pydantic task",
+        "repository_url": "https://github.com/tiangolo/fastapi-service",
+        "commit_sha": "8a4f21d",
+        "dependency": "pydantic",
+        "from_version": "1.10.8",
+        "to_version": "2.0.0",
+    })
+    repo.upsert_task({
+        "task_id": "example-task-1",
+        "title": "example acceptance task",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest-mock",
+        "from_version": "3.10.0",
+        "to_version": "3.11.1",
+    })
+
+    client = TestClient(app)
+
+    # Existing non-demo task must be rejected with 403 Forbidden under execution policy
+    resp1 = client.post("/api/runs", json={"task_id": "TASK-084", "search_mode": "sequential"})
+    assert resp1.status_code == 403
+    data1 = resp1.json()
+    assert "execution policy violation" in data1["error"]["message"].lower()
+    assert "only supported demo tasks" in data1["error"]["message"].lower()
+
+    resp2 = client.post("/api/runs", json={"task_id": "example-task-1", "search_mode": "sequential"})
+    assert resp2.status_code == 403
+    data2 = resp2.json()
+    assert "execution policy violation" in data2["error"]["message"].lower()
+
+
+def test_api_runs_preserves_existing_runs_and_artifacts(test_app_and_repo):
+    app, repo = test_app_and_repo
+    # Create an existing historical run and artifact
+    run_id = "run_historical_preserved_123"
+    repo.create_run(
+        run_id=run_id,
+        task_id="TASK-084",
+        mode="live",
+        search_mode="sequential",
+        max_run_usd=2.0,
+    )
+    repo.finish_run(run_id=run_id, state="succeeded", reason="Historical verification completed")
+    art = repo.store_artifact(
+        run_id=run_id,
+        kind="patch",
+        filename="patch.diff",
+        content=b"diff --git a/test b/test",
+    )
+    art_id = art.artifact_id
+
+    client = TestClient(app)
+
+    # 1. GET /api/runs must return the run in history
+    list_resp = client.get("/api/runs")
+    assert list_resp.status_code == 200
+    runs = list_resp.json()["runs"]
+    matching = [r for r in runs if r["run_id"] == run_id]
+    assert len(matching) == 1
+    assert matching[0]["state"] == "succeeded"
+
+    # 2. GET /api/runs/{run_id} must return detail
+    detail_resp = client.get(f"/api/runs/{run_id}")
+    assert detail_resp.status_code == 200
+    detail_data = detail_resp.json()
+    assert detail_data["run_id"] == run_id
+    assert detail_data["state"] == "succeeded"
+
+    # 3. GET /api/runs/{run_id}/artifacts/{art_id} must return artifact content
+    art_resp = client.get(f"/api/runs/{run_id}/artifacts/{art_id}")
+    assert art_resp.status_code == 200
+    assert art_resp.content == b"diff --git a/test b/test"
+
 
 def test_api_tasks_supported_demo_policy(test_app_and_repo):
     app, repo = test_app_and_repo

@@ -361,19 +361,19 @@ async def test_queue_worker_no_matching_runs_returns_false(test_repo: D1StorageR
 def test_create_run_respects_configured_prefix(test_repo: D1StorageRepository) -> None:
     """POST /api/runs generates run_id with acceptance prefix when configured."""
     test_repo.upsert_task({
-        "task_id": "task_1",
+        "task_id": "TASK-DEMO-SHOP",
         "title": "Test task",
-        "repository_url": "https://github.com/example/repo",
-        "commit_sha": "abc123",
-        "dependency": "pkg",
-        "from_version": "1.0",
-        "to_version": "2.0",
+        "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+        "commit_sha": "8c400721558392a23b3af71766f673da02f80040",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.48",
+        "to_version": "2.0.19",
     })
 
     app = create_app(repository=test_repo)
     with patch("src.main.settings.repomedic_acceptance_prefix", "run_k3_accept_"):
         client = TestClient(app)
-        res = client.post("/api/runs", json={"task_id": "task_1", "search_mode": "sequential"})
+        res = client.post("/api/runs", json={"task_id": "TASK-DEMO-SHOP", "search_mode": "sequential"})
         assert res.status_code == 202
         data = res.json()
         assert data["run_id"].startswith("run_k3_accept_")
@@ -382,19 +382,19 @@ def test_create_run_respects_configured_prefix(test_repo: D1StorageRepository) -
 def test_create_run_default_prefix(test_repo: D1StorageRepository) -> None:
     """POST /api/runs generates default run_ prefix when acceptance prefix is empty."""
     test_repo.upsert_task({
-        "task_id": "task_1",
+        "task_id": "TASK-DEMO-SHOP",
         "title": "Test task",
-        "repository_url": "https://github.com/example/repo",
-        "commit_sha": "abc123",
-        "dependency": "pkg",
-        "from_version": "1.0",
-        "to_version": "2.0",
+        "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+        "commit_sha": "8c400721558392a23b3af71766f673da02f80040",
+        "dependency": "sqlalchemy",
+        "from_version": "1.4.48",
+        "to_version": "2.0.19",
     })
 
     app = create_app(repository=test_repo)
     with patch("src.main.settings.repomedic_acceptance_prefix", ""):
         client = TestClient(app)
-        res = client.post("/api/runs", json={"task_id": "task_1", "search_mode": "sequential"})
+        res = client.post("/api/runs", json={"task_id": "TASK-DEMO-SHOP", "search_mode": "sequential"})
         assert res.status_code == 202
         data = res.json()
         assert data["run_id"].startswith("run_")

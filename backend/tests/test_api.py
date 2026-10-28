@@ -2,6 +2,7 @@ import pytest
 from fastapi.testclient import TestClient
 import httpx
 
+from src.config import settings
 from src.main import create_app
 from src.storage.db_client import RepoMedicDB
 from src.storage.repository import D1StorageRepository
@@ -9,7 +10,8 @@ from tests.test_storage import create_sqlite_d1_transport
 
 
 @pytest.fixture
-def test_app_and_repo():
+def test_app_and_repo(monkeypatch):
+    monkeypatch.setattr(settings, "repomedic_task_execution_policy", "all")
     transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
     mock_db = RepoMedicDB(
         base_url="http://test-bridge",
@@ -728,6 +730,7 @@ def test_create_run_enqueues_to_sqs_when_configured(monkeypatch):
 
     monkeypatch.setattr(settings, "repair_queue_url", "https://sqs.us-east-1.amazonaws.com/123456789/RepoMedicQueue")
     monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+    monkeypatch.setattr(settings, "repomedic_task_execution_policy", "all")
 
     transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
     mock_db = RepoMedicDB(
@@ -769,6 +772,7 @@ def test_create_run_marks_failed_on_sqs_error(monkeypatch):
 
     monkeypatch.setattr(settings, "repair_queue_url", "https://sqs.us-east-1.amazonaws.com/123456789/RepoMedicQueue")
     monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+    monkeypatch.setattr(settings, "repomedic_task_execution_policy", "all")
 
     transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
     mock_db = RepoMedicDB(

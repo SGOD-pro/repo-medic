@@ -167,9 +167,9 @@ export function TasksView({
     tasks.find((t) => t.id === selectedTaskId) ||
     tasks[0] || {
       id: selectedTaskId || "TASK-DEMO-SHOP",
-      repo: "SGOD-pro/repomedic-demo-shop",
+      repo: "SGOD-pro/repo-medic",
       title: "Upgrade sqlalchemy 1.4.48 to 2.0.19 in repomedic-demo-shop",
-      commitSha: "8c40072",
+      commitSha: "8c400721558392a23b3af71766f673da02f80040",
       dependency: "sqlalchemy",
       targetVersion: "2.0.19",
       testsCount: 1,

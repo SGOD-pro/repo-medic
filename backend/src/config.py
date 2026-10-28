@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     repomedic_use_real_engine: bool = False
     repomedic_sync_fixtures: bool = True
     repomedic_acceptance_prefix: str = ""
+    repomedic_task_execution_policy: str = "supported_demo"
 
     # Nebius (single unified API key for both Token Factory inference and ConTree sandbox)
     nebius_api_key: str = ""

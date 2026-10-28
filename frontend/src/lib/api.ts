@@ -26,7 +26,7 @@ export const SUPPORTED_DEMO_TASKS: TaskSummary[] = [
   {
     task_id: "TASK-DEMO-SHOP",
     title: "Upgrade sqlalchemy 1.4.48 to 2.0.19 in repomedic-demo-shop",
-    repository_url: "https://github.com/SGOD-pro/repomedic-demo-shop.git",
+    repository_url: "https://github.com/SGOD-pro/repo-medic.git",
     commit_sha: "8c400721558392a23b3af71766f673da02f80040",
     dependency: "sqlalchemy",
     from_version: "1.4.48",

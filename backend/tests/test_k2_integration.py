@@ -24,6 +24,7 @@ def k2_env(monkeypatch):
     monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
     monkeypatch.setattr(settings, "repomedic_max_run_usd", 2.0)
     monkeypatch.setattr(settings, "repomedic_total_budget_usd", 25.0)
+    monkeypatch.setattr(settings, "repomedic_task_execution_policy", "all")
 
     transport = create_sqlite_d1_transport(expected_token="test-bridge-token")
     mock_db = RepoMedicDB(

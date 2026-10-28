@@ -279,6 +279,8 @@ def create_app(
             code = "not_found"
         elif exc.status_code in (400, 422):
             code = "invalid_request"
+        elif exc.status_code == 403:
+            code = "forbidden"
         else:
             code = "error"
         envelope = APIErrorEnvelope(error=ErrorDetail(code=code, message=str(exc.detail)))
@@ -401,6 +403,7 @@ def create_app(
         if (
             payload.task_id.lower().startswith("custom")
             or payload.task_id.lower().startswith("task-custom")
+            or payload.task_id.lower() == "custom"
         ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -412,6 +415,17 @@ def create_app(
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Task '{payload.task_id}' not found",
+            )
+
+        # Enforce server side supported demo execution policy
+        policy = getattr(settings, "repomedic_task_execution_policy", "supported_demo")
+        if policy == "supported_demo" and payload.task_id not in SUPPORTED_DEMO_TASK_IDS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Execution policy violation: task '{payload.task_id}' is not an approved demo task. "
+                    f"Only supported demo tasks ({', '.join(SUPPORTED_DEMO_TASK_IDS)}) can be executed in this safe product slice."
+                ),
             )
 
         mode = payload.mode or getattr(settings, "repomedic_mode", "offline")

@@ -33,7 +33,7 @@ interface CustomRepoFormProps {
 }
 
 const DEMO_PREFILL: CustomRepositoryConfig = {
-  repository_url: "https://github.com/SGOD-pro/repomedic-demo-shop",
+  repository_url: "https://github.com/SGOD-pro/repo-medic.git",
   commit_sha: "8c400721558392a23b3af71766f673da02f80040",
   dependency: "sqlalchemy",
   from_version: "1.4.48",
@@ -161,11 +161,12 @@ export function CustomRepoForm({
           {onSelectDemoTask && (
             <Button
               type="button"
+              data-testid="btn-try-a-demo"
               onClick={() => onSelectDemoTask("TASK-DEMO-SHOP")}
               size="sm"
               className="bg-[#1B3228] border border-[rgba(183,201,173,0.2)] text-[#B7C9AD] hover:bg-[#203c30] text-xs h-9 px-3.5 gap-1.5 rounded-lg cursor-pointer"
             >
-              <span>Explore Demo Shop</span>
+              <span>Try a demo</span>
               <ArrowRight className="size-3.5" />
             </Button>
           )}
@@ -191,6 +192,19 @@ export function CustomRepoForm({
               execution, sandbox worker enqueueing, and LLM calls are strictly
               gated off to prevent unauthorized remote execution or cloud spend.
             </p>
+            {onSelectDemoTask && (
+              <div className="mt-2.5 flex items-center gap-2">
+                <span className="text-xs text-[#A9B8AD]">Looking to run a verified repair?</span>
+                <button
+                  type="button"
+                  data-testid="btn-try-a-demo-banner"
+                  onClick={() => onSelectDemoTask("TASK-DEMO-SHOP")}
+                  className="text-xs font-medium text-[#5FCB8A] hover:underline cursor-pointer inline-flex items-center gap-1"
+                >
+                  Try a demo scenario <ArrowRight className="size-3" />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -225,7 +239,7 @@ export function CustomRepoForm({
                 className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-9 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
               />
               <span className="block mt-1 text-[11px] text-[#A9B8AD]">
-                Must be an accessible public HTTPS repository URL on github.com.
+                Requires a GitHub HTTPS repository URL. Format is checked locally; remote repository reachability is not verified across the network in this slice.
               </span>
               {fieldErrors.repository_url?.map((err, i) => (
                 <span
@@ -257,7 +271,7 @@ export function CustomRepoForm({
                 className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-9 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
               />
               <span className="block mt-1 text-[11px] text-[#A9B8AD]">
-                Exact 40-character hexadecimal commit hash to reproduce the baseline state.
+                Exact 40 character hexadecimal commit hash. Format is checked locally; commit existence on GitHub is not verified across the network.
               </span>
               {fieldErrors.commit_sha?.map((err, i) => (
                 <span
@@ -482,13 +496,12 @@ export function CustomRepoForm({
                   <div className="flex items-center gap-2.5 mb-1.5">
                     <CheckCircle2 className="size-5 text-[#5FCB8A]" />
                     <span className="text-sm font-semibold text-[#F7F7F2]">
-                      Repository Specification Valid
+                      Format and Schema Constraints Valid
                     </span>
                   </div>
                   <p className="text-xs text-[#A9B8AD] leading-relaxed">
-                    All contract constraints passed: public GitHub URL, 40-char
-                    commit SHA, distinct versions, clean pytest arguments, and safe
-                    relative source paths.
+                    Input format, syntax, and schema constraints passed all local checks.
+                    Remote repository reachability and commit existence on GitHub have not been verified across the network.
                   </p>
                 </div>
               ) : (
@@ -516,8 +529,8 @@ export function CustomRepoForm({
                   <span>Validation Pending</span>
                 </div>
                 <span>
-                  Click &ldquo;Validate Configuration&rdquo; to verify all repository
-                  contract constraints against server validation logic.
+                  Click &ldquo;Validate Configuration&rdquo; to verify local syntax and contract constraints.
+                  Network accessibility is not checked in this slice.
                 </span>
               </div>
             )}
