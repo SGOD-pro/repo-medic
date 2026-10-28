@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from src.preflight import (
@@ -126,7 +127,13 @@ def test_verify_live_providers_missing_credentials_fails() -> None:
 
 def test_verify_live_providers_repository_access_with_sha() -> None:
     """covers: AC-3 - Confirms preflight verifies public repository access with full commit SHA."""
+    env = {
+        "TOKEN_FACTORY_API_KEY": os.getenv("TOKEN_FACTORY_API_KEY") or os.getenv("NEBIUS_API_KEY") or "neb-ci-key",
+        "NEBIUS_API_KEY": os.getenv("NEBIUS_API_KEY") or "neb-ci-key",
+        "NEBIUS_PROJECT_ID": os.getenv("NEBIUS_PROJECT_ID") or "neb-ci-proj",
+    }
     res = verify_live_providers(
+        env=env,
         repository_url="https://github.com/SGOD-pro/repo-medic.git",
         commit_sha="453a0b6c6b125177504cdd941902b8d48266ed1c",
     )

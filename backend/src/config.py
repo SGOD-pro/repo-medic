@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     nebius_api_key: str = ""
     token_factory_api_key: str = ""
     nebius_project_id: str = ""
+    token_factory_sandbox_project_id: str = ""
     token_factory_base_url: str = "https://api.tokenfactory.us-central1.nebius.com/v1/"
     token_factory_model: str = "nvidia/nemotron-3-super-120b-a12b"
     token_factory_enable_thinking: bool = False
@@ -58,6 +59,11 @@ class Settings(BaseSettings):
         unified_key = (self.nebius_api_key or self.token_factory_api_key).strip()
         self.nebius_api_key = unified_key
         self.token_factory_api_key = unified_key
+
+        # Consolidate Nebius and Token Factory project id aliases
+        unified_proj = (self.nebius_project_id or self.token_factory_sandbox_project_id).strip()
+        self.nebius_project_id = unified_proj
+        self.token_factory_sandbox_project_id = unified_proj
 
         # Consolidate Turso DB URL and token aliases
         if not self.turso_database_url:

@@ -458,7 +458,7 @@ def test_clean_patch_git_apply_trailing_newline(tmp_path):
     db_file.write_text("def init_db():\n    engine.execute(text('CREATE TABLE users'))\n")
 
     subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=RepoMedic", "-c", "user.email=ci@repo-medic.local", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
 
     raw_diff = (
         "Here is the diff:\n"
@@ -535,7 +535,7 @@ def test_normalize_diff_context_restores_blank_line(tmp_path):
     db_file.write_text(original_code)
 
     subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=RepoMedic", "-c", "user.email=ci@repo-medic.local", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
 
     # Patch without blank line context between functions
     raw_diff = (
@@ -591,7 +591,7 @@ def test_normalize_diff_context_bare_hunk_header(tmp_path):
     db_file.write_text(original_code)
 
     subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=RepoMedic", "-c", "user.email=ci@repo-medic.local", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
 
     # Patch with bare @@ header reproduced from live run
     raw_diff = (
@@ -661,7 +661,7 @@ def test_normalize_diff_context_trailing_delimiter_and_unidiff_zero(tmp_path):
     db_file.write_text(original_code)
 
     subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(["git", "-c", "user.name=RepoMedic", "-c", "user.email=ci@repo-medic.local", "commit", "-m", "init"], cwd=str(repo_dir), check=True, capture_output=True)
 
     # Patch with trailing @@ delimiter and zero context lines as reproduced from run 5
     raw_diff = (

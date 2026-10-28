@@ -51,8 +51,16 @@ async def repair(
     # 3. Resolve adapters (explicit live selection with zero fake fallback)
     owned_sandbox = False
     if request.mode == "live":
-        nebius_key = (settings.nebius_api_key or "").strip()
-        project_id = (settings.nebius_project_id or "").strip()
+        nebius_key = (
+            (getattr(sandbox, "api_key", None))
+            or settings.nebius_api_key
+            or ""
+        ).strip()
+        project_id = (
+            (getattr(sandbox, "project_id", None))
+            or settings.nebius_project_id
+            or ""
+        ).strip()
         missing = []
         if not nebius_key:
             missing.append("NEBIUS_API_KEY")
