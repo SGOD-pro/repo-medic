@@ -4,7 +4,6 @@ version = 0.1
 stack_name = "repo-medic"
 resolve_s3 = true
 s3_prefix = "repo-medic"
-region = "ap-south-1"
 profile = "aws"
 confirm_changeset = true
 capabilities = "CAPABILITY_IAM"
