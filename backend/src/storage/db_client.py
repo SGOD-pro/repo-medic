@@ -63,6 +63,7 @@ class RepoMedicDB:
         max_run_usd: float = 2.0,
         state: str = "queued",
         created_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Insert a queued run into D1."""
         payload: Dict[str, Any] = {
@@ -75,6 +76,8 @@ class RepoMedicDB:
         }
         if created_at is not None:
             payload["created_at"] = created_at
+        if idempotency_key is not None:
+            payload["idempotency_key"] = idempotency_key
         return self._request(
             "POST",
             "/api/runs",

@@ -56,17 +56,32 @@ class D1StorageRepository:
         max_run_usd: float = 2.0,
         state: str = "queued",
         created_at: str | None = None,
+        idempotency_key: str | None = None,
     ) -> RunSummary:
-        self.client.create_run(
-            run_id=run_id,
-            task_id=task_id,
-            mode=mode,
-            search_mode=search_mode,
-            max_run_usd=max_run_usd,
-            state=state,
-            created_at=created_at,
-        )
-        return self.get_run(run_id)
+        try:
+            res = self.client.create_run(
+                run_id=run_id,
+                task_id=task_id,
+                mode=mode,
+                search_mode=search_mode,
+                max_run_usd=max_run_usd,
+                state=state,
+                created_at=created_at,
+                idempotency_key=idempotency_key,
+            )
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 409:
+                err_data = {}
+                try:
+                    err_data = e.response.json().get("error", {})
+                except Exception:
+                    pass
+                code = err_data.get("code", "conflict")
+                msg = err_data.get("message", "Conflict")
+                raise StorageConflictError(code, msg) from e
+            raise
+        resolved_run_id = (res.get("run_id") if isinstance(res, dict) else None) or run_id
+        return self.get_run(resolved_run_id)
 
     def health(self) -> dict[str, Any]:
         if hasattr(self.client, "health"):

@@ -83,6 +83,13 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
       recipe_json TEXT,
       created_at TEXT NOT NULL
     );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_active_run_per_task ON runs(task_id) WHERE state IN ('queued', 'running');
+    CREATE TABLE IF NOT EXISTS idempotency_keys (
+      key TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(run_id),
+      created_at TEXT NOT NULL
+    );
     """)
 
     lock = threading.Lock()
@@ -255,6 +262,12 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
         # POST /api/runs
         if method == "POST" and path == "/api/runs":
             body = json.loads(request.content.decode("utf-8"))
+            idempotency_key = body.get("idempotency_key")
+            if idempotency_key:
+                row_idemp = conn.execute("SELECT run_id FROM idempotency_keys WHERE key = ?", (idempotency_key,)).fetchone()
+                if row_idemp:
+                    return httpx.Response(200, json={"ok": True, "run_id": row_idemp["run_id"], "idempotent_replay": True})
+
             run_id = body.get("run_id")
             if not run_id or not isinstance(run_id, str) or not re.match(r"^[a-zA-Z0-9_-]{1,128}$", run_id):
                 return httpx.Response(
@@ -266,28 +279,41 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                         }
                     },
                 )
-            row = conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,)).fetchone()
-            if row:
+            row = conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,))
+            if row.fetchone():
                 return httpx.Response(409, json={"error": {"code": "run_already_exists", "message": "Exists"}})
             initial_usage = json.dumps(
                 {"model_calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_usd": 0}
             )
             created_at_val = body.get("created_at", "2026-10-10T00:00:00Z")
             updated_at_val = body.get("updated_at", created_at_val)
-            conn.execute(
-                "INSERT INTO runs VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
-                (
-                    run_id,
-                    body["task_id"],
-                    body["mode"],
-                    body["search_mode"],
-                    body.get("state", "queued"),
-                    initial_usage,
-                    created_at_val,
-                    updated_at_val,
-                    body.get("max_run_micro_usd", 0),
-                ),
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO runs VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+                    (
+                        run_id,
+                        body["task_id"],
+                        body["mode"],
+                        body["search_mode"],
+                        body.get("state", "queued"),
+                        initial_usage,
+                        created_at_val,
+                        updated_at_val,
+                        body.get("max_run_micro_usd", 0),
+                    ),
+                )
+                if idempotency_key:
+                    conn.execute("INSERT INTO idempotency_keys VALUES (?, ?, ?)", (idempotency_key, run_id, created_at_val))
+            except sqlite3.IntegrityError as e:
+                err_str = str(e).lower()
+                if "idx_active_run_per_task" in err_str or "unique constraint" in err_str:
+                    active = conn.execute(
+                        "SELECT run_id FROM runs WHERE task_id = ? AND state IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+                        (body["task_id"],)
+                    ).fetchone()
+                    act_id = active["run_id"] if active else "unknown"
+                    return httpx.Response(409, json={"error": {"code": "active_run_in_progress", "message": f"Active repair run '{act_id}' is already in progress for task '{body['task_id']}'"}})
+                return httpx.Response(409, json={"error": {"code": "conflict", "message": str(e)}})
             return httpx.Response(201, json={"ok": True, "run_id": run_id})
 
         # GET /api/runs/:run_id

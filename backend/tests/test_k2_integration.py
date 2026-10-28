@@ -272,6 +272,15 @@ def test_k2_reconnect_and_sse_streaming(k2_env):
 def test_k2_backend_restart_recovery(k2_env):
     """Tests K2 system restart recovering interrupted runs into failed state."""
     repo = k2_env["repo"]
+    repo.upsert_task({
+        "task_id": "TASK-085",
+        "title": "requests v2.31.0 migration",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "9b5e32f",
+        "dependency": "requests",
+        "from_version": "2.28.0",
+        "to_version": "2.31.0",
+    })
 
     # Seed an interrupted running run and an interrupted queued run
     repo.create_run(
@@ -283,7 +292,7 @@ def test_k2_backend_restart_recovery(k2_env):
     )
     repo.create_run(
         run_id="run-interrupted-2",
-        task_id="TASK-084",
+        task_id="TASK-085",
         mode="offline",
         search_mode="branch_refine",
         state="queued",

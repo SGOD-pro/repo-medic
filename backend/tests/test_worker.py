@@ -143,6 +143,15 @@ async def test_queue_worker_fifo_ordering(test_repo: D1StorageRepository) -> Non
         "from_version": "3.10.0",
         "to_version": "3.11.1",
     })
+    test_repo.upsert_task({
+        "task_id": "example-task-2",
+        "title": "Upgrade pytest-mock 2",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest-mock",
+        "from_version": "3.10.0",
+        "to_version": "3.11.1",
+    })
 
     test_repo.create_run(
         run_id="run-fifo-1",
@@ -154,7 +163,7 @@ async def test_queue_worker_fifo_ordering(test_repo: D1StorageRepository) -> Non
     )
     test_repo.create_run(
         run_id="run-fifo-2",
-        task_id="example-task-1",
+        task_id="example-task-2",
         mode="offline",
         search_mode="branch_refine",
         state="queued",

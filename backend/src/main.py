@@ -42,6 +42,7 @@ class CreateRunRequest(BaseModel):
     task_id: str
     search_mode: SearchMode
     mode: Mode | None = None
+    idempotency_key: str | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -349,16 +350,8 @@ def create_app(
                 detail="Budget unavailable",
             )
 
-        active_runs = [
-            r
-            for r in repo.list_runs(task_id=payload.task_id, limit=5)
-            if r.state in ("queued", "running")
-        ]
-        if active_runs:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"Active repair run '{active_runs[0].run_id}' is already in progress for task '{payload.task_id}'",
-            )
+        raw_idemp = request.headers.get("Idempotency-Key") or request.headers.get("idempotency-key") or payload.idempotency_key
+        idempotency_key = raw_idemp.strip() if raw_idemp and raw_idemp.strip() else None
 
         prefix = getattr(settings, "repomedic_acceptance_prefix", "")
         run_id = f"{prefix}{uuid.uuid4().hex}" if prefix else f"run_{uuid.uuid4().hex}"
@@ -368,7 +361,12 @@ def create_app(
             mode=mode,
             search_mode=payload.search_mode,
             max_run_usd=max_run_usd,
+            idempotency_key=idempotency_key,
         )
+
+        if run.run_id != run_id:
+            logger.info("Idempotent replay for key %s returning existing run %s", idempotency_key, run.run_id)
+            return run
 
         queue_url = (
             getattr(settings, "repair_queue_url", "")

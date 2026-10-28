@@ -169,6 +169,7 @@ def test_get_runs_history_and_filtering(test_app_and_repo):
     """Verify AC-5: GET /api/runs returns run summaries with limit and task_id filter."""
     app, repo = test_app_and_repo
     repo.create_run("run_h1", "task-1", "offline", "sequential")
+    repo.finish_run("run_h1", state="succeeded")
     repo.create_run("run_h2", "task-2", "offline", "branch_refine")
     repo.create_run("run_h3", "task-1", "offline", "sequential")
 
@@ -426,6 +427,96 @@ def test_create_run_rejects_concurrent_active_run_for_same_task(test_app_and_rep
     assert f"Active repair run '{run1_id}' is already in progress" in resp2.json()["error"]["message"]
 
 
+def test_create_run_rejects_concurrent_active_run_with_more_than_five_completed_runs(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-many-history",
+        "title": "History test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+    for i in range(7):
+        r_id = f"run-hist-{i}"
+        repo.create_run(run_id=r_id, task_id="task-many-history", mode="offline", search_mode="sequential")
+        repo.finish_run(run_id=r_id, state="succeeded")
+
+    client = TestClient(app)
+    resp1 = client.post("/api/runs", json={"task_id": "task-many-history", "search_mode": "sequential"})
+    assert resp1.status_code == 202
+    active_id = resp1.json()["run_id"]
+
+    resp2 = client.post("/api/runs", json={"task_id": "task-many-history", "search_mode": "sequential"})
+    assert resp2.status_code == 409
+    assert f"Active repair run '{active_id}' is already in progress" in resp2.json()["error"]["message"]
+
+
+def test_create_run_idempotency_retry_returns_original_run(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-idemp-test",
+        "title": "Idempotency test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+    client = TestClient(app)
+    key = "idem-key-unique-999"
+
+    resp1 = client.post(
+        "/api/runs",
+        headers={"Idempotency-Key": key},
+        json={"task_id": "task-idemp-test", "search_mode": "sequential"},
+    )
+    assert resp1.status_code == 202
+    run1 = resp1.json()
+
+    resp2 = client.post(
+        "/api/runs",
+        headers={"Idempotency-Key": key},
+        json={"task_id": "task-idemp-test", "search_mode": "sequential"},
+    )
+    assert resp2.status_code == 202
+    run2 = resp2.json()
+    assert run1["run_id"] == run2["run_id"]
+
+    key_body = "idem-body-key-888"
+    resp3 = client.post(
+        "/api/runs",
+        json={"task_id": "task-idemp-test", "search_mode": "sequential", "idempotency_key": key_body},
+    )
+    assert resp3.status_code == 409
+
+
+def test_create_run_allowed_after_prior_run_completed(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-sequential-runs",
+        "title": "Sequential runs test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+    client = TestClient(app)
+
+    resp1 = client.post("/api/runs", json={"task_id": "task-sequential-runs", "search_mode": "sequential"})
+    assert resp1.status_code == 202
+    run1_id = resp1.json()["run_id"]
+
+    repo.finish_run(run1_id, state="succeeded")
+
+    resp2 = client.post("/api/runs", json={"task_id": "task-sequential-runs", "search_mode": "sequential"})
+    assert resp2.status_code == 202
+    run2_id = resp2.json()["run_id"]
+    assert run2_id != run1_id
+
+
 def test_startup_recovery_interrupted_runs(monkeypatch):
     from src.config import settings
     monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
@@ -446,8 +537,17 @@ def test_startup_recovery_interrupted_runs(monkeypatch):
         "from_version": "1.0",
         "to_version": "1.1",
     })
+    repo.upsert_task({
+        "task_id": "task-queued",
+        "title": "Queued test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc12345",
+        "dependency": "dep",
+        "from_version": "1.0",
+        "to_version": "1.1",
+    })
     repo.create_run("run-interrupted-1", "task-interrupted", "offline", "sequential", state="running")
-    repo.create_run("run-queued-1", "task-interrupted", "offline", "sequential", state="queued")
+    repo.create_run("run-queued-1", "task-queued", "offline", "sequential", state="queued")
 
     app = create_app(repository=repo)
     with TestClient(app):

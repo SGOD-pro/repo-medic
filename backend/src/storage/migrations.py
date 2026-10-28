@@ -72,9 +72,22 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE INDEX IF NOT EXISTS idx_tasks_created_at ON tasks(created_at);
 """
 
+MIGRATION_0003 = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_active_run_per_task ON runs(task_id) WHERE state IN ('queued', 'running');
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+  key TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES runs(run_id),
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_run_id ON idempotency_keys(run_id);
+"""
+
 MIGRATIONS = [
     ("0001_initial_schema", MIGRATION_0001),
     ("0002_tasks_table", MIGRATION_0002),
+    ("0003_active_run_constraint_and_idempotency", MIGRATION_0003),
 ]
 
 

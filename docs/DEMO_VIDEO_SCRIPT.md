@@ -19,7 +19,7 @@
 
 * Visual: Click on `TASK-091`. Show the right hand sidebar with the pre flight summary: pinned commit SHA `453a0b6c6b125177504cdd941902b8d48266ed1c`, target dependency `sqlalchemy==2.0.19`, and budget ceiling. Select Sequential Direct strategy and click Start repair run.
 * Narration:
-  "The application runs on AWS Serverless with an SQS queue worker and remote Turso storage. When we launch the repair, a strict $2 per-run ceiling is reserved. The run starts and transitions immediately to our live progress interface."
+  "The application runs on AWS Serverless with an SQS queue worker and remote Turso storage. When we launch the repair, a strict $2 per-run ceiling applies. The run starts and transitions immediately to our live progress interface."
 
 ### Scene 3: Live Pipeline Execution (0:55 to 1:35)
 

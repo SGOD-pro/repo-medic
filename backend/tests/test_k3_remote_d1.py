@@ -335,9 +335,19 @@ async def test_concurrent_budget_reservations(k3_client_and_repo, k3_manifest):
     # Run B has max_run_usd=20.0 and reserves 15.0 USD (within 20.0 USD cap)
     # Global budget ceiling is 25.0 USD. Together 0.6 + 15.0 + 15.0 = 30.6 > 25.0 USD.
     task2_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_budget_cross_run")
+    task3_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_budget_cross_run_b")
     repo.upsert_task({
         "task_id": task2_id,
         "title": "Task for cross run global budget check",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "def456",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+    repo.upsert_task({
+        "task_id": task3_id,
+        "title": "Task 3 for cross run global budget check",
         "repository_url": "https://github.com/example/repo",
         "commit_sha": "def456",
         "dependency": "pkg",
@@ -357,7 +367,7 @@ async def test_concurrent_budget_reservations(k3_client_and_repo, k3_manifest):
     )
     repo.create_run(
         run_id=run_b_id,
-        task_id=task2_id,
+        task_id=task3_id,
         mode="offline",
         search_mode="sequential",
         max_run_usd=20.0,
@@ -385,6 +395,7 @@ def test_persistence_across_restart(k3_client_and_repo, k3_manifest):
     """Verify running state persists and restart recovery marks only scoped runs failed."""
     client, repo, is_remote = k3_client_and_repo
     task_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_persist")
+    unrelated_task_id = k3_manifest.record_task(f"{k3_manifest.prefix}task_persist_unrelated")
     scoped_run_id = k3_manifest.record_run(f"{k3_manifest.prefix}run_scoped")
     unrelated_run_id = f"run_unrelated_persist_{int(time.time() * 1000)}"
 
@@ -397,12 +408,21 @@ def test_persistence_across_restart(k3_client_and_repo, k3_manifest):
         "from_version": "1.0",
         "to_version": "2.0",
     })
+    repo.upsert_task({
+        "task_id": unrelated_task_id,
+        "title": "Unrelated task for restart check",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
 
     repo.create_run(
         run_id=scoped_run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running"
     )
     repo.create_run(
-        run_id=unrelated_run_id, task_id=task_id, mode="offline", search_mode="sequential", state="running"
+        run_id=unrelated_run_id, task_id=unrelated_task_id, mode="offline", search_mode="sequential", state="running"
     )
 
     try:

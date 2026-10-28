@@ -327,6 +327,7 @@ export default {
           search_mode?: string;
           state?: string;
           max_run_micro_usd?: number;
+          idempotency_key?: string;
         };
 
         if (!body.run_id || !body.task_id || !body.mode || !body.search_mode) {
@@ -352,15 +353,47 @@ export default {
           estimated_usd: 0,
         });
 
+        const idempotencyKey = body.idempotency_key;
+        if (idempotencyKey) {
+          const existingKey = await env.DB.prepare(
+            "SELECT run_id FROM idempotency_keys WHERE key = ?"
+          ).bind(idempotencyKey).first<{ run_id: string }>();
+          if (existingKey) {
+            return jsonResponse({ ok: true, run_id: existingKey.run_id, idempotent_replay: true }, 200);
+          }
+        }
+
         const existing = await env.DB.prepare("SELECT run_id FROM runs WHERE run_id = ?").bind(body.run_id).first();
         if (existing) {
           return errorResponse("run_already_exists", `Run with ID '${body.run_id}' already exists`, 409);
         }
 
-        await env.DB.prepare(
-          `INSERT INTO runs (run_id, task_id, mode, search_mode, state, reason, usage_json, created_at, updated_at, max_run_micro_usd)
-           VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`
-        ).bind(body.run_id, body.task_id, body.mode, body.search_mode, state, initialUsage, now, now, maxMicroUsd).run();
+        try {
+          await env.DB.prepare(
+            `INSERT INTO runs (run_id, task_id, mode, search_mode, state, reason, usage_json, created_at, updated_at, max_run_micro_usd)
+             VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)`
+          ).bind(body.run_id, body.task_id, body.mode, body.search_mode, state, initialUsage, now, now, maxMicroUsd).run();
+
+          if (idempotencyKey) {
+            await env.DB.prepare(
+              "INSERT INTO idempotency_keys (key, run_id, created_at) VALUES (?, ?, ?)"
+            ).bind(idempotencyKey, body.run_id, now).run();
+          }
+        } catch (err: unknown) {
+          const errStr = String(err).toLowerCase();
+          if (errStr.includes("idx_active_run_per_task") || errStr.includes("unique")) {
+            const activeRun = await env.DB.prepare(
+              "SELECT run_id FROM runs WHERE task_id = ? AND state IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1"
+            ).bind(body.task_id).first<{ run_id: string }>();
+            const activeId = activeRun?.run_id || "unknown";
+            return errorResponse(
+              "active_run_in_progress",
+              `Active repair run '${activeId}' is already in progress for task '${body.task_id}'`,
+              409
+            );
+          }
+          throw err;
+        }
 
         return jsonResponse({ ok: true, run_id: body.run_id }, 201);
       }

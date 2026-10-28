@@ -139,3 +139,55 @@ Once deployed, run this checklist against the public production environment:
 
 6. **Patch Reproduction**:
    Clone pinned commit `453a0b6c6b125177504cdd941902b8d48266ed1c`, apply the downloaded `patch.diff`, install `sqlalchemy==2.0.19`, and verify tests pass 1/1.
+
+## Secret Management and IAM Policy
+
+AWS secret store migration is currently blocked by IAM permissions. The operator identity `arn:aws:iam::445567096027:user/personal_dev` returned `AccessDeniedException` when querying `secretsmanager:ListSecrets` and `ssm:DescribeParameters`. Consequently, automated migration to AWS Secrets Manager or Systems Manager Parameter Store cannot be completed until an account administrator attaches the required policy. Secret parameters remain secured via CloudFormation parameter retention without exposing plaintext keys in CLI arguments or shell history.
+
+### Administrator Least Privilege IAM Policy
+
+An administrator should attach the following policy to enable secret store integration for the deployment user and Lambda execution roles:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "RepoMedicSecretStoreAccess",
+      "Effect": "Allow",
+      "Action": [
+        "secretsmanager:GetSecretValue",
+        "secretsmanager:DescribeSecret",
+        "secretsmanager:PutSecretValue",
+        "secretsmanager:CreateSecret"
+      ],
+      "Resource": [
+        "arn:aws:secretsmanager:ap-south-1:445567096027:secret:repomedic/*"
+      ]
+    },
+    {
+      "Sid": "RepoMedicSSMParameterAccess",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:PutParameter",
+        "ssm:DescribeParameters"
+      ],
+      "Resource": [
+        "arn:aws:ssm:ap-south-1:445567096027:parameter/repomedic/*"
+      ]
+    }
+  ]
+}
+```
+
+### Credential Rotation Procedure
+
+When rotating `TURSO_AUTH_TOKEN` or `NEBIUS_API_KEY`:
+
+1. Generate new credentials in the respective provider console (Turso CLI or Nebius console).
+2. Validate new credentials locally using isolated curl probes before updating production.
+3. Update CloudFormation parameter values using secure environment variable inputs or deploy scripts that omit command arguments.
+4. Verify API and Worker Lambda functions can authenticate by invoking `/health` and checking CloudWatch logs.
+5. Invalidate and revoke the old tokens in the provider console once the new deployment is healthy.

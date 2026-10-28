@@ -234,6 +234,7 @@ class TursoClient:
         max_run_usd: float = 2.0,
         state: str = "queued",
         created_at: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not RUN_ID_REGEX.match(run_id):
             raise StorageError(
@@ -249,19 +250,46 @@ class TursoClient:
         initial_usage = json.dumps({"model_calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_usd": 0})
 
         with self._op_lock():
+            if idempotency_key:
+                cur = self._conn.execute("SELECT run_id FROM idempotency_keys WHERE key = ?", (idempotency_key,))
+                row = cur.fetchone()
+                if row:
+                    return {"ok": True, "run_id": row[0], "idempotent_replay": True}
+
             cur = self._conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,))
             if cur.fetchone():
                 raise StorageConflictError("run_already_exists", f"Run with ID '{run_id}' already exists")
 
-            self._conn.execute(
-                """INSERT INTO runs (
-                     run_id, task_id, mode, search_mode, state, reason,
-                     usage_json, created_at, updated_at, max_run_micro_usd
-                   )
-                   VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
-                (run_id, task_id, mode, search_mode, state, initial_usage, now, now, max_micro_usd),
-            )
-            self._conn.commit()
+            try:
+                self._conn.execute(
+                    """INSERT INTO runs (
+                         run_id, task_id, mode, search_mode, state, reason,
+                         usage_json, created_at, updated_at, max_run_micro_usd
+                       )
+                       VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)""",
+                    (run_id, task_id, mode, search_mode, state, initial_usage, now, now, max_micro_usd),
+                )
+                if idempotency_key:
+                    self._conn.execute(
+                        "INSERT INTO idempotency_keys (key, run_id, created_at) VALUES (?, ?, ?)",
+                        (idempotency_key, run_id, now),
+                    )
+                self._conn.commit()
+            except Exception as e:
+                self._conn.rollback()
+                err_str = str(e).lower()
+                if "idx_active_run_per_task" in err_str or "unique constraint" in err_str:
+                    cur = self._conn.execute(
+                        "SELECT run_id FROM runs WHERE task_id = ? AND state IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",
+                        (task_id,),
+                    )
+                    active_row = cur.fetchone()
+                    active_id = active_row[0] if active_row else "unknown"
+                    raise StorageConflictError(
+                        "active_run_in_progress",
+                        f"Active repair run '{active_id}' is already in progress for task '{task_id}'",
+                    )
+                raise
 
         return {"ok": True, "run_id": run_id}
 

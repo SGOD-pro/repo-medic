@@ -69,10 +69,19 @@ def test_sync_task_fixtures_with_acceptance_prefix(
 
 def test_recover_interrupted_runs_scoped(test_repo: D1StorageRepository) -> None:
     """When acceptance_prefix is set, only matching running runs are failed."""
-    # Pre populate task
+    # Pre populate tasks
     test_repo.upsert_task({
         "task_id": "task_1",
         "title": "Test task",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
+    test_repo.upsert_task({
+        "task_id": "task_2",
+        "title": "Test task 2",
         "repository_url": "https://github.com/example/repo",
         "commit_sha": "abc123",
         "dependency": "pkg",
@@ -90,7 +99,7 @@ def test_recover_interrupted_runs_scoped(test_repo: D1StorageRepository) -> None
     )
     test_repo.create_run(
         run_id="run_unrelated_2",
-        task_id="task_1",
+        task_id="task_2",
         mode="offline",
         search_mode="sequential",
         state="running",
@@ -120,6 +129,15 @@ def test_recover_interrupted_runs_unscoped(test_repo: D1StorageRepository) -> No
         "from_version": "1.0",
         "to_version": "2.0",
     })
+    test_repo.upsert_task({
+        "task_id": "task_2",
+        "title": "Test task 2",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
     test_repo.create_run(
         run_id="run_1",
         task_id="task_1",
@@ -129,7 +147,7 @@ def test_recover_interrupted_runs_unscoped(test_repo: D1StorageRepository) -> No
     )
     test_repo.create_run(
         run_id="run_2",
-        task_id="task_1",
+        task_id="task_2",
         mode="offline",
         search_mode="sequential",
         state="running",
@@ -153,6 +171,15 @@ async def test_queue_worker_claims_only_matching_prefix(test_repo: D1StorageRepo
         "from_version": "1.0",
         "to_version": "2.0",
     })
+    test_repo.upsert_task({
+        "task_id": "task_2",
+        "title": "Test task 2",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abc123",
+        "dependency": "pkg",
+        "from_version": "1.0",
+        "to_version": "2.0",
+    })
 
     # Insert an unrelated queued run first
     test_repo.create_run(
@@ -167,7 +194,7 @@ async def test_queue_worker_claims_only_matching_prefix(test_repo: D1StorageRepo
     # Insert a matching queued run second
     test_repo.create_run(
         run_id="run_k3_accept_target",
-        task_id="task_1",
+        task_id="task_2",
         mode="offline",
         search_mode="sequential",
         state="queued",
@@ -215,7 +242,7 @@ async def test_queue_worker_finds_matching_run_beyond_first_100_unrelated_rows(
     for i in range(105):
         test_repo.create_run(
             run_id=f"run_unrelated_{i:03d}",
-            task_id="task_1",
+            task_id=f"task_unrelated_{i:03d}",
             mode="offline",
             search_mode="sequential",
             state="queued",
@@ -225,7 +252,7 @@ async def test_queue_worker_finds_matching_run_beyond_first_100_unrelated_rows(
     # Insert the matching run at position 106
     test_repo.create_run(
         run_id="run_k3_accept_hidden_target",
-        task_id="task_1",
+        task_id="task_target",
         mode="offline",
         search_mode="sequential",
         state="queued",
@@ -270,7 +297,7 @@ def test_recover_interrupted_runs_finds_matching_runs_beyond_first_100_unrelated
     for i in range(105):
         test_repo.create_run(
             run_id=f"run_unrelated_running_{i:03d}",
-            task_id="task_1",
+            task_id=f"task_unrelated_running_{i:03d}",
             mode="offline",
             search_mode="sequential",
             state="running",
@@ -280,7 +307,7 @@ def test_recover_interrupted_runs_finds_matching_runs_beyond_first_100_unrelated
     # Insert matching running run at position 106
     test_repo.create_run(
         run_id="run_k3_accept_interrupted_hidden",
-        task_id="task_1",
+        task_id="task_target_interrupted",
         mode="offline",
         search_mode="sequential",
         state="running",
