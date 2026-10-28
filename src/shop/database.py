@@ -1,0 +1,37 @@
+from sqlalchemy import create_engine, text
+
+engine = create_engine("sqlite:///:memory:")
+
+
+def init_db():
+    engine.execute(
+        text(
+            "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL, stock INTEGER)"
+        )
+    )
+    engine.execute(
+        text(
+            "INSERT INTO products (name, price, stock) VALUES ('Espresso Mug', 12.99, 50)"
+        )
+    )
+    engine.execute(
+        text(
+            "INSERT INTO products (name, price, stock) VALUES ('Coffee Beans', 18.50, 100)"
+        )
+    )
+
+
+def get_product_count():
+    res = engine.execute(text("SELECT count(*) FROM products"))
+    return res.scalar()
+
+
+def get_product(product_id: int):
+    res = engine.execute(
+        text("SELECT id, name, price, stock FROM products WHERE id = :id"),
+        {"id": product_id},
+    )
+    row = res.fetchone()
+    if row:
+        return {"id": row[0], "name": row[1], "price": row[2], "stock": row[3]}
+    return None
