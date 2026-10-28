@@ -51,11 +51,11 @@ def build_repair_prompt(
         f"5. Output valid unified diff hunks with standard '@@ -start,count +start,count @@' headers and "
         f"context lines from the source file. Do not output bare '@@' delimiters.\n"
         f"6. For SQLAlchemy 2.0 upgrades:\n"
-        f"   - Replace legacy 'engine.execute(...)' calls with 'with engine.begin() as conn:' and "
-        f"'conn.execute(...)'.\n"
+        f"   - Replace legacy 'engine.execute(...)' calls with 'with engine.begin() as conn:' and 'conn.execute(...)'.\n"
+        f"   - Consume results like .scalar() or .fetchone() within the connection block.\n"
         f"   - If 'Row has no attribute _default_key_style' occurs, in SQLAlchemy 2.0 Row(metadata, processors, "
         f"keymap, row) no longer accepts _default_key_style. Remove _default_key_style from Row(...) calls.\n"
-        f"7. Start immediately with the diff header. Do not write any conversational introduction or summary.\n"
+        f"7. Start immediately with the diff header on the very first line. Do not write any conversational introduction, reasoning, or summary.\n"
     )
 
 
@@ -145,6 +145,39 @@ def normalize_diff_context(diff_text: str, source_files: Optional[Dict[str, str]
     return "\n".join(new_lines) + "\n"
 
 
+def _detect_matching_source_file(code_body: str, source_files: Dict[str, str], text: str = "") -> Optional[str]:
+    """Identify the exact source file matching Python code without cross file pollution."""
+    # 1. Check for explicit path references in surrounding text or code
+    for file_path in source_files:
+        if file_path in text or file_path in code_body:
+            return file_path
+        base = file_path.split("/")[-1]
+        if base in text or base in code_body:
+            return file_path
+
+    # 2. Extract defined functions and classes
+    code_defs = set(re.findall(r"^(?:def|class|async def)\s+([a-zA-Z0-9_]+)", code_body, re.MULTILINE))
+    if not code_defs:
+        return None
+
+    scores: Dict[str, int] = {}
+    for file_path, content in source_files.items():
+        src_defs = set(re.findall(r"^(?:def|class|async def)\s+([a-zA-Z0-9_]+)", content, re.MULTILINE))
+        overlap = len(code_defs & src_defs)
+        if overlap > 0:
+            scores[file_path] = overlap
+
+    if not scores:
+        return None
+
+    sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    best_file, best_score = sorted_scores[0]
+    # If ambiguous tie between multiple files, do not guess
+    if len(sorted_scores) > 1 and sorted_scores[1][1] == best_score:
+        return None
+    return best_file
+
+
 def _strip_code_block(raw: str, source_files: Optional[Dict[str, str]] = None) -> str:
     """Cleans markdown code blocks or conversational text wrapping diff content."""
     text = raw.strip()
@@ -173,29 +206,41 @@ def _strip_code_block(raw: str, source_files: Optional[Dict[str, str]] = None) -
                     break
 
         if has_hunk:
-            result = "\n".join(diff_lines).strip()
-            clean = (result + "\n") if result else ""
-            return normalize_diff_context(clean, source_files)
+            # Confirm there is at least one modification line
+            has_mod = any(
+                l.startswith(("+", "-")) and not l.startswith(("+++", "---"))
+                for l in diff_lines
+            )
+            if has_mod:
+                result = "\n".join(diff_lines).strip()
+                clean = (result + "\n") if result else ""
+                normalized = normalize_diff_context(clean, source_files)
+                if "@@" in normalized:
+                    return normalized
+        return ""
 
     # Fallback: if model produced updated python code in fenced block instead of diff, compute unified diff
     if source_files:
         py_match = re.search(r"```(?:python)?\s*\n([\s\S]*?)```", text)
         if py_match:
             code_body = py_match.group(1).strip()
-            if code_body and any(kw in code_body for kw in ("import ", "from ", "def ", "class ", "with engine")):
-                for file_path, orig_content in source_files.items():
+            if code_body and any(kw in code_body for kw in ("import ", "from ", "def ", "class ", "with ")):
+                matched_file = _detect_matching_source_file(code_body, source_files, text)
+                if matched_file and matched_file in source_files:
+                    orig_content = source_files[matched_file]
                     orig_lines = orig_content.splitlines(keepends=True)
                     new_lines = [l + "\n" for l in code_body.splitlines()]
                     diff_lines = list(
                         difflib.unified_diff(
                             orig_lines,
                             new_lines,
-                            fromfile=f"a/{file_path}",
-                            tofile=f"b/{file_path}",
+                            fromfile=f"a/{matched_file}",
+                            tofile=f"b/{matched_file}",
                         )
                     )
                     if diff_lines:
                         return "".join(diff_lines)
+            return ""
 
     return raw.strip() + "\n"
 

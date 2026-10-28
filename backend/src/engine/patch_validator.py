@@ -89,6 +89,13 @@ def validate_patch(diff_content: str, recipe: TaskRecipe) -> PatchValidationResu
             violations=["No file headers matched in diff"],
         )
 
+    if not re.search(r"^@@\s+-\d+", diff_content, re.MULTILINE):
+        return PatchValidationResult(
+            valid=False,
+            reason="Candidate patch contains no valid diff hunks (incomplete or truncated diff)",
+            violations=["No diff hunks found in patch"],
+        )
+
     violations: List[str] = []
 
     for file_path in modified_files:

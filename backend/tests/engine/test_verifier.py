@@ -564,3 +564,29 @@ async def test_verifier_wrapped_env_pytest_command_identities_and_verification(v
     assert outcome.manifest.checks.collection_node_ids_match is True
     assert outcome.manifest.checks.tests_passed is True
     assert outcome.manifest.verified_version == "2.0.19"
+
+
+@pytest.mark.asyncio
+async def test_verifier_rejects_empty_or_truncated_diff_candidate(
+    test_recipe, baseline_preservation
+):
+    """Verify verifier handles truncated candidate patch gracefully without raising an unhandled exception."""
+    truncated = CandidatePatch(
+        candidate_id="cand-trunc",
+        diff_content="--- a/src/app.py\n+++ b/src/app.py\n",
+        modified_files=["src/app.py"],
+    )
+    sandbox = FakeSandboxAdapter(SandboxPreset.PATCH_APPLY_FAIL)
+    host = FakeHost()
+
+    outcome = await verify_candidate_patch(
+        candidate=truncated,
+        recipe=test_recipe,
+        sandbox=sandbox,
+        host=host,
+        baseline_collected_count=2,
+        baseline_preservation=baseline_preservation,
+    )
+    assert outcome.passed is False
+    assert outcome.reason == "patch_apply_failed"
+

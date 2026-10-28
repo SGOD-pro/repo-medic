@@ -1,8 +1,11 @@
+import logging
 import os
 from typing import Any, Dict, List, Optional
 import httpx
 from src.config import settings
 from src.engine.adapters import ModelAdapter
+
+logger = logging.getLogger("repomedic.token_factory_model")
 
 
 class TokenFactoryModelAdapter(ModelAdapter):
@@ -37,6 +40,7 @@ class TokenFactoryModelAdapter(ModelAdapter):
         self.call_count: int = 0
         self.prompts: List[str] = []
         self.last_usage: Dict[str, Any] = {}
+        self.last_finish_reason: Optional[str] = None
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
 
@@ -72,8 +76,9 @@ class TokenFactoryModelAdapter(ModelAdapter):
                     "role": "system",
                     "content": (
                         "You are an automated code repair system. "
-                        "Return strictly a minimal unified diff patch. "
-                        "Do not output any conversational analysis, explanations, or markdown outside the diff."
+                        "Your response MUST begin immediately on line 1 with the diff header (e.g. '--- a/path'). "
+                        "Do not include any conversational preamble, reasoning, explanations, or markdown outside the diff. "
+                        "Output strictly valid unified diff syntax."
                     ),
                 },
                 {"role": "user", "content": prompt},
@@ -108,6 +113,20 @@ class TokenFactoryModelAdapter(ModelAdapter):
             raise RuntimeError(f"Nebius Token Factory returned no choices: {data}")
 
         first_choice = choices[0]
+        finish_reason = first_choice.get("finish_reason")
+        self.last_finish_reason = finish_reason
+        if finish_reason == "length":
+            logger.warning(
+                "Nebius Token Factory completion truncated at token limit (finish_reason='length', model='%s')",
+                self.model,
+            )
+        else:
+            logger.info(
+                "Nebius Token Factory completion finished (finish_reason='%s', completion_tokens=%s)",
+                finish_reason,
+                self.last_usage.get("completion_tokens"),
+            )
+
         message = first_choice.get("message", {})
         content = message.get("content")
 

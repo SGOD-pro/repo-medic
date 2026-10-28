@@ -284,3 +284,69 @@ def test_strip_code_block_extracts_python_fallback():
     assert "--- a/src/shop/database.py" in res
     assert "+++ b/src/shop/database.py" in res
     assert "+    with engine.begin() as conn:" in res
+
+
+def test_truncated_output_with_bare_headers_and_no_hunks_is_rejected():
+    """Verify truncated output containing only headers is rejected without producing a valid patch."""
+    from src.engine.patch_validator import validate_patch
+
+    truncated_raw = (
+        "--- a/src/shop/database.py\n"
+        "+++ b/src/shop/database.py\n"
+    )
+    cleaned = _strip_code_block(truncated_raw)
+    assert cleaned == ""
+
+    recipe = TaskRecipe(
+        task_id="TASK-DEMO-SHOP",
+        title="Demo Shop Migration",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8c400721558392a23b3af71766f673da02f80040",
+        dependency="sqlalchemy",
+        from_version="1.4.48",
+        to_version="2.0.19",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/shop/database.py", "src/shop/models.py"],
+        expected_failure="Error",
+        timeout_seconds=60,
+        max_candidates=1,
+        max_refinements=0,
+    )
+    validation = validate_patch(truncated_raw, recipe)
+    assert validation.valid is False
+    assert "no valid diff hunks" in validation.reason
+
+
+def test_multi_file_disambiguation_prevents_cross_file_pollution():
+    """Verify python code fallback applies strictly to the source file whose definitions match."""
+    sources = {
+        "src/shop/database.py": "def get_db():\n    pass\n\ndef init_engine():\n    pass\n",
+        "src/shop/models.py": "class User:\n    pass\n\nclass Order:\n    pass\n",
+    }
+    python_block = (
+        "```python\n"
+        "def get_db():\n"
+        "    with engine.begin() as conn:\n"
+        "        pass\n"
+        "```"
+    )
+    diff = _strip_code_block(python_block, source_files=sources)
+    assert "--- a/src/shop/database.py" in diff
+    assert "src/shop/models.py" not in diff
+
+
+def test_ambiguous_python_fallback_is_rejected():
+    """Verify python code with unknown or tied definitions does not guess a random source file."""
+    sources = {
+        "src/shop/database.py": "def foo():\n    pass\n",
+        "src/shop/models.py": "def foo():\n    pass\n",
+    }
+    ambiguous_block = (
+        "```python\n"
+        "def foo():\n"
+        "    return 42\n"
+        "```"
+    )
+    diff = _strip_code_block(ambiguous_block, source_files=sources)
+    assert diff == ""
+
