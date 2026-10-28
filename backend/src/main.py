@@ -349,6 +349,17 @@ def create_app(
                 detail="Budget unavailable",
             )
 
+        active_runs = [
+            r
+            for r in repo.list_runs(task_id=payload.task_id, limit=5)
+            if r.state in ("queued", "running")
+        ]
+        if active_runs:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Active repair run '{active_runs[0].run_id}' is already in progress for task '{payload.task_id}'",
+            )
+
         prefix = getattr(settings, "repomedic_acceptance_prefix", "")
         run_id = f"{prefix}{uuid.uuid4().hex}" if prefix else f"run_{uuid.uuid4().hex}"
         run = repo.create_run(

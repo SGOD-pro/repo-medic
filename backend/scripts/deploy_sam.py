@@ -1,21 +1,16 @@
 import subprocess
 import sys
-from dotenv import dotenv_values
 
-vals = dotenv_values(".env")
-turso_url = vals.get("TURSO_DATABASE_URL", "")
-turso_token = vals.get("TURSO_AUTH_TOKEN", "")
-nebius_key = vals.get("NEBIUS_API_KEY", "")
-
+# Non-secret infrastructure parameters for deployment.
+# Secret parameters (Turso and Nebius credentials) are maintained in CloudFormation
+# state or referenced via AWS Systems Manager / Secrets Manager, rather than passed
+# as cleartext command-line arguments to avoid exposure in process tables or shell logs.
 overrides = [
     'Environment="production"',
     'AppOrigin="https://repo-medic-gamma.vercel.app"',
     'NebiusProjectId="aiproject-e00dze5s6fmv4cemqz"',
     'RepairMode="live"',
     'UseRealEngine="true"',
-    f'TursoDatabaseUrl="{turso_url}"',
-    f'TursoAuthToken="{turso_token}"',
-    f'NebiusApiKey="{nebius_key}"',
 ]
 
 cmd = [

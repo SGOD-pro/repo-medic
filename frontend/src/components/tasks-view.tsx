@@ -95,6 +95,7 @@ export function TasksView({
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isStarting, setIsStarting] = useState<boolean>(false);
 
   const selectedTaskIdRef = useRef(selectedTaskId);
   useEffect(() => {
@@ -528,17 +529,24 @@ export function TasksView({
 
             {/* Primary Action Button (The single sage primary button per DESIGN.md) */}
             <Button
-              onClick={() =>
-                onStartRun(
-                  selectedTask.id,
-                  strategy,
-                  executionMode === "sandbox_live" ? "live" : "offline"
-                )
-              }
-              className="w-full h-11 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-sm rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-none"
+              disabled={isStarting}
+              onClick={async () => {
+                if (isStarting) return;
+                setIsStarting(true);
+                try {
+                  await onStartRun(
+                    selectedTask.id,
+                    strategy,
+                    executionMode === "sandbox_live" ? "live" : "offline"
+                  );
+                } finally {
+                  setIsStarting(false);
+                }
+              }}
+              className="w-full h-11 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-sm rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-none disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <Play className="size-4 fill-current" />
-              Start repair run
+              {isStarting ? "Starting repair run..." : "Start repair run"}
             </Button>
 
             {/* Inspect Links below button */}

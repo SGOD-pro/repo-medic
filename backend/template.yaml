@@ -14,10 +14,12 @@ Parameters:
   TursoDatabaseUrl:
     Type: String
     NoEcho: true
+    Default: ""
     Description: Remote Turso libSQL database URL
   TursoAuthToken:
     Type: String
     NoEcho: true
+    Default: ""
     Description: Remote Turso libSQL authorization token
   NebiusApiKey:
     Type: String

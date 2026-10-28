@@ -149,8 +149,6 @@ export default function Home() {
       setActiveTab("run_active");
     } catch (err) {
       console.error("Failed to start run:", err);
-      setRunStartedAt(Date.now());
-      setActiveTab("run_active");
     }
   };
 

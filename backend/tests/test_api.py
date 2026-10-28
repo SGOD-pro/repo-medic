@@ -402,6 +402,30 @@ def test_create_run_budget_and_mode_guards(test_app_and_repo, monkeypatch):
     assert resp_global.json()["error"]["message"] == "Budget unavailable"
 
 
+def test_create_run_rejects_concurrent_active_run_for_same_task(test_app_and_repo):
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-concurrent-check",
+        "title": "Concurrent task test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+    client = TestClient(app)
+
+    # First run created successfully
+    resp1 = client.post("/api/runs", json={"task_id": "task-concurrent-check", "search_mode": "sequential"})
+    assert resp1.status_code == 202
+    run1_id = resp1.json()["run_id"]
+
+    # Second run for same task while first is queued/running returns 409 Conflict
+    resp2 = client.post("/api/runs", json={"task_id": "task-concurrent-check", "search_mode": "sequential"})
+    assert resp2.status_code == 409
+    assert f"Active repair run '{run1_id}' is already in progress" in resp2.json()["error"]["message"]
+
+
 def test_startup_recovery_interrupted_runs(monkeypatch):
     from src.config import settings
     monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
