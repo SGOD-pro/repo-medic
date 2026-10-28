@@ -149,59 +149,53 @@ def _strip_code_block(raw: str, source_files: Optional[Dict[str, str]] = None) -
     """Cleans markdown code blocks or conversational text wrapping diff content."""
     text = raw.strip()
 
-    # 1. Look for fenced diff or patch blocks
-    fenced_match = re.search(r"```(?:diff|patch)?\s*\n([\s\S]*?)```", text)
-    if fenced_match:
-        inner = fenced_match.group(1).strip()
-        if "--- a/" in inner or "diff --git" in inner:
-            text = inner
-
-    # 2. Find start of unified diff header
     diff_start = re.search(r"(?:^|\n)(diff --git\s+|---(?:\s+[ab]/|\s+\S))", text)
     if diff_start:
         start_idx = diff_start.start(1)
-        text = text[start_idx:]
-
-        # 3. Strip trailing conversational commentary after diff hunks
-        lines = text.splitlines()
+        sub = text[start_idx:]
+        lines = sub.splitlines()
         diff_lines: List[str] = []
         in_hunk = False
+        has_hunk = False
         for line in lines:
-            if line.startswith(("diff --git ", "--- ", "+++ ", "index ")):
+            if line.startswith("```"):
+                continue
+            if line.startswith(("diff --git ", "--- ", "+++ ", "index ", "similarity ", "rename ", "new file ", "deleted file ")):
                 diff_lines.append(line)
             elif line.startswith("@@"):
                 in_hunk = True
+                has_hunk = True
                 diff_lines.append(line)
             elif in_hunk:
                 if line.startswith(("+", "-", " ", "\\")) or line == "":
                     diff_lines.append(line)
                 else:
                     break
-            else:
-                diff_lines.append(line)
 
-        result = "\n".join(diff_lines).strip()
-        clean = (result + "\n") if result else (raw.strip() + "\n")
-        return normalize_diff_context(clean, source_files)
+        if has_hunk:
+            result = "\n".join(diff_lines).strip()
+            clean = (result + "\n") if result else ""
+            return normalize_diff_context(clean, source_files)
 
-    # 4. Fallback: if model produced updated python code in fenced block instead of diff, compute unified diff
+    # Fallback: if model produced updated python code in fenced block instead of diff, compute unified diff
     if source_files:
-        py_match = re.search(r"```(?:python)\s*\n([\s\S]*?)```", text)
-        code_body = py_match.group(1).strip() if py_match else ""
-        if code_body and code_body.startswith(("import ", "from ", "#!", "class ", "def ")):
-            for file_path, orig_content in source_files.items():
-                orig_lines = orig_content.splitlines(keepends=True)
-                new_lines = [line_str + "\n" for line_str in code_body.splitlines()]
-                diff_lines = list(
-                    difflib.unified_diff(
-                        orig_lines,
-                        new_lines,
-                        fromfile=f"a/{file_path}",
-                        tofile=f"b/{file_path}",
+        py_match = re.search(r"```(?:python)?\s*\n([\s\S]*?)```", text)
+        if py_match:
+            code_body = py_match.group(1).strip()
+            if code_body and any(kw in code_body for kw in ("import ", "from ", "def ", "class ", "with engine")):
+                for file_path, orig_content in source_files.items():
+                    orig_lines = orig_content.splitlines(keepends=True)
+                    new_lines = [l + "\n" for l in code_body.splitlines()]
+                    diff_lines = list(
+                        difflib.unified_diff(
+                            orig_lines,
+                            new_lines,
+                            fromfile=f"a/{file_path}",
+                            tofile=f"b/{file_path}",
+                        )
                     )
-                )
-                if diff_lines:
-                    return "".join(diff_lines)
+                    if diff_lines:
+                        return "".join(diff_lines)
 
     return raw.strip() + "\n"
 

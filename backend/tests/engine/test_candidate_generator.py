@@ -257,3 +257,30 @@ async def test_repair_filters_source_files_to_failing_error_files():
     assert "databases/core.py" not in cat_calls
     assert "File: databases/backends/sqlite.py" in model.last_prompt
     assert "File: databases/core.py" not in model.last_prompt
+
+
+def test_strip_code_block_cleans_fenced_markdown_with_commentary_around_hunk():
+    raw = (
+        "Explanation here\n"
+        "--- a/src/shop/database.py\n"
+        "+++ b/src/shop/database.py\n"
+        "```diff\n"
+        "@@ -1,5 +1,6 @@\n"
+        "-def foo():\n"
+        "+def bar():\n"
+        "```\n"
+    )
+    res = _strip_code_block(raw)
+    assert res.startswith("--- a/src/shop/database.py\n+++ b/src/shop/database.py")
+    assert "```" not in res
+    assert "Explanation here" not in res
+    assert "@@ -1,5 +1,6 @@" in res
+
+
+def test_strip_code_block_extracts_python_fallback():
+    orig = "def foo():\n    engine.execute('select 1')\n"
+    sample_py = "Here is the code:\n```python\ndef foo():\n    with engine.begin() as conn:\n        conn.execute('select 1')\n```"
+    res = _strip_code_block(sample_py, source_files={"src/shop/database.py": orig})
+    assert "--- a/src/shop/database.py" in res
+    assert "+++ b/src/shop/database.py" in res
+    assert "+    with engine.begin() as conn:" in res

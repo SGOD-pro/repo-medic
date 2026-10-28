@@ -92,6 +92,18 @@ MIGRATIONS = [
 ]
 
 
+def _ensure_payload_hash_column(conn: Any) -> None:
+    try:
+        cur = conn.execute("PRAGMA table_info(idempotency_keys);")
+        columns = [row[1] for row in cur.fetchall()]
+        if columns and "payload_hash" not in columns:
+            logger.info("Migrating idempotency_keys table to add payload_hash column")
+            conn.execute("ALTER TABLE idempotency_keys ADD COLUMN payload_hash TEXT NOT NULL DEFAULT '';")
+            conn.commit()
+    except Exception as e:
+        logger.warning("Could not check or add payload_hash column: %s", e)
+
+
 def apply_migrations(conn: Any) -> list[str]:
     """Apply pending schema migrations to libSQL / SQLite connection idempotently."""
     conn.execute(
@@ -123,4 +135,5 @@ def apply_migrations(conn: Any) -> list[str]:
             conn.commit()
             newly_applied.append(version)
 
+    _ensure_payload_hash_column(conn)
     return newly_applied
