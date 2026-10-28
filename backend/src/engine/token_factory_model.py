@@ -46,6 +46,7 @@ class TokenFactoryModelAdapter(ModelAdapter):
         self.prompts: List[str] = []
         self.last_usage: Dict[str, Any] = {}
         self.last_finish_reason: Optional[str] = None
+        self.last_truncated_content: Optional[str] = None
         self.total_prompt_tokens: int = 0
         self.total_completion_tokens: int = 0
 
@@ -122,11 +123,17 @@ class TokenFactoryModelAdapter(ModelAdapter):
         first_choice = choices[0]
         finish_reason = first_choice.get("finish_reason")
         self.last_finish_reason = finish_reason
+        message = first_choice.get("message", {})
+        content = message.get("content")
+
         if finish_reason == "length":
+            raw_snippet = content[:300] if content else "(empty content)"
+            self.last_truncated_content = raw_snippet
             logger.warning(
-                "Nebius Token Factory completion truncated at token limit (finish_reason='length', model='%s', completion_tokens=%s)",
+                "Nebius Token Factory completion truncated at token limit (finish_reason='length', model='%s', completion_tokens=%s, snippet=%r)",
                 self.model,
                 self.last_usage.get("completion_tokens"),
+                raw_snippet[:100],
             )
             raise RuntimeError(
                 f"Model completion truncated at token limit (finish_reason='length', model='{self.model}')"
@@ -137,9 +144,6 @@ class TokenFactoryModelAdapter(ModelAdapter):
                 finish_reason,
                 self.last_usage.get("completion_tokens"),
             )
-
-        message = first_choice.get("message", {})
-        content = message.get("content")
 
         if content:
             return content.strip()

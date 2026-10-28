@@ -236,3 +236,36 @@ async def test_token_factory_complete_no_choices_error():
         mock_post.return_value = mock_resp
         with pytest.raises(RuntimeError, match="Nebius Token Factory returned no choices"):
             await adapter.complete("Fix bug")
+
+
+@pytest.mark.asyncio
+async def test_token_factory_truncation_retains_diagnostics():
+    """covers: AC-7 - Retains sanitized diagnostics and truncated content snippet on length finish reason."""
+    adapter = TokenFactoryModelAdapter(
+        api_key="test-api-key-123456789",
+        base_url="https://api.test/v1/",
+        model="nvidia/nemotron-3-super-120b-a12b",
+    )
+
+    mock_resp = httpx.Response(
+        status_code=200,
+        json={
+            "choices": [
+                {
+                    "message": {"content": "--- a/src/truncated.py\n+++ b/src/truncated.py"},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"completion_tokens": 2048, "prompt_tokens": 500},
+        },
+        request=httpx.Request("POST", "https://api.test/v1/chat/completions"),
+    )
+
+    with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+        mock_post.return_value = mock_resp
+        with pytest.raises(RuntimeError, match="Model completion truncated at token limit"):
+            await adapter.complete("Fix bug")
+        assert adapter.last_finish_reason == "length"
+        assert adapter.last_truncated_content == "--- a/src/truncated.py\n+++ b/src/truncated.py"
+        assert adapter.last_usage.get("completion_tokens") == 2048
+
