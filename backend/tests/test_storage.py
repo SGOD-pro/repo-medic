@@ -5,6 +5,7 @@ import json
 import base64
 import hashlib
 import re
+import datetime
 from typing import Any, Dict, List, Optional
 import httpx
 
@@ -88,6 +89,7 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
     CREATE TABLE IF NOT EXISTS idempotency_keys (
       key TEXT PRIMARY KEY,
       run_id TEXT NOT NULL REFERENCES runs(run_id),
+      payload_hash TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL
     );
     """)
@@ -253,6 +255,7 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                     "search_mode": r["search_mode"],
                     "state": r["state"],
                     "reason": r["reason"],
+                    "created_at": r["created_at"],
                     "max_run_micro_usd": r["max_run_micro_usd"],
                     "usage": usage,
                     "artifacts": artifacts_by_run.get(r["run_id"], []),
@@ -263,9 +266,15 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
         if method == "POST" and path == "/api/runs":
             body = json.loads(request.content.decode("utf-8"))
             idempotency_key = body.get("idempotency_key")
+            payload_dict = {"mode": body.get("mode"), "search_mode": body.get("search_mode"), "task_id": body.get("task_id")}
+            payload_hash = hashlib.sha256(json.dumps(payload_dict, sort_keys=True).encode("utf-8")).hexdigest()
+
             if idempotency_key:
-                row_idemp = conn.execute("SELECT run_id FROM idempotency_keys WHERE key = ?", (idempotency_key,)).fetchone()
+                row_idemp = conn.execute("SELECT run_id, payload_hash FROM idempotency_keys WHERE key = ?", (idempotency_key,)).fetchone()
                 if row_idemp:
+                    stored_hash = row_idemp["payload_hash"] if "payload_hash" in row_idemp.keys() else ""
+                    if stored_hash and stored_hash != payload_hash:
+                        return httpx.Response(409, json={"error": {"code": "idempotency_conflict", "message": "Idempotency key reuse with different payload is not permitted"}})
                     return httpx.Response(200, json={"ok": True, "run_id": row_idemp["run_id"], "idempotent_replay": True})
 
             run_id = body.get("run_id")
@@ -285,7 +294,7 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
             initial_usage = json.dumps(
                 {"model_calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_usd": 0}
             )
-            created_at_val = body.get("created_at", "2026-10-10T00:00:00Z")
+            created_at_val = body.get("created_at") or datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             updated_at_val = body.get("updated_at", created_at_val)
             try:
                 conn.execute(
@@ -303,9 +312,16 @@ def create_sqlite_d1_transport(expected_token: str = "test-token") -> httpx.Base
                     ),
                 )
                 if idempotency_key:
-                    conn.execute("INSERT INTO idempotency_keys VALUES (?, ?, ?)", (idempotency_key, run_id, created_at_val))
+                    conn.execute("INSERT INTO idempotency_keys VALUES (?, ?, ?, ?)", (idempotency_key, run_id, payload_hash, created_at_val))
             except sqlite3.IntegrityError as e:
                 err_str = str(e).lower()
+                if idempotency_key and "idempotency_keys" in err_str:
+                    row_idemp2 = conn.execute("SELECT run_id, payload_hash FROM idempotency_keys WHERE key = ?", (idempotency_key,)).fetchone()
+                    if row_idemp2:
+                        stored_hash = row_idemp2["payload_hash"] if "payload_hash" in row_idemp2.keys() else ""
+                        if stored_hash and stored_hash != payload_hash:
+                            return httpx.Response(409, json={"error": {"code": "idempotency_conflict", "message": "Idempotency key reuse with different payload is not permitted"}})
+                        return httpx.Response(200, json={"ok": True, "run_id": row_idemp2["run_id"], "idempotent_replay": True})
                 if "idx_active_run_per_task" in err_str or "unique constraint" in err_str:
                     active = conn.execute(
                         "SELECT run_id FROM runs WHERE task_id = ? AND state IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",

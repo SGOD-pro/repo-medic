@@ -484,12 +484,115 @@ def test_create_run_idempotency_retry_returns_original_run(test_app_and_repo):
     run2 = resp2.json()
     assert run1["run_id"] == run2["run_id"]
 
-    key_body = "idem-body-key-888"
-    resp3 = client.post(
+    # Reusing the exact same key with a different payload must be rejected
+    resp_diff = client.post(
         "/api/runs",
-        json={"task_id": "task-idemp-test", "search_mode": "sequential", "idempotency_key": key_body},
+        headers={"Idempotency-Key": key},
+        json={"task_id": "task-idemp-test", "search_mode": "branch_refine"},
     )
-    assert resp3.status_code == 409
+    assert resp_diff.status_code == 409
+    assert resp_diff.json()["error"]["code"] == "idempotency_conflict"
+
+
+def test_concurrent_requests_separate_connections(test_app_and_repo):
+    import concurrent.futures
+
+    app, repo = test_app_and_repo
+    repo.upsert_task({
+        "task_id": "task-concurrent-conn",
+        "title": "Concurrent conn test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+    key = "idem-concurrent-shared-key"
+
+    def submit():
+        c = TestClient(app)
+        return c.post(
+            "/api/runs",
+            headers={"Idempotency-Key": key},
+            json={"task_id": "task-concurrent-conn", "search_mode": "sequential"},
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(submit)
+        f2 = executor.submit(submit)
+        r1 = f1.result()
+        r2 = f2.result()
+
+    assert r1.status_code == 202
+    assert r2.status_code == 202
+    assert r1.json()["run_id"] == r2.json()["run_id"]
+
+
+def test_dispatch_failure_marks_run_failed(test_app_and_repo, monkeypatch):
+    from src.config import settings
+    monkeypatch.setattr(settings, "repair_queue_url", "https://sqs.mock/queue")
+
+    class FailingSQSClient:
+        def send_message(self, **kwargs):
+            raise RuntimeError("SQS connectivity failure")
+
+    app, repo = test_app_and_repo
+    app.state.sqs_client = FailingSQSClient()
+
+    repo.upsert_task({
+        "task_id": "task-dispatch-fail",
+        "title": "Dispatch fail test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+
+    client = TestClient(app)
+    resp = client.post("/api/runs", json={"task_id": "task-dispatch-fail", "search_mode": "sequential"})
+    assert resp.status_code == 500
+
+    # Ensure run did not remain silently queued
+    runs = repo.list_runs(task_id="task-dispatch-fail")
+    assert len(runs) == 1
+    assert runs[0].state == "failed"
+    assert "Failed to enqueue" in (runs[0].reason or "")
+
+
+def test_stale_queued_run_recovery_on_startup(test_app_and_repo, monkeypatch):
+    from src.config import settings
+    from src.main import recover_interrupted_runs
+
+    monkeypatch.setattr(settings, "repomedic_worker_enabled", False)
+    app, repo = test_app_and_repo
+
+    repo.upsert_task({
+        "task_id": "task-stale-queued",
+        "title": "Stale queued test",
+        "repository_url": "https://github.com/example/repo",
+        "commit_sha": "abcdef123456",
+        "dependency": "pytest",
+        "from_version": "7.0.0",
+        "to_version": "8.0.0",
+    })
+    # Create run created in the past
+    past_iso = "2026-10-01T00:00:00Z"
+    repo.create_run(
+        run_id="run-stale-1",
+        task_id="task-stale-queued",
+        mode="offline",
+        search_mode="sequential",
+        state="queued",
+        created_at=past_iso,
+    )
+
+    # Run recovery with 10 second timeout threshold
+    recover_interrupted_runs(repo, stale_queued_seconds=10.0)
+
+    r = repo.get_run("run-stale-1")
+    assert r.state == "failed"
+    assert "timed out in queue" in (r.reason or "")
 
 
 def test_create_run_allowed_after_prior_run_completed(test_app_and_repo):

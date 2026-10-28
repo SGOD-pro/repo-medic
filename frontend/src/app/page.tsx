@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Navbar, ActiveTab } from "@/components/navbar";
 import { Footer } from "@/components/footer";
 import { TasksView } from "@/components/tasks-view";
@@ -20,6 +20,17 @@ export default function Home() {
 
   const apiClient = useMemo(() => createApiClient(), []);
   const { addRun, updateRun } = useHistoryStore();
+  const idempotencyKeysRef = useRef<Record<string, string>>({});
+
+  const getOrGenerateKey = (taskId: string) => {
+    if (!idempotencyKeysRef.current[taskId]) {
+      idempotencyKeysRef.current[taskId] =
+        typeof crypto !== "undefined" && crypto.randomUUID
+          ? crypto.randomUUID()
+          : `idemp_${taskId}_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    }
+    return idempotencyKeysRef.current[taskId];
+  };
 
   // URL search parameter synchronization & reload on initial boot
   useEffect(() => {
@@ -118,8 +129,10 @@ export default function Home() {
   };
 
   const handleStartRun = async (taskId: string, chosenStrategy: SearchMode, mode?: Mode) => {
+    const idempotencyKey = getOrGenerateKey(taskId);
     try {
-      const run = await apiClient.startRun(taskId, chosenStrategy, mode);
+      const run = await apiClient.startRun(taskId, chosenStrategy, mode, idempotencyKey);
+      delete idempotencyKeysRef.current[taskId];
       setActiveRun(run);
       setRunStartedAt(Date.now());
 

@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import datetime
+import hashlib
 import json
 import logging
 import os
@@ -248,19 +249,29 @@ class TursoClient:
         max_micro_usd = int(max_run_usd * 1_000_000)
         now = created_at or _now_iso()
         initial_usage = json.dumps({"model_calls": 0, "input_tokens": 0, "output_tokens": 0, "estimated_usd": 0})
+        payload_dict = {"mode": mode, "search_mode": search_mode, "task_id": task_id}
+        payload_hash = hashlib.sha256(json.dumps(payload_dict, sort_keys=True).encode("utf-8")).hexdigest()
 
         with self._op_lock():
             if idempotency_key:
-                cur = self._conn.execute("SELECT run_id FROM idempotency_keys WHERE key = ?", (idempotency_key,))
+                cur = self._conn.execute("SELECT run_id, payload_hash FROM idempotency_keys WHERE key = ?", (idempotency_key,))
                 row = cur.fetchone()
                 if row:
-                    return {"ok": True, "run_id": row[0], "idempotent_replay": True}
+                    stored_run_id = row[0]
+                    stored_hash = row[1] if len(row) > 1 and row[1] else ""
+                    if stored_hash and stored_hash != payload_hash:
+                        raise StorageConflictError(
+                            "idempotency_conflict",
+                            f"Idempotency key '{idempotency_key}' reuse with different payload is not permitted",
+                        )
+                    return {"ok": True, "run_id": stored_run_id, "idempotent_replay": True}
 
             cur = self._conn.execute("SELECT 1 FROM runs WHERE run_id = ?", (run_id,))
             if cur.fetchone():
                 raise StorageConflictError("run_already_exists", f"Run with ID '{run_id}' already exists")
 
             try:
+                self._conn.execute("BEGIN IMMEDIATE;")
                 self._conn.execute(
                     """INSERT INTO runs (
                          run_id, task_id, mode, search_mode, state, reason,
@@ -271,13 +282,31 @@ class TursoClient:
                 )
                 if idempotency_key:
                     self._conn.execute(
-                        "INSERT INTO idempotency_keys (key, run_id, created_at) VALUES (?, ?, ?)",
-                        (idempotency_key, run_id, now),
+                        "INSERT INTO idempotency_keys (key, run_id, payload_hash, created_at) VALUES (?, ?, ?, ?)",
+                        (idempotency_key, run_id, payload_hash, now),
                     )
-                self._conn.commit()
+                self._conn.execute("COMMIT;")
             except Exception as e:
-                self._conn.rollback()
+                try:
+                    self._conn.execute("ROLLBACK;")
+                except Exception:
+                    pass
                 err_str = str(e).lower()
+                if idempotency_key and "idempotency_keys" in err_str:
+                    cur = self._conn.execute(
+                        "SELECT run_id, payload_hash FROM idempotency_keys WHERE key = ?",
+                        (idempotency_key,),
+                    )
+                    row = cur.fetchone()
+                    if row:
+                        stored_run_id = row[0]
+                        stored_hash = row[1] if len(row) > 1 and row[1] else ""
+                        if stored_hash and stored_hash != payload_hash:
+                            raise StorageConflictError(
+                                "idempotency_conflict",
+                                f"Idempotency key '{idempotency_key}' reuse with different payload is not permitted",
+                            )
+                        return {"ok": True, "run_id": stored_run_id, "idempotent_replay": True}
                 if "idx_active_run_per_task" in err_str or "unique constraint" in err_str:
                     cur = self._conn.execute(
                         "SELECT run_id FROM runs WHERE task_id = ? AND state IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1",

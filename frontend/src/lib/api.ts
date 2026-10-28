@@ -10,7 +10,7 @@ import {
 
 export interface RepoMedicApiClient {
   getTasks(): Promise<TaskSummary[]>;
-  startRun(taskId: string, searchMode: SearchMode, mode?: Mode): Promise<RunSummary>;
+  startRun(taskId: string, searchMode: SearchMode, mode?: Mode, idempotencyKey?: string): Promise<RunSummary>;
   getRun(runId: string): Promise<RunSummary>;
   cancelRun(runId: string): Promise<RunSummary>;
   getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]>;
@@ -99,7 +99,12 @@ export class MockTransport implements RepoMedicApiClient {
     return Promise.resolve(CURATED_TASKS);
   }
 
-  async startRun(taskId: string, searchMode: SearchMode, mode?: Mode): Promise<RunSummary> {
+  async startRun(
+    taskId: string,
+    searchMode: SearchMode,
+    mode?: Mode,
+    _idempotencyKey?: string
+  ): Promise<RunSummary> {
     const task = CURATED_TASKS.find((t) => t.task_id === taskId) || CURATED_TASKS[0];
     const runId = `run_${task.task_id.toLowerCase().replace("-", "_")}_${Date.now()}`;
     const run: RunSummary = {
@@ -317,14 +322,24 @@ export class HttpTransport implements RepoMedicApiClient {
     return data.tasks;
   }
 
-  async startRun(taskId: string, searchMode: SearchMode, mode?: Mode): Promise<RunSummary> {
+  async startRun(
+    taskId: string,
+    searchMode: SearchMode,
+    mode?: Mode,
+    idempotencyKey?: string
+  ): Promise<RunSummary> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (idempotencyKey) {
+      headers["Idempotency-Key"] = idempotencyKey;
+    }
     const res = await fetch(`${this.baseUrl}/runs`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify({
         task_id: taskId,
         search_mode: searchMode,
         ...(mode ? { mode } : {}),
+        ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
       }),
     });
     if (!res.ok) {

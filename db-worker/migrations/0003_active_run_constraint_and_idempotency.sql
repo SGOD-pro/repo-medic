@@ -6,6 +6,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_active_run_per_task ON runs(task_id) WHERE
 CREATE TABLE IF NOT EXISTS idempotency_keys (
   key TEXT PRIMARY KEY,
   run_id TEXT NOT NULL REFERENCES runs(run_id),
+  payload_hash TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
 

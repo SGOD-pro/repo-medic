@@ -124,6 +124,7 @@ class D1StorageRepository:
             search_mode=search_mode,
             state=data["state"],
             reason=data.get("reason"),
+            created_at=data.get("created_at"),
             max_run_micro_usd=data.get("max_run_micro_usd", 0),
             usage=usage,
             artifacts=artifacts,

@@ -400,3 +400,86 @@ def test_operation_endpoint_disabled_in_production(turso_repo, monkeypatch):
     )
     assert resp_dev.status_code == 201
     assert resp_dev.json().get("ok") is True
+
+
+def test_failed_key_insertion_rolls_back_run(tmp_path, monkeypatch):
+    db_file = str(tmp_path / "test_rollback.db")
+    client = TursoClient(database=db_file)
+
+    # Corrupt or add a trigger that causes insert into idempotency_keys to fail
+    client._conn.execute("""
+    CREATE TRIGGER fail_idempotency_key BEFORE INSERT ON idempotency_keys
+    BEGIN
+        SELECT RAISE(FAIL, 'simulated key insertion failure');
+    END;
+    """)
+
+    with pytest.raises(Exception) as exc_info:
+        client.create_run(
+            run_id="run_should_rollback",
+            task_id="task_fail",
+            mode="offline",
+            search_mode="sequential",
+            idempotency_key="key_will_fail",
+        )
+    assert "simulated key insertion failure" in str(exc_info.value)
+
+    # Verify atomic rollback: run_should_rollback must NOT exist in runs table
+    cur = client._conn.execute("SELECT 1 FROM runs WHERE run_id = 'run_should_rollback'")
+    assert cur.fetchone() is None
+    client.close()
+
+
+def test_turso_concurrent_idempotent_creates(tmp_path):
+    import concurrent.futures
+
+    db_file = str(tmp_path / "test_concurrent_turso.db")
+    client1 = TursoClient(database=db_file)
+    client2 = TursoClient(database=db_file)
+
+    task_data = {
+        "task_id": "TASK-CONC-1",
+        "title": "Concurrent task",
+        "repository_url": "https://github.com/example/repo.git",
+        "commit_sha": "abc1234",
+        "dependency": "libsql",
+        "from_version": "0.1.0",
+        "to_version": "0.2.0",
+        "test_command": ["pytest"],
+    }
+    client1.upsert_task(task_data)
+
+    key = "idem_shared_turso_key"
+
+    def submit(client, run_id, payload):
+        return client.create_run(
+            run_id=run_id,
+            task_id=payload["task_id"],
+            mode=payload["mode"],
+            search_mode=payload["search_mode"],
+            idempotency_key=key,
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        f1 = executor.submit(submit, client1, "run_conc_1", {"task_id": "TASK-CONC-1", "mode": "offline", "search_mode": "sequential"})
+        f2 = executor.submit(submit, client2, "run_conc_2", {"task_id": "TASK-CONC-1", "mode": "offline", "search_mode": "sequential"})
+        r1 = f1.result()
+        r2 = f2.result()
+
+    assert r1["run_id"] == r2["run_id"]
+    is_replay = [r.get("idempotent_replay", False) for r in (r1, r2)]
+    assert is_replay.count(True) == 1
+
+    # Key reuse with different payload is rejected
+    with pytest.raises(StorageConflictError) as exc_info:
+        client1.create_run(
+            run_id="run_conc_3",
+            task_id="TASK-CONC-1",
+            mode="live",
+            search_mode="branch_refine",
+            idempotency_key=key,
+        )
+    assert exc_info.value.code == "idempotency_conflict"
+
+    client1.close()
+    client2.close()

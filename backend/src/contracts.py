@@ -50,6 +50,7 @@ class RunSummary(BaseModel):
     search_mode: SearchMode
     state: RunState
     reason: str | None = None
+    created_at: str | None = None
     max_run_micro_usd: int | None = 0
     usage: UsageSummary
     artifacts: list[ArtifactSummary] = Field(default_factory=list)

@@ -353,12 +353,26 @@ export default {
           estimated_usd: 0,
         });
 
+        const payloadDict = { mode: body.mode, search_mode: body.search_mode, task_id: body.task_id };
+        const payloadStr = JSON.stringify(payloadDict, Object.keys(payloadDict).sort());
+        const msgBuffer = new TextEncoder().encode(payloadStr);
+        const hashBuffer = await crypto.subtle.digest("SHA-256", msgBuffer);
+        const hashArray = Array.from(new Uint8Array(hashBuffer));
+        const payloadHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+
         const idempotencyKey = body.idempotency_key;
         if (idempotencyKey) {
           const existingKey = await env.DB.prepare(
-            "SELECT run_id FROM idempotency_keys WHERE key = ?"
-          ).bind(idempotencyKey).first<{ run_id: string }>();
+            "SELECT run_id, payload_hash FROM idempotency_keys WHERE key = ?"
+          ).bind(idempotencyKey).first<{ run_id: string; payload_hash: string }>();
           if (existingKey) {
+            if (existingKey.payload_hash && existingKey.payload_hash !== payloadHash) {
+              return errorResponse(
+                "idempotency_conflict",
+                `Idempotency key '${idempotencyKey}' reuse with different payload is not permitted`,
+                409
+              );
+            }
             return jsonResponse({ ok: true, run_id: existingKey.run_id, idempotent_replay: true }, 200);
           }
         }
@@ -376,11 +390,26 @@ export default {
 
           if (idempotencyKey) {
             await env.DB.prepare(
-              "INSERT INTO idempotency_keys (key, run_id, created_at) VALUES (?, ?, ?)"
-            ).bind(idempotencyKey, body.run_id, now).run();
+              "INSERT INTO idempotency_keys (key, run_id, payload_hash, created_at) VALUES (?, ?, ?, ?)"
+            ).bind(idempotencyKey, body.run_id, payloadHash, now).run();
           }
         } catch (err: unknown) {
           const errStr = String(err).toLowerCase();
+          if (idempotencyKey && errStr.includes("idempotency_keys")) {
+            const existingKey2 = await env.DB.prepare(
+              "SELECT run_id, payload_hash FROM idempotency_keys WHERE key = ?"
+            ).bind(idempotencyKey).first<{ run_id: string; payload_hash: string }>();
+            if (existingKey2) {
+              if (existingKey2.payload_hash && existingKey2.payload_hash !== payloadHash) {
+                return errorResponse(
+                  "idempotency_conflict",
+                  `Idempotency key '${idempotencyKey}' reuse with different payload is not permitted`,
+                  409
+                );
+              }
+              return jsonResponse({ ok: true, run_id: existingKey2.run_id, idempotent_replay: true }, 200);
+            }
+          }
           if (errStr.includes("idx_active_run_per_task") || errStr.includes("unique")) {
             const activeRun = await env.DB.prepare(
               "SELECT run_id FROM runs WHERE task_id = ? AND state IN ('queued', 'running') ORDER BY created_at DESC LIMIT 1"

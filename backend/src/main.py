@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import faulthandler
 import json
 import logging
@@ -94,10 +95,13 @@ def sync_task_fixtures(
 def recover_interrupted_runs(
     repo: D1StorageRepository,
     acceptance_prefix: str | None = None,
+    stale_queued_seconds: float | None = None,
 ) -> None:
-    """Transition any runs left in 'running' state on restart to 'failed'."""
+    """Transition runs left in 'running' state, or stale 'queued' runs whose dispatch crashed, to 'failed'."""
     if acceptance_prefix is None:
         acceptance_prefix = getattr(settings, "repomedic_acceptance_prefix", "")
+    if stale_queued_seconds is None:
+        stale_queued_seconds = getattr(settings, "repomedic_stale_queued_timeout_seconds", 300.0)
     try:
         while True:
             interrupted = repo.list_runs(
@@ -130,6 +134,33 @@ def recover_interrupted_runs(
                 break
     except Exception as e:
         logger.warning("Could not query interrupted runs during startup recovery: %s", e)
+
+    # Recover stale queued runs whose dispatch process died
+    try:
+        queued_runs = repo.list_runs(
+            limit=100,
+            state="queued",
+            run_prefix=acceptance_prefix or None,
+        )
+        now_dt = datetime.datetime.now(datetime.timezone.utc)
+        for r in queued_runs:
+            if acceptance_prefix and not r.run_id.startswith(acceptance_prefix):
+                continue
+            if r.created_at:
+                try:
+                    created_dt = datetime.datetime.fromisoformat(r.created_at.replace("Z", "+00:00"))
+                    age = (now_dt - created_dt).total_seconds()
+                    if age > stale_queued_seconds:
+                        repo.finish_run(
+                            r.run_id,
+                            state="failed",
+                            reason="Run timed out in queue without dispatch or worker claim",
+                        )
+                        logger.warning("Marked stale queued run %s (age %.1fs) as failed", r.run_id, age)
+                except Exception as parse_err:
+                    logger.debug("Could not parse created_at for run %s: %s", r.run_id, parse_err)
+    except Exception as e:
+        logger.warning("Could not query stale queued runs during recovery: %s", e)
 
 
 def get_repository(request: Request) -> D1StorageRepository:
@@ -349,6 +380,24 @@ def create_app(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Budget unavailable",
             )
+
+        stale_timeout = getattr(settings, "repomedic_stale_queued_timeout_seconds", 300.0)
+        existing_queued = [
+            r for r in repo.list_runs(task_id=payload.task_id, limit=5)
+            if r.state == "queued" and r.created_at
+        ]
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+        for qr in existing_queued:
+            try:
+                c_dt = datetime.datetime.fromisoformat(qr.created_at.replace("Z", "+00:00"))
+                if (now_utc - c_dt).total_seconds() > stale_timeout:
+                    repo.finish_run(
+                        qr.run_id,
+                        state="failed",
+                        reason="Run timed out in queue without dispatch or worker claim",
+                    )
+            except Exception:
+                pass
 
         raw_idemp = request.headers.get("Idempotency-Key") or request.headers.get("idempotency-key") or payload.idempotency_key
         idempotency_key = raw_idemp.strip() if raw_idemp and raw_idemp.strip() else None
