@@ -281,8 +281,9 @@ print(f"ACTIVE_COUNT:{len(active)}")
     }
 
     console.log("Cloning fresh copy of repository at pinned SHA 8b635e7ff84556962f6ec4fee43523778461c938...");
+    const repoRoot = path.resolve(__dirname, "../..");
     execSync(
-      `git clone --branch fixture/repomedic-demo-jwt "https://github.com/SGOD-pro/repo-medic.git" "${freshCheckoutDir}"`
+      `git clone --branch fixture/repomedic-demo-jwt "${repoRoot}" "${freshCheckoutDir}"`
     );
     execSync(`cd "${freshCheckoutDir}" && git checkout 8b635e7ff84556962f6ec4fee43523778461c938`);
 
