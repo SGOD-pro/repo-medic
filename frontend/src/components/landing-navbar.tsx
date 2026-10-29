@@ -83,7 +83,7 @@ export function LandingNavbar() {
         {/* Right: Actions */}
         <div className="flex items-center gap-2.5">
           <Link
-            href="/?runId=run-success-1"
+            href="/?runId=run_a72af9a70dbc47ee9ba7c7b8b6ff1226"
             data-testid="landing-nav-view-demo"
             className="hidden sm:inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-[rgba(183,201,173,0.25)] bg-[#15271F]/80 hover:bg-[#1B3228] text-[#F7F7F2] text-xs font-medium transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[#B7C9AD]"
           >

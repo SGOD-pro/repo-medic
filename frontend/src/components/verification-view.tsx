@@ -142,14 +142,16 @@ export function resolveVerificationViewModel(
   const isFail = runState === "failed";
   const isCancelled = runState === "cancelled";
 
-  const effectiveMode = activeRun?.mode || (evidenceData?.execution_mode as string) || "offline";
-  let modeLabel = "OFFLINE MODE (TURSO)";
-  if ((process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock") {
-    modeLabel = "MOCK TRANSPORT";
-  } else if (effectiveMode === "live") {
+  const effectiveMode = activeRun?.mode || (evidenceData?.execution_mode as string) || null;
+  let modeLabel = "UNAVAILABLE";
+  if (effectiveMode === "live") {
     modeLabel = "LIVE SANDBOX (NEBIUS)";
+  } else if (effectiveMode === "offline") {
+    modeLabel = "OFFLINE MODE (TURSO)";
   } else if (effectiveMode === "replay") {
     modeLabel = "REPLAY MODE";
+  } else if (!effectiveMode && (process.env.NEXT_PUBLIC_API_TRANSPORT || "mock") === "mock") {
+    modeLabel = "MOCK TRANSPORT";
   }
 
   const testSummary = evidenceData?.test_summary as Record<string, number> | undefined;

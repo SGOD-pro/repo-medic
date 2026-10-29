@@ -10,12 +10,14 @@ export const SUPPORTED_DEMO_TASK_IDS: readonly string[] = [
   "TASK-091",
   "TASK-DEMO-PYDANTIC",
   "TASK-DEMO-CLICK",
+  "TASK-DEMO-JWT",
 ];
 
 export const APPROVED_DEMO_TASK_IDS: readonly string[] = [
   "TASK-DEMO-SHOP",
   "TASK-DEMO-PYDANTIC",
   "TASK-DEMO-CLICK",
+  "TASK-DEMO-JWT",
 ];
 
 export interface CustomRepositoryConfig {

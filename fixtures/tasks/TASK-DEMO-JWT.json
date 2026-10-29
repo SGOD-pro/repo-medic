@@ -1,0 +1,22 @@
+{
+  "task_id": "TASK-DEMO-JWT",
+  "title": "Upgrade pyjwt 1.7.1 to 2.8.0 in repomedic-demo-auth",
+  "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+  "commit_sha": "8b635e7ff84556962f6ec4fee43523778461c938",
+  "dependency": "pyjwt",
+  "from_version": "1.7.1",
+  "to_version": "2.8.0",
+  "test_command": [
+    "pytest",
+    "tests/"
+  ],
+  "allowed_source_paths": [
+    "src/auth/tokens.py"
+  ],
+  "expected_failure": "AttributeError: 'str' object has no attribute 'decode'",
+  "timeout_seconds": 600,
+  "tests_count": 3,
+  "baseline_time": "0.15s (Python 3.12)",
+  "max_candidates": 3,
+  "max_refinements": 1
+}

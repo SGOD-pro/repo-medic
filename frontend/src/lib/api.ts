@@ -51,6 +51,15 @@ export const SUPPORTED_DEMO_TASKS: TaskSummary[] = [
     to_version: "8.1.7",
   },
   {
+    task_id: "TASK-DEMO-JWT",
+    title: "Upgrade pyjwt 1.7.1 to 2.8.0 in repomedic-demo-auth",
+    repository_url: "https://github.com/SGOD-pro/repo-medic.git",
+    commit_sha: "8b635e7ff84556962f6ec4fee43523778461c938",
+    dependency: "pyjwt",
+    from_version: "1.7.1",
+    to_version: "2.8.0",
+  },
+  {
     task_id: "TASK-091",
     title: "Upgrade sqlalchemy from 1.4.48 to 2.0.19 in backend-core",
     repository_url: "https://github.com/SGOD-pro/repo-medic.git",
@@ -199,6 +208,39 @@ export class MockTransport implements RepoMedicApiClient {
   async getRun(runId: string): Promise<RunSummary> {
     const run = this.activeRuns.get(runId);
     if (!run) {
+      if (runId === "run_a72af9a70dbc47ee9ba7c7b8b6ff1226") {
+        return Promise.resolve({
+          run_id: "run_a72af9a70dbc47ee9ba7c7b8b6ff1226",
+          task_id: "TASK-DEMO-SHOP",
+          mode: "live" as Mode,
+          search_mode: "sequential",
+          state: "succeeded",
+          reason: "Candidate verified cleanly and resolved upgrade regression",
+          usage: {
+            model_calls: 1,
+            input_tokens: 858,
+            output_tokens: 585,
+            estimated_usd: 0.35,
+          },
+          artifacts: [
+            {
+              artifact_id: "art_94dc1260daba",
+              kind: "patch",
+              filename: "patch.diff",
+            },
+            {
+              artifact_id: "art_b9028a8c4ada",
+              kind: "log",
+              filename: "verify.log",
+            },
+            {
+              artifact_id: "art_5e0633b9d304",
+              kind: "evidence",
+              filename: "evidence.json",
+            },
+          ],
+        });
+      }
       if (runId === "run-success-1") {
         return Promise.resolve({
           run_id: "run-success-1",

@@ -300,12 +300,12 @@ async function main() {
     await navTestPage.waitForSelector('[data-testid="custom-repo-form-view"]');
     console.log("  ✔ 'Configure a repository' on /home opened workspace custom repo view");
 
-    // CTA 2: "View saved demo" from /home goes to /?runId=run-success-1
+    // CTA 2: "View saved demo" from /home goes to retained production run
     await navTestPage.goto(homeUrl, { waitUntil: "networkidle" });
     await navTestPage.click('[data-testid="hero-btn-view-demo"]');
     await navTestPage.waitForTimeout(500);
     const runUrl = navTestPage.url();
-    assert.ok(runUrl.includes("runId=run-success-1"), "URL must contain ?runId=run-success-1");
+    assert.ok(runUrl.includes("runId=run_a72af9a70dbc47ee9ba7c7b8b6ff1226"), "URL must contain ?runId=run_a72af9a70dbc47ee9ba7c7b8b6ff1226");
     console.log("  ✔ 'View saved demo' on /home navigated directly to saved demo");
 
     // CTA 3: "Open Workspace" in landing header goes to /

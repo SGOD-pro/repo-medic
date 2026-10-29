@@ -293,7 +293,7 @@ class ConTreeSandboxAdapter(SandboxAdapter):
                     pkg_name = arg.split("==")[0].strip()
                     break
             if pkg_name:
-                mod_name = pkg_name.replace("-", "_")
+                mod_name = {"pyjwt": "jwt"}.get(pkg_name.lower(), pkg_name.replace("-", "_"))
                 ver_script = (
                     "import sys\n"
                     f"pkg = '{pkg_name}'\n"

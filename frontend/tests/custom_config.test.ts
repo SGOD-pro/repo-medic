@@ -104,10 +104,11 @@ describe("custom repository configuration: validation & safety gate (Spec 0009)"
   it("MockTransport filters supported demo tasks when requested", async () => {
     const transport = new MockTransport();
     const demoTasks = await transport.getTasks("supported_demo");
-    assert.equal(demoTasks.length, 4);
+    assert.equal(demoTasks.length, 5);
     assert.equal(demoTasks[0].task_id, "TASK-DEMO-SHOP");
     assert.equal(demoTasks[1].task_id, "TASK-DEMO-PYDANTIC");
     assert.equal(demoTasks[2].task_id, "TASK-DEMO-CLICK");
-    assert.equal(demoTasks[3].task_id, "TASK-091");
+    assert.equal(demoTasks[3].task_id, "TASK-DEMO-JWT");
+    assert.equal(demoTasks[4].task_id, "TASK-091");
   });
 });

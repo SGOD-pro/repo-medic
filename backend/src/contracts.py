@@ -15,6 +15,7 @@ SUPPORTED_DEMO_TASK_IDS: tuple[str, ...] = (
     "TASK-091",
     "TASK-DEMO-PYDANTIC",
     "TASK-DEMO-CLICK",
+    "TASK-DEMO-JWT",
 )
 
 

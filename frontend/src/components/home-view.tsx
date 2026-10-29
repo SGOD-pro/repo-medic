@@ -33,9 +33,9 @@ export function HomeView({
 
   const handleOpenSavedDemo = () => {
     if (onViewSavedRun) {
-      onViewSavedRun("run-success-1");
+      onViewSavedRun("run_a72af9a70dbc47ee9ba7c7b8b6ff1226");
     } else {
-      router.push("/?runId=run-success-1");
+      router.push("/?runId=run_a72af9a70dbc47ee9ba7c7b8b6ff1226");
     }
   };
 
