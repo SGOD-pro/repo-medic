@@ -442,3 +442,25 @@ def test_custom_execution_flow_when_enabled(test_app_and_repo, monkeypatch):
     assert task is not None
     assert task.repository_url == config.repository_url
     assert task.commit_sha == config.commit_sha
+
+
+def test_resolve_branches_smart_http_when_git_missing(monkeypatch):
+    import subprocess
+    from src.custom_validation import resolve_repository_branches, verify_branch_pinned_sha
+
+    def mock_file_not_found(*args, **kwargs):
+        raise FileNotFoundError("git binary not found")
+
+    monkeypatch.setattr(subprocess, "run", mock_file_not_found)
+
+    res = resolve_repository_branches("https://github.com/SGOD-pro/repo-medic.git")
+    assert res.default_branch == "main"
+    assert len(res.branches) > 0
+    assert any(b.name == "main" for b in res.branches)
+
+    verified = verify_branch_pinned_sha(
+        "https://github.com/SGOD-pro/repo-medic.git",
+        "fixture/repomedic-demo-jwt",
+        "8b635e7ff84556962f6ec4fee43523778461c938",
+    )
+    assert verified is True

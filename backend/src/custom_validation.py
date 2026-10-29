@@ -2,6 +2,7 @@ import os
 import re
 import subprocess
 from typing import Dict, List, Optional, Tuple
+import httpx
 from src.contracts import (
     BranchInfo,
     CustomConfigValidationResponse,
@@ -142,6 +143,60 @@ def validate_custom_config(config: CustomRepositoryConfig) -> CustomConfigValida
     )
 
 
+def _query_smart_http_refs(
+    repository_url: str,
+    timeout_seconds: float = 6.0,
+) -> Tuple[str, Dict[str, str]]:
+    url = repository_url.rstrip("/")
+    if not url.endswith(".git"):
+        url += ".git"
+    info_url = f"{url}/info/refs?service=git-upload-pack"
+
+    try:
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=True) as client:
+            resp = client.get(info_url)
+    except httpx.TimeoutException:
+        raise ValueError("Repository query timed out after 6 seconds")
+    except Exception as e:
+        raise ValueError(f"Failed to query remote repository: {e}")
+
+    if resp.status_code in (401, 403, 404):
+        raise ValueError("Repository is private, unreachable, or does not exist on GitHub")
+    if resp.status_code != 200:
+        raise ValueError(f"Git remote error: HTTP {resp.status_code}")
+
+    default_branch = ""
+    branch_map: Dict[str, str] = {}
+
+    for line in resp.text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if "symref=HEAD:refs/heads/" in line:
+            m = re.search(r"symref=HEAD:refs/heads/([^\s]+)", line)
+            if m:
+                default_branch = m.group(1).strip()
+        m_branch = re.search(r"([0-9a-fA-F]{40})\s+refs/heads/(.+)$", line)
+        if m_branch:
+            sha = m_branch.group(1)
+            b_name = m_branch.group(2).strip()
+            if HEX_40_REGEX.match(sha) and b_name:
+                branch_map[b_name] = sha
+
+    if not branch_map:
+        raise ValueError("No public branches found in repository")
+
+    if not default_branch or default_branch not in branch_map:
+        if "main" in branch_map:
+            default_branch = "main"
+        elif "master" in branch_map:
+            default_branch = "master"
+        else:
+            default_branch = next(iter(branch_map.keys()))
+
+    return default_branch, branch_map
+
+
 def resolve_repository_branches(
     repository_url: str,
     timeout_seconds: float = 6.0,
@@ -167,6 +222,20 @@ def resolve_repository_branches(
             timeout=timeout_seconds,
             env=env,
             check=False,
+        )
+    except FileNotFoundError:
+        # Fallback when git CLI binary is not present (e.g. AWS Lambda standard Python image)
+        default_b, b_map = _query_smart_http_refs(url, timeout_seconds=timeout_seconds)
+        branches: List[BranchInfo] = []
+        if default_b in b_map:
+            branches.append(BranchInfo(name=default_b, commit_sha=b_map[default_b]))
+        for b_name in sorted(b_map.keys()):
+            if b_name != default_b:
+                branches.append(BranchInfo(name=b_name, commit_sha=b_map[b_name]))
+        return ResolveBranchesResponse(
+            repository_url=url,
+            default_branch=default_b,
+            branches=branches,
         )
     except subprocess.TimeoutExpired:
         raise ValueError("Repository query timed out after 6 seconds")
@@ -272,6 +341,14 @@ def verify_branch_pinned_sha(
             env=env,
             check=False,
         )
+    except FileNotFoundError:
+        # Fallback when git CLI binary is not present (e.g. AWS Lambda standard Python image)
+        try:
+            _, b_map = _query_smart_http_refs(url, timeout_seconds=timeout_seconds)
+            observed = b_map.get(branch_name, "").lower()
+            return bool(observed and observed == expected)
+        except Exception:
+            return False
     except Exception:
         return False
 
