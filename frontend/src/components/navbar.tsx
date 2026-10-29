@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -17,7 +18,12 @@ interface NavbarProps {
   activeRun?: RunSummary | null;
 }
 
-export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: NavbarProps) {
+export function Navbar({
+  activeTab,
+  onTabChange,
+  onOpenDocs,
+  activeRun,
+}: NavbarProps) {
   const { runs, setHistoryOpen } = useHistoryStore();
   const defaultTransport = process.env.NODE_ENV === "production" ? "http" : "mock";
   const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || defaultTransport) === "mock";
@@ -45,19 +51,13 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
       <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3">
         {/* Left: Brand + Mode Status */}
         <div className="flex items-center gap-3">
-          <div
-            className="flex items-center gap-2 cursor-pointer select-none"
-            onClick={() => onTabChange("custom_repo")}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                onTabChange("custom_repo");
-              }
-            }}
+          <Link
+            href="/home"
+            className="flex items-center gap-2 cursor-pointer select-none group outline-none focus-visible:ring-1 focus-visible:ring-[#B7C9AD] rounded"
             aria-label="RepoMedic Home"
+            title="Go to RepoMedic Landing Page"
           >
-            <span className="font-semibold text-base sm:text-lg tracking-tight text-[#F7F7F2]">
+            <span className="font-semibold text-base sm:text-lg tracking-tight text-[#F7F7F2] group-hover:text-[#B7C9AD] transition-colors">
               RepoMedic
             </span>
             <Badge
@@ -66,7 +66,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             >
               v0.9.4
             </Badge>
-          </div>
+          </Link>
 
           <div className="hidden md:flex items-center gap-2 text-xs">
             {isMock ? (
@@ -86,16 +86,16 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
           </div>
         </div>
 
-        {/* Center: Destination Tabs */}
+        {/* Center: Clean 4 Workspace Tabs (No cluttered tabs!) */}
         <nav
-          aria-label="Main Destinations"
+          aria-label="Workspace Destinations"
           className="order-3 sm:order-2 flex w-full sm:w-auto items-center overflow-x-auto bg-[#15271F] p-1 rounded-lg border border-[rgba(183,201,173,0.16)]"
         >
           <button
             type="button"
             data-testid="nav-tab-custom-repo"
             onClick={() => onTabChange("custom_repo")}
-            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none cursor-pointer ${
               activeTab === "custom_repo"
                 ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
@@ -107,7 +107,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             type="button"
             data-testid="nav-tab-tasks"
             onClick={() => onTabChange("tasks")}
-            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none cursor-pointer ${
               activeTab === "tasks"
                 ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
@@ -119,7 +119,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             type="button"
             data-testid="nav-tab-run-active"
             onClick={() => onTabChange("run_active")}
-            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none cursor-pointer ${
               activeTab === "run_active"
                 ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
@@ -131,7 +131,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             type="button"
             data-testid="nav-tab-verification"
             onClick={() => onTabChange("verification")}
-            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none cursor-pointer ${
               activeTab === "verification"
                 ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
@@ -141,8 +141,16 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
           </button>
         </nav>
 
-        {/* Right: History, Docs Action & User Avatar */}
-        <div className="order-2 sm:order-3 flex items-center gap-2.5">
+        {/* Right: Landing link, History, Docs & User Avatar */}
+        <div className="order-2 sm:order-3 flex items-center gap-2">
+          <Link
+            href="/home"
+            className="hidden sm:inline-flex items-center text-xs text-[#A9B8AD] hover:text-[#B7C9AD] transition-colors px-2.5 py-1 rounded-md border border-transparent hover:border-[rgba(183,201,173,0.2)]"
+            title="View product landing page"
+          >
+            Landing
+          </Link>
+
           <Button
             variant="outline"
             size="sm"
