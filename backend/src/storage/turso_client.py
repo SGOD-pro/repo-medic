@@ -952,6 +952,52 @@ class TursoClient:
 
         return {"ok": True, "deleted": deleted}
 
+    def check_and_increment_rate_limit(
+        self, bucket_key: str, limit: int, window_seconds: int
+    ) -> tuple[bool, int, int]:
+        import time
+
+        now_epoch = int(time.time())
+        with self._op_lock():
+            cur = self._conn.execute(
+                "SELECT request_count, reset_at_epoch FROM rate_limits WHERE bucket_key = ?",
+                (bucket_key,),
+            )
+            row = cur.fetchone()
+            if not row or now_epoch >= row[1]:
+                reset_at = now_epoch + window_seconds
+                self._conn.execute(
+                    """INSERT INTO rate_limits (bucket_key, request_count, reset_at_epoch)
+                       VALUES (?, 1, ?)
+                       ON CONFLICT(bucket_key) DO UPDATE SET
+                         request_count = 1,
+                         reset_at_epoch = excluded.reset_at_epoch""",
+                    (bucket_key, reset_at),
+                )
+                self._conn.commit()
+                return True, max(0, limit - 1), window_seconds
+
+            req_count, reset_at = row[0], row[1]
+            retry_after = max(1, reset_at - now_epoch)
+            if req_count < limit:
+                new_count = req_count + 1
+                self._conn.execute(
+                    "UPDATE rate_limits SET request_count = ? WHERE bucket_key = ?",
+                    (new_count, bucket_key),
+                )
+                self._conn.commit()
+                return True, max(0, limit - new_count), retry_after
+            else:
+                return False, 0, retry_after
+
+    def count_active_runs(self) -> int:
+        with self._op_lock():
+            cur = self._conn.execute(
+                "SELECT COUNT(*) FROM runs WHERE state IN ('queued', 'running')"
+            )
+            row = cur.fetchone()
+            return row[0] if row else 0
+
 
 if __name__ == "__main__":
     import sys

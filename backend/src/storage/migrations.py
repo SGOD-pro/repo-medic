@@ -85,10 +85,21 @@ CREATE TABLE IF NOT EXISTS idempotency_keys (
 CREATE INDEX IF NOT EXISTS idx_idempotency_run_id ON idempotency_keys(run_id);
 """
 
+MIGRATION_0004 = """
+CREATE TABLE IF NOT EXISTS rate_limits (
+  bucket_key TEXT PRIMARY KEY,
+  request_count INTEGER NOT NULL DEFAULT 1,
+  reset_at_epoch INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_rate_limits_reset ON rate_limits(reset_at_epoch);
+"""
+
 MIGRATIONS = [
     ("0001_initial_schema", MIGRATION_0001),
     ("0002_tasks_table", MIGRATION_0002),
     ("0003_active_run_constraint_and_idempotency", MIGRATION_0003),
+    ("0004_rate_limits_table", MIGRATION_0004),
 ]
 
 

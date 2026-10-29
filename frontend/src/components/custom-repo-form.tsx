@@ -19,10 +19,12 @@ import {
   Info,
   CheckCircle,
   ArrowDown,
+  GitBranch,
 } from "lucide-react";
 import {
   CustomRepositoryConfig,
   CustomConfigValidationResponse,
+  BranchInfo,
 } from "@/lib/contracts";
 import { RepoMedicApiClient } from "@/lib/api";
 
@@ -62,16 +64,65 @@ export function CustomRepoForm({
   const [pytestArgsRaw, setPytestArgsRaw] = useState<string>("tests/");
   const [allowedPathsRaw, setAllowedPathsRaw] = useState<string>("src/");
 
+  const [branches, setBranches] = useState<BranchInfo[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState<string>("");
+  const [isLoadingBranches, setIsLoadingBranches] = useState<boolean>(false);
+  const [branchError, setBranchError] = useState<string | null>(null);
+
   const [isValidating, setIsValidating] = useState<boolean>(false);
   const [validationResult, setValidationResult] =
     useState<CustomConfigValidationResponse | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
 
+  const [isStartingRun, setIsStartingRun] = useState<boolean>(false);
+  const [runError, setRunError] = useState<string | null>(null);
+
   const handleFieldChange = (field: keyof CustomRepositoryConfig, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
-    // Clear validation result on change to encourage re-validation
     if (validationResult) {
       setValidationResult(null);
+    }
+    if (runError) {
+      setRunError(null);
+    }
+  };
+
+  const handleFetchBranches = async (overrideUrl?: string) => {
+    const targetUrl = (overrideUrl || formData.repository_url || "").trim();
+    if (!targetUrl) {
+      setBranchError("Please enter a repository URL first");
+      return;
+    }
+    setIsLoadingBranches(true);
+    setBranchError(null);
+    try {
+      const res = await apiClient.resolveBranches(targetUrl);
+      setBranches(res.branches || []);
+      const def = res.default_branch || (res.branches.length > 0 ? res.branches[0].name : "");
+      setSelectedBranch(def);
+      const matched = res.branches.find((b) => b.name === def);
+      if (matched) {
+        setFormData((prev) => ({ ...prev, commit_sha: matched.commit_sha }));
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to load branches";
+      setBranchError(msg);
+    } finally {
+      setIsLoadingBranches(false);
+    }
+  };
+
+  const handleSelectBranch = (branchName: string) => {
+    setSelectedBranch(branchName);
+    const matched = branches.find((b) => b.name === branchName);
+    if (matched) {
+      setFormData((prev) => ({ ...prev, commit_sha: matched.commit_sha }));
+    }
+    if (validationResult) {
+      setValidationResult(null);
+    }
+    if (runError) {
+      setRunError(null);
     }
   };
 
@@ -105,8 +156,15 @@ export function CustomRepoForm({
     setFormData(DEMO_PREFILL);
     setPytestArgsRaw(DEMO_PREFILL.pytest_args.join(" "));
     setAllowedPathsRaw(DEMO_PREFILL.allowed_source_paths.join(" "));
+    setBranches([
+      { name: "fixture/repomedic-demo-shop", commit_sha: "8c400721558392a23b3af71766f673da02f80040" },
+      { name: "main", commit_sha: "49e2c4f3277e763906105470ed7e003cbd5a1872" },
+    ]);
+    setSelectedBranch("fixture/repomedic-demo-shop");
     setValidationResult(null);
     setValidationError(null);
+    setBranchError(null);
+    setRunError(null);
   };
 
   const handleValidate = async () => {
@@ -121,6 +179,26 @@ export function CustomRepoForm({
       setValidationError(msg);
     } finally {
       setIsValidating(false);
+    }
+  };
+
+  const handleStartCustomRun = async () => {
+    setIsStartingRun(true);
+    setRunError(null);
+    try {
+      const resp = await apiClient.startCustomRun({
+        config: formData,
+        branch: selectedBranch || "main",
+        search_mode: "sequential",
+      });
+      if (onViewSavedRun && resp.run_id) {
+        onViewSavedRun(resp.run_id);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Custom repair request failed";
+      setRunError(msg);
+    } finally {
+      setIsStartingRun(false);
     }
   };
 
@@ -363,29 +441,50 @@ export function CustomRepoForm({
                 </h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-12 gap-4">
-                <div className="md:col-span-6">
+                <div className="md:col-span-5">
                   <label
                     htmlFor="repository_url"
                     className="block text-xs font-mono font-medium text-[#A9B8AD] mb-1.5"
                   >
                     Public GitHub HTTPS URL <span className="text-[#E5736A]">*</span>
                   </label>
-                  <Input
-                    id="repository_url"
-                    data-testid="input-repository-url"
-                    type="text"
-                    value={formData.repository_url}
-                    onChange={(e) =>
-                      handleFieldChange("repository_url", e.target.value)
-                    }
-                    placeholder="https://github.com/owner/repository"
-                    aria-invalid={Boolean(fieldErrors.repository_url)}
-                    aria-describedby="repository_url_help"
-                    className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-10 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id="repository_url"
+                      data-testid="input-repository-url"
+                      type="text"
+                      value={formData.repository_url}
+                      onChange={(e) =>
+                        handleFieldChange("repository_url", e.target.value)
+                      }
+                      placeholder="https://github.com/owner/repository"
+                      aria-invalid={Boolean(fieldErrors.repository_url)}
+                      aria-describedby="repository_url_help"
+                      className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-10 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
+                    />
+                    <Button
+                      type="button"
+                      data-testid="btn-fetch-branches"
+                      onClick={() => void handleFetchBranches()}
+                      disabled={isLoadingBranches || !formData.repository_url.trim()}
+                      className="h-10 px-3 bg-[#1B3228] hover:bg-[#234235] text-[#5FCB8A] border border-[rgba(183,201,173,0.2)] text-xs font-mono rounded-lg shrink-0 cursor-pointer disabled:opacity-40"
+                    >
+                      {isLoadingBranches ? (
+                        <RotateCw className="size-3.5 animate-spin" />
+                      ) : (
+                        <GitBranch className="size-3.5" />
+                      )}
+                      <span className="hidden sm:inline ml-1.5">Load</span>
+                    </Button>
+                  </div>
                   <span id="repository_url_help" className="block mt-1 text-[11px] text-[#A9B8AD]">
-                    Requires a public GitHub HTTPS URL. Remote reachability is not checked across the network.
+                    Public GitHub repository. Remote refs are queried via read only git ls remote.
                   </span>
+                  {branchError && (
+                    <span className="block mt-1 text-xs text-[#E5736A] font-mono">
+                      {branchError}
+                    </span>
+                  )}
                   {fieldErrors.repository_url?.map((err, i) => (
                     <span
                       key={i}
@@ -396,13 +495,52 @@ export function CustomRepoForm({
                   ))}
                 </div>
 
-                <div className="md:col-span-6">
+                <div className="md:col-span-3">
                   <label
-                    htmlFor="commit_sha"
+                    htmlFor="branch_select"
                     className="block text-xs font-mono font-medium text-[#A9B8AD] mb-1.5"
                   >
-                    Target Commit SHA (40-char Hex) <span className="text-[#E5736A]">*</span>
+                    Select Git Branch
                   </label>
+                  <select
+                    id="branch_select"
+                    data-testid="select-branch"
+                    value={selectedBranch}
+                    onChange={(e) => handleSelectBranch(e.target.value)}
+                    disabled={branches.length === 0}
+                    className="w-full bg-[#0D1915] border border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-10 rounded-md px-3 focus:outline-none focus:ring-1 focus:ring-[#5FCB8A] disabled:opacity-50"
+                  >
+                    {branches.length === 0 ? (
+                      <option value="">No branches loaded</option>
+                    ) : (
+                      branches.map((b) => (
+                        <option key={b.name} value={b.name}>
+                          {b.name}
+                        </option>
+                      ))
+                    )}
+                  </select>
+                  <span className="block mt-1 text-[11px] text-[#A9B8AD]">
+                    {branches.length > 0
+                      ? `${branches.length} branches discovered`
+                      : "Click Load to fetch branches"}
+                  </span>
+                </div>
+
+                <div className="md:col-span-4">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label
+                      htmlFor="commit_sha"
+                      className="block text-xs font-mono font-medium text-[#A9B8AD]"
+                    >
+                      Pinned Commit SHA <span className="text-[#E5736A]">*</span>
+                    </label>
+                    {selectedBranch && (
+                      <span className="text-[10px] font-mono text-[#5FCB8A] uppercase tracking-wide">
+                        Pinned from {selectedBranch}
+                      </span>
+                    )}
+                  </div>
                   <Input
                     id="commit_sha"
                     data-testid="input-commit-sha"
@@ -417,7 +555,7 @@ export function CustomRepoForm({
                     className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-10 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
                   />
                   <span id="commit_sha_help" className="block mt-1 text-[11px] text-[#A9B8AD]">
-                    Exact 40-character hexadecimal commit hash. Format verified locally.
+                    Exact 40 character commit hash pinned for immutable execution.
                   </span>
                   {fieldErrors.commit_sha?.map((err, i) => (
                     <span
@@ -679,17 +817,27 @@ export function CustomRepoForm({
                 </Button>
               )}
 
-              {/* Disabled execution button placed beside actions */}
+              {/* Active custom execution button */}
               <div className="ml-auto w-full sm:w-auto">
                 <Button
                   type="button"
                   data-testid="btn-run-custom-repair"
-                  disabled
-                  className="w-full sm:w-auto h-11 bg-[#1B3228] text-[#A9B8AD] font-semibold text-xs sm:text-sm px-4 rounded-lg flex items-center justify-center gap-2 opacity-50 cursor-not-allowed shadow-none"
-                  title="Custom repository execution is gated off in this slice"
+                  onClick={() => void handleStartCustomRun()}
+                  disabled={isStartingRun}
+                  className="w-full sm:w-auto h-11 bg-[#1B3228] hover:bg-[#234235] text-[#5FCB8A] border border-[#5FCB8A]/40 font-semibold text-xs sm:text-sm px-4 rounded-lg flex items-center justify-center gap-2 cursor-pointer shadow-none disabled:opacity-50"
+                  title="Submit custom repository repair run"
                 >
-                  <Lock className="size-4" />
-                  Start Repair Run (Execution Gated)
+                  {isStartingRun ? (
+                    <>
+                      <RotateCw className="size-4 animate-spin" />
+                      Starting Repair Run...
+                    </>
+                  ) : (
+                    <>
+                      <Lock className="size-4 text-[#E0B45A]" />
+                      Start Custom Repair Run
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
@@ -746,6 +894,21 @@ export function CustomRepoForm({
               {validationError && (
                 <div className="mt-3 rounded-xl bg-[#241414] border border-[#E5736A]/40 p-3 text-xs font-mono text-[#E5736A]">
                   {validationError}
+                </div>
+              )}
+
+              {runError && (
+                <div
+                  data-testid="custom-run-error-box"
+                  className="mt-3 rounded-xl bg-[#241414] border border-[#E5736A]/40 p-4 space-y-2"
+                >
+                  <div className="flex items-center gap-2 text-sm font-semibold text-[#E5736A]">
+                    <AlertCircle className="size-4 shrink-0" />
+                    <span>Execution Gated by Security Policy</span>
+                  </div>
+                  <p className="text-xs text-[#E5736A] font-mono leading-relaxed">
+                    {runError}
+                  </p>
                 </div>
               )}
             </div>

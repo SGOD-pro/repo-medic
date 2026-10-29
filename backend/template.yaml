@@ -90,6 +90,7 @@ Resources:
           REPOMEDIC_STARTUP_RECOVERY_ENABLED: "false"
           REPOMEDIC_APP_ORIGIN: !Ref AppOrigin
           REPAIR_QUEUE_URL: !Ref RepoMedicRepairQueue
+          REPOMEDIC_CUSTOM_EXECUTION_ENABLED: "true"
       Policies:
         - SQSSendMessagePolicy:
             QueueName: !GetAtt RepoMedicRepairQueue.QueueName

@@ -1,6 +1,13 @@
+import os
 import re
-from typing import Dict, List
-from src.contracts import CustomRepositoryConfig, CustomConfigValidationResponse
+import subprocess
+from typing import Dict, List, Optional, Tuple
+from src.contracts import (
+    BranchInfo,
+    CustomConfigValidationResponse,
+    CustomRepositoryConfig,
+    ResolveBranchesResponse,
+)
 
 GITHUB_HTTPS_REGEX = re.compile(
     r"^https://github\.com/[a-zA-Z0-9_.-]+/[a-zA-Z0-9_.-]+(?:\.git)?/?$"
@@ -133,3 +140,149 @@ def validate_custom_config(config: CustomRepositoryConfig) -> CustomConfigValida
             "and task execution are strictly gated off."
         ),
     )
+
+
+def resolve_repository_branches(
+    repository_url: str,
+    timeout_seconds: float = 6.0,
+) -> ResolveBranchesResponse:
+    url = (repository_url or "").strip()
+    if not url:
+        raise ValueError("Repository URL is required")
+    if not GITHUB_HTTPS_REGEX.match(url):
+        raise ValueError(
+            "Repository URL must be a public GitHub HTTPS URL (e.g. https://github.com/owner/repo)"
+        )
+
+    env = {
+        "GIT_TERMINAL_PROMPT": "0",
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", "--symref", url, "HEAD", "refs/heads/*"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        raise ValueError("Repository query timed out after 6 seconds")
+    except Exception as e:
+        raise ValueError(f"Failed to query remote repository: {e}")
+
+    if proc.returncode != 0:
+        err = proc.stderr.strip()
+        lower_err = err.lower()
+        if (
+            "not found" in lower_err
+            or "terminal prompts disabled" in lower_err
+            or "authentication failed" in lower_err
+        ):
+            raise ValueError(
+                "Repository is private, unreachable, or does not exist on GitHub"
+            )
+        raise ValueError(f"Git remote error: {err or 'Unknown remote error'}")
+
+    default_branch = ""
+    branch_map: Dict[str, str] = {}
+
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+
+        # Check for HEAD symref e.g. ref: refs/heads/main\tHEAD
+        if line.startswith("ref: refs/heads/") and "HEAD" in line:
+            parts = line.split()
+            if len(parts) >= 2:
+                ref_part = parts[1]
+                default_branch = ref_part.replace("refs/heads/", "").strip()
+            continue
+
+        # Check for branch ref e.g. <sha>\trefs/heads/<branch>
+        if "\trefs/heads/" in line:
+            sha, ref_name = line.split("\trefs/heads/", 1)
+            sha = sha.strip()
+            branch_name = ref_name.strip()
+            if HEX_40_REGEX.match(sha) and branch_name:
+                branch_map[branch_name] = sha
+
+    if not branch_map:
+        raise ValueError("No public branches found in repository")
+
+    # If default branch was not set or not in branch map, pick fallback
+    if not default_branch or default_branch not in branch_map:
+        if "main" in branch_map:
+            default_branch = "main"
+        elif "master" in branch_map:
+            default_branch = "master"
+        else:
+            default_branch = next(iter(branch_map.keys()))
+
+    branches: List[BranchInfo] = []
+    # Place default branch first
+    if default_branch in branch_map:
+        branches.append(
+            BranchInfo(name=default_branch, commit_sha=branch_map[default_branch])
+        )
+
+    # Sort remaining branches alphabetically
+    for b_name in sorted(branch_map.keys()):
+        if b_name != default_branch:
+            branches.append(
+                BranchInfo(name=b_name, commit_sha=branch_map[b_name])
+            )
+
+    return ResolveBranchesResponse(
+        repository_url=url,
+        default_branch=default_branch,
+        branches=branches,
+    )
+
+
+def verify_branch_pinned_sha(
+    repository_url: str,
+    branch: str,
+    expected_sha: str,
+    timeout_seconds: float = 6.0,
+) -> bool:
+    url = (repository_url or "").strip()
+    branch_name = (branch or "").strip()
+    expected = (expected_sha or "").strip().lower()
+
+    if not url or not branch_name or not expected:
+        return False
+    if not GITHUB_HTTPS_REGEX.match(url) or not HEX_40_REGEX.match(expected):
+        return False
+
+    env = {
+        "GIT_TERMINAL_PROMPT": "0",
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
+
+    try:
+        proc = subprocess.run(
+            ["git", "ls-remote", url, f"refs/heads/{branch_name}"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+            env=env,
+            check=False,
+        )
+    except Exception:
+        return False
+
+    if proc.returncode != 0:
+        return False
+
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if f"refs/heads/{branch_name}" in line:
+            parts = line.split()
+            if parts and parts[0].strip().lower() == expected:
+                return True
+
+    return False

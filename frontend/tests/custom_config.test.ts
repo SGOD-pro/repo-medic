@@ -111,4 +111,24 @@ describe("custom repository configuration: validation & safety gate (Spec 0009)"
     assert.equal(demoTasks[3].task_id, "TASK-DEMO-JWT");
     assert.equal(demoTasks[4].task_id, "TASK-091");
   });
+
+  it("MockTransport resolves branches with default branch first", async () => {
+    const transport = new MockTransport();
+    const res = await transport.resolveBranches("https://github.com/SGOD-pro/repo-medic.git");
+    assert.equal(res.default_branch, "main");
+    assert.ok(res.branches.length >= 2);
+    assert.equal(res.branches[0].name, "main");
+    assert.equal(res.branches[0].commit_sha.length, 40);
+  });
+
+  it("MockTransport starts custom run and returns summary", async () => {
+    const transport = new MockTransport();
+    const run = await transport.startCustomRun({
+      config: VALID_CONFIG,
+      branch: "main",
+      search_mode: "sequential",
+    });
+    assert.ok(run.run_id);
+    assert.equal(run.state, "running");
+  });
 });

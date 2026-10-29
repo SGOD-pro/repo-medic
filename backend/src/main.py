@@ -1,6 +1,7 @@
 import asyncio
 import datetime
 import faulthandler
+import hashlib
 import json
 import logging
 import os
@@ -21,17 +22,25 @@ from pydantic import BaseModel, ConfigDict
 from src.config import settings
 from src.contracts import (
     APIErrorEnvelope,
+    BranchInfo,
     CustomConfigValidationResponse,
     CustomRepositoryConfig,
+    CustomRunRequest,
     ErrorDetail,
     Mode,
+    ResolveBranchesRequest,
+    ResolveBranchesResponse,
     RunState,
     RunSummary,
     SearchMode,
     SUPPORTED_DEMO_TASK_IDS,
     TaskSummary,
 )
-from src.custom_validation import validate_custom_config
+from src.custom_validation import (
+    resolve_repository_branches,
+    validate_custom_config,
+    verify_branch_pinned_sha,
+)
 from src.fixtures import find_task_fixture_dir
 from src.storage.exceptions import StorageError
 from src.storage.repository import D1StorageRepository
@@ -370,6 +379,44 @@ def create_app(
             ]
         return TasksResponse(tasks=tasks)
 
+    def extract_client_ip(req: Request) -> str:
+        cf_ip = req.headers.get("cf-connecting-ip")
+        if cf_ip and cf_ip.strip():
+            return cf_ip.strip().split(",")[0].strip()
+        xff = req.headers.get("x-forwarded-for")
+        if xff and xff.strip():
+            return xff.split(",")[0].strip()
+        if req.client and req.client.host:
+            return req.client.host.strip()
+        return "127.0.0.1"
+
+    @app.post("/api/custom/resolve-branches", response_model=ResolveBranchesResponse)
+    def resolve_custom_branches(
+        request: Request,
+        payload: ResolveBranchesRequest,
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> ResolveBranchesResponse:
+        client_ip = extract_client_ip(request)
+        ip_limit = getattr(settings, "repomedic_custom_ip_rate_limit_per_min", 10)
+        allowed, _, retry_after = repo.check_and_increment_rate_limit(
+            f"ip:resolve:{client_ip}",
+            limit=ip_limit,
+            window_seconds=60,
+        )
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many branch resolution requests. Please retry in {retry_after} seconds.",
+            )
+
+        try:
+            return resolve_repository_branches(payload.repository_url)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
     @app.post("/api/custom/validate", response_model=CustomConfigValidationResponse)
     def validate_custom_repository(
         payload: CustomRepositoryConfig,
@@ -378,20 +425,200 @@ def create_app(
 
     @app.post("/api/custom/execute")
     @app.post("/api/custom/run")
-    def reject_custom_execution() -> JSONResponse:
-        envelope = APIErrorEnvelope(
-            error=ErrorDetail(
-                code="custom_execution_disabled",
-                message=(
-                    "Custom repository execution is disabled in this safe product slice. "
-                    "Arbitrary remote execution, background worker enqueueing, provider calls, "
-                    "and task execution are strictly gated off."
+    def handle_custom_execution(
+        request: Request,
+        payload: CustomRunRequest | None = None,
+        repo: D1StorageRepository = Depends(get_repository),
+    ) -> Response:
+        enabled = getattr(settings, "repomedic_custom_execution_enabled", False)
+        if not enabled:
+            envelope = APIErrorEnvelope(
+                error=ErrorDetail(
+                    code="custom_execution_disabled",
+                    message=(
+                        "Custom repository execution is disabled in this safe product slice. "
+                        "ConTree does not provide container level network egress isolation or cgroup memory limits. "
+                        "Package installation and pytest execution execute untrusted code with open outbound network access. "
+                        "Arbitrary remote execution and worker enqueueing are strictly gated off."
+                    ),
+                )
+            )
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content=envelope.model_dump(),
+            )
+
+        if payload is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Request body with custom configuration is required",
+            )
+
+        client_ip = extract_client_ip(request)
+
+        # 1. IP rate limit check
+        allowed_ip, _, retry_after_ip = repo.check_and_increment_rate_limit(
+            f"ip:custom_run:{client_ip}",
+            limit=5,
+            window_seconds=3600,
+        )
+        if not allowed_ip:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Custom run submission limit reached for your IP address. Please retry in {retry_after_ip} seconds.",
+            )
+
+        # 2. Repo rate limit check
+        repo_url_key = payload.config.repository_url.strip().lower().rstrip("/")
+        repo_limit = getattr(settings, "repomedic_custom_repo_rate_limit_per_10min", 3)
+        allowed_repo, _, retry_after_repo = repo.check_and_increment_rate_limit(
+            f"repo:{repo_url_key}",
+            limit=repo_limit,
+            window_seconds=600,
+        )
+        if not allowed_repo:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many repair runs requested for this repository. Please retry in {retry_after_repo} seconds.",
+            )
+
+        # 3. Global concurrent limit check
+        max_concurrent = getattr(settings, "repomedic_max_custom_runs_concurrent", 2)
+        if repo.count_active_runs() >= max_concurrent:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Server capacity reached for concurrent repair executions. Please try again shortly.",
+            )
+
+        # 4. Strict config validation
+        val_res = validate_custom_config(payload.config)
+        if not val_res.valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="; ".join(val_res.errors),
+            )
+
+        # 5. Branch to SHA pinning verification
+        sha_valid = verify_branch_pinned_sha(
+            payload.config.repository_url,
+            payload.branch,
+            payload.config.commit_sha,
+        )
+        if not sha_valid:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Branch '{payload.branch}' does not point to commit SHA '{payload.config.commit_sha}'. "
+                    f"The remote branch may have moved or the commit hash is invalid."
                 ),
             )
+
+        # 6. Budget checks
+        mode = getattr(settings, "repomedic_mode", "offline")
+        max_run_usd = 0.50
+        total_budget = getattr(settings, "repomedic_total_budget_usd", 25.0)
+        committed_usage = repo.get_total_committed_usd()
+        if (committed_usage + max_run_usd) > total_budget:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Budget unavailable",
+            )
+
+        # 7. Generate full strength deterministic task ID and upsert task recipe
+        task_seed = (
+            f"{payload.config.repository_url.strip().lower()}:"
+            f"{payload.config.commit_sha.strip().lower()}:"
+            f"{payload.config.dependency.strip().lower()}:"
+            f"{payload.config.from_version.strip()}:"
+            f"{payload.config.to_version.strip()}"
         )
+        task_hash = hashlib.sha256(task_seed.encode("utf-8")).hexdigest()[:32]
+        task_id = f"TASK-CUSTOM-{task_hash}"
+
+        test_cmd = [arg.strip() for arg in payload.config.pytest_args if arg and arg.strip()]
+        if not test_cmd or test_cmd[0] != "pytest":
+            test_cmd = ["pytest"] + [arg for arg in test_cmd if arg != "pytest"]
+
+        task_data = {
+            "task_id": task_id,
+            "title": f"Custom repair: {payload.config.dependency} {payload.config.from_version} to {payload.config.to_version}",
+            "repository_url": payload.config.repository_url,
+            "commit_sha": payload.config.commit_sha,
+            "dependency": payload.config.dependency,
+            "from_version": payload.config.from_version,
+            "to_version": payload.config.to_version,
+            "recipe_json": {
+                "test_command": test_cmd,
+                "allowed_source_paths": payload.config.allowed_source_paths,
+                "expected_failure": payload.config.expected_failure,
+                "timeout_seconds": 300,
+                "max_candidates": 3,
+                "max_refinements": 1,
+            },
+        }
+        repo.upsert_task(task_data)
+
+        # 8. Create run with idempotency handling
+        raw_idemp = (
+            request.headers.get("Idempotency-Key")
+            or request.headers.get("idempotency-key")
+            or payload.idempotency_key
+        )
+        idempotency_key = raw_idemp.strip() if raw_idemp and raw_idemp.strip() else None
+        prefix = getattr(settings, "repomedic_acceptance_prefix", "")
+        run_id = f"{prefix}{uuid.uuid4().hex}" if prefix else f"run_{uuid.uuid4().hex}"
+
+        run = repo.create_run(
+            run_id=run_id,
+            task_id=task_id,
+            mode=mode,
+            search_mode=payload.search_mode,
+            max_run_usd=max_run_usd,
+            idempotency_key=idempotency_key,
+        )
+
+        if run.run_id != run_id:
+            logger.info("Idempotent replay for custom key %s returning existing run %s", idempotency_key, run.run_id)
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content=run.model_dump(),
+            )
+
+        # 9. Enqueue to SQS if configured
+        queue_url = (
+            getattr(settings, "repair_queue_url", "")
+            or getattr(settings, "repomedic_repair_queue_url", "")
+        ).strip()
+        if queue_url:
+            try:
+                import boto3
+
+                sqs = getattr(request.app.state, "sqs_client", None)
+                if sqs is None:
+                    sqs = boto3.client("sqs")
+                sqs.send_message(
+                    QueueUrl=queue_url,
+                    MessageBody=json.dumps({"run_id": run_id}),
+                )
+                logger.info("Enqueued custom run %s to SQS queue %s", run_id, queue_url)
+            except Exception as e:
+                logger.exception("Failed to enqueue custom run %s to SQS %s: %s", run_id, queue_url, e)
+                try:
+                    repo.finish_run(
+                        run_id,
+                        state="failed",
+                        reason="Failed to enqueue task to SQS",
+                    )
+                except Exception as cleanup_err:
+                    logger.warning("Failed to mark run %s as failed after SQS error: %s", run_id, cleanup_err)
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to enqueue repair task to background queue",
+                )
+
         return JSONResponse(
-            status_code=status.HTTP_403_FORBIDDEN,
-            content=envelope.model_dump(),
+            status_code=status.HTTP_202_ACCEPTED,
+            content=run.model_dump(),
         )
 
     @app.post("/api/runs", status_code=status.HTTP_202_ACCEPTED, response_model=RunSummary)
@@ -405,10 +632,14 @@ def create_app(
             or payload.task_id.lower().startswith("task-custom")
             or payload.task_id.lower() == "custom"
         ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Custom repository execution is disabled. Custom inputs cannot be enqueued or executed.",
-            )
+            if not (
+                getattr(settings, "repomedic_custom_execution_enabled", False)
+                and payload.task_id.startswith("TASK-CUSTOM-")
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Custom repository execution is disabled. Custom inputs cannot be enqueued or executed.",
+                )
 
         task = repo.get_task(payload.task_id)
         if task is None:
@@ -419,7 +650,11 @@ def create_app(
 
         # Enforce server side supported demo execution policy
         policy = getattr(settings, "repomedic_task_execution_policy", "supported_demo")
-        if policy == "supported_demo" and payload.task_id not in SUPPORTED_DEMO_TASK_IDS:
+        is_custom_allowed = (
+            getattr(settings, "repomedic_custom_execution_enabled", False)
+            and payload.task_id.startswith("TASK-CUSTOM-")
+        )
+        if policy == "supported_demo" and payload.task_id not in SUPPORTED_DEMO_TASK_IDS and not is_custom_allowed:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=(
@@ -630,7 +865,14 @@ def create_app(
                 detail=f"Run '{id}' not found",
             )
 
-        matching = next((a for a in run.artifacts if a.artifact_id == artifact_id), None)
+        matching = next(
+            (
+                a
+                for a in run.artifacts
+                if a.artifact_id == artifact_id or a.kind == artifact_id or a.filename == artifact_id
+            ),
+            None,
+        )
         if matching is None:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -638,7 +880,7 @@ def create_app(
             )
 
         try:
-            content = repo.get_artifact_content(id, artifact_id)
+            content = repo.get_artifact_content(id, matching.artifact_id)
         except httpx.HTTPStatusError as e:
             if e.response.status_code == 404:
                 raise HTTPException(

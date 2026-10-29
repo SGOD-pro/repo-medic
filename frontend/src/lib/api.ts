@@ -8,14 +8,19 @@ import {
   ArtifactKind,
   CustomRepositoryConfig,
   CustomConfigValidationResponse,
+  BranchInfo,
+  ResolveBranchesResponse,
+  CustomRunRequest,
   SUPPORTED_DEMO_TASK_IDS,
 } from "./contracts";
 import { validateCustomRepositoryConfig } from "./validation";
 
 export interface RepoMedicApiClient {
   getTasks(policy?: string): Promise<TaskSummary[]>;
+  resolveBranches(repositoryUrl: string): Promise<ResolveBranchesResponse>;
   validateCustomConfig(config: CustomRepositoryConfig): Promise<CustomConfigValidationResponse>;
   startRun(taskId: string, searchMode: SearchMode, mode?: Mode, idempotencyKey?: string): Promise<RunSummary>;
+  startCustomRun(req: CustomRunRequest): Promise<RunSummary>;
   getRun(runId: string): Promise<RunSummary>;
   cancelRun(runId: string): Promise<RunSummary>;
   getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]>;
@@ -155,10 +160,25 @@ export class MockTransport implements RepoMedicApiClient {
     return Promise.resolve(CURATED_TASKS);
   }
 
+  async resolveBranches(repositoryUrl: string): Promise<ResolveBranchesResponse> {
+    return Promise.resolve({
+      repository_url: repositoryUrl,
+      default_branch: "main",
+      branches: [
+        { name: "main", commit_sha: "8c400721558392a23b3af71766f673da02f80040" },
+        { name: "feature/upgrade", commit_sha: "a96d3f077dd480f67c863121327866aa51169e48" },
+      ],
+    });
+  }
+
   async validateCustomConfig(
     config: CustomRepositoryConfig
   ): Promise<CustomConfigValidationResponse> {
     return Promise.resolve(validateCustomRepositoryConfig(config));
+  }
+
+  async startCustomRun(req: CustomRunRequest): Promise<RunSummary> {
+    return this.startRun("TASK-DEMO-SHOP", req.search_mode || "sequential", "offline", req.idempotency_key);
   }
 
   async startRun(
@@ -429,6 +449,21 @@ export class HttpTransport implements RepoMedicApiClient {
     return tasks;
   }
 
+  async resolveBranches(repositoryUrl: string): Promise<ResolveBranchesResponse> {
+    const res = await fetch(`${this.baseUrl}/custom/resolve-branches`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ repository_url: repositoryUrl }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({
+        error: { code: "resolve_failed", message: "Failed to resolve repository branches" },
+      }));
+      throw new Error(err?.error?.message || err?.detail || "Failed to resolve repository branches");
+    }
+    return res.json();
+  }
+
   async validateCustomConfig(
     config: CustomRepositoryConfig
   ): Promise<CustomConfigValidationResponse> {
@@ -442,6 +477,25 @@ export class HttpTransport implements RepoMedicApiClient {
         error: { code: "validation_failed", message: "Validation endpoint error" },
       }));
       throw new Error(err?.error?.message || err?.detail || "Validation failed");
+    }
+    return res.json();
+  }
+
+  async startCustomRun(req: CustomRunRequest): Promise<RunSummary> {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    if (req.idempotency_key) {
+      headers["Idempotency-Key"] = req.idempotency_key;
+    }
+    const res = await fetch(`${this.baseUrl}/custom/run`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(req),
+    });
+    if (!res.ok) {
+      const err: APIErrorEnvelope = await res.json().catch(() => ({
+        error: { code: "custom_run_failed", message: "Failed to start custom repair run" },
+      }));
+      throw new Error(err?.error?.message || err?.error?.code || "Failed to start custom repair run");
     }
     return res.json();
   }

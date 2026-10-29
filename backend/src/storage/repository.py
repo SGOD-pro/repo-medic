@@ -290,6 +290,19 @@ class D1StorageRepository:
         data = self.client.get_artifact(run_id, artifact_id)
         return base64.b64decode(data["content_base64"].encode("ascii"))
 
+    def check_and_increment_rate_limit(
+        self, bucket_key: str, limit: int, window_seconds: int
+    ) -> tuple[bool, int, int]:
+        if hasattr(self.client, "check_and_increment_rate_limit"):
+            return self.client.check_and_increment_rate_limit(bucket_key, limit, window_seconds)
+        return True, max(0, limit - 1), window_seconds
+
+    def count_active_runs(self) -> int:
+        if hasattr(self.client, "count_active_runs"):
+            return self.client.count_active_runs()
+        runs = self.list_runs(limit=100)
+        return sum(1 for r in runs if r.state in ("queued", "running"))
+
 
 class D1HostPorts(HostPorts):
     """HostPorts implementation backed by the Cloudflare D1 Worker bridge."""

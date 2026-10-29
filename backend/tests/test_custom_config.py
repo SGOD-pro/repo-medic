@@ -311,3 +311,134 @@ def test_api_tasks_supported_demo_policy(test_app_and_repo):
     ids_all = [t["task_id"] for t in resp_all.json()["tasks"]]
     assert "TASK-DEMO-SHOP" in ids_all
     assert "example-task-1" in ids_all
+
+
+def test_resolve_branches_invalid_url():
+    from src.custom_validation import resolve_repository_branches
+
+    with pytest.raises(ValueError, match="Repository URL must be a public GitHub HTTPS URL"):
+        resolve_repository_branches("https://gitlab.com/owner/repo")
+
+
+def test_resolve_branches_mocked(monkeypatch):
+    import subprocess
+    from src.custom_validation import resolve_repository_branches
+
+    sample_output = (
+        "ref: refs/heads/main\tHEAD\n"
+        "1111111111111111111111111111111111111111\tHEAD\n"
+        "2222222222222222222222222222222222222222\trefs/heads/feature\n"
+        "1111111111111111111111111111111111111111\trefs/heads/main\n"
+    )
+
+    def mock_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=sample_output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    res = resolve_repository_branches("https://github.com/my-org/my-project")
+    assert res.default_branch == "main"
+    assert len(res.branches) == 2
+    assert res.branches[0].name == "main"
+    assert res.branches[0].commit_sha == "1111111111111111111111111111111111111111"
+    assert res.branches[1].name == "feature"
+    assert res.branches[1].commit_sha == "2222222222222222222222222222222222222222"
+
+
+def test_verify_branch_pinned_sha_mocked(monkeypatch):
+    import subprocess
+    from src.custom_validation import verify_branch_pinned_sha
+
+    sample_output = "8c400721558392a23b3af71766f673da02f80040\trefs/heads/main\n"
+
+    def mock_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=sample_output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    matched = verify_branch_pinned_sha(
+        "https://github.com/SGOD-pro/repo-medic.git",
+        "main",
+        "8c400721558392a23b3af71766f673da02f80040",
+    )
+    assert matched is True
+
+    mismatched = verify_branch_pinned_sha(
+        "https://github.com/SGOD-pro/repo-medic.git",
+        "main",
+        "0000000000000000000000000000000000000000",
+    )
+    assert mismatched is False
+
+
+def test_api_resolve_branches_endpoint(test_app_and_repo, monkeypatch):
+    import subprocess
+    app, repo = test_app_and_repo
+    client = TestClient(app)
+
+    sample_output = (
+        "ref: refs/heads/main\tHEAD\n"
+        "8c400721558392a23b3af71766f673da02f80040\trefs/heads/main\n"
+    )
+
+    def mock_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=sample_output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    resp = client.post(
+        "/api/custom/resolve-branches",
+        json={"repository_url": "https://github.com/SGOD-pro/repo-medic.git"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["default_branch"] == "main"
+    assert len(data["branches"]) == 1
+    assert data["branches"][0]["name"] == "main"
+    assert data["branches"][0]["commit_sha"] == "8c400721558392a23b3af71766f673da02f80040"
+
+
+def test_custom_execution_flow_when_enabled(test_app_and_repo, monkeypatch):
+    from src.config import settings
+    import subprocess
+
+    app, repo = test_app_and_repo
+    client = TestClient(app)
+
+    # Enable custom execution
+    monkeypatch.setattr(settings, "repomedic_custom_execution_enabled", True)
+
+    sample_output = "8c400721558392a23b3af71766f673da02f80040\trefs/heads/main\n"
+
+    def mock_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args=args[0], returncode=0, stdout=sample_output, stderr="")
+
+    monkeypatch.setattr(subprocess, "run", mock_run)
+
+    config = sample_valid_config()
+    payload = {
+        "config": config.model_dump(),
+        "branch": "main",
+        "search_mode": "sequential",
+        "idempotency_key": "custom-key-001",
+    }
+
+    # First submission
+    resp1 = client.post("/api/custom/run", json=payload)
+    assert resp1.status_code == 202
+    data1 = resp1.json()
+    run_id = data1["run_id"]
+    task_id = data1["task_id"]
+    assert task_id.startswith("TASK-CUSTOM-")
+
+    # Idempotent replay with same key and payload returns identical run
+    resp2 = client.post("/api/custom/run", json=payload)
+    assert resp2.status_code in (200, 202)
+    data2 = resp2.json()
+    assert data2["run_id"] == run_id
+
+    # Verify task was persisted in repository
+    task = repo.get_task(task_id)
+    assert task is not None
+    assert task.repository_url == config.repository_url
+    assert task.commit_sha == config.commit_sha

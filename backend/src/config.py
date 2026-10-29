@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     repomedic_sync_fixtures: bool = True
     repomedic_acceptance_prefix: str = ""
     repomedic_task_execution_policy: str = "supported_demo"
+    repomedic_custom_execution_enabled: bool = False
+    repomedic_max_custom_runs_concurrent: int = 2
+    repomedic_custom_ip_rate_limit_per_min: int = 10
+    repomedic_custom_repo_rate_limit_per_10min: int = 3
 
     # Nebius (single unified API key for both Token Factory inference and ConTree sandbox)
     nebius_api_key: str = ""

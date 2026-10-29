@@ -19,6 +19,21 @@ SUPPORTED_DEMO_TASK_IDS: tuple[str, ...] = (
 )
 
 
+class BranchInfo(BaseModel):
+    name: str
+    commit_sha: str
+
+
+class ResolveBranchesRequest(BaseModel):
+    repository_url: str
+
+
+class ResolveBranchesResponse(BaseModel):
+    repository_url: str
+    default_branch: str
+    branches: List[BranchInfo] = Field(default_factory=list)
+
+
 class CustomRepositoryConfig(BaseModel):
     repository_url: str
     commit_sha: str
@@ -28,6 +43,13 @@ class CustomRepositoryConfig(BaseModel):
     pytest_args: List[str]
     allowed_source_paths: List[str]
     expected_failure: str
+
+
+class CustomRunRequest(BaseModel):
+    config: CustomRepositoryConfig
+    branch: str
+    search_mode: SearchMode = "sequential"
+    idempotency_key: Optional[str] = None
 
 
 class CustomConfigValidationResponse(BaseModel):

@@ -20,6 +20,24 @@ export const APPROVED_DEMO_TASK_IDS: readonly string[] = [
   "TASK-DEMO-JWT",
 ];
 
+export interface BranchInfo {
+  name: string;
+  commit_sha: string;
+}
+
+export interface ResolveBranchesResponse {
+  repository_url: string;
+  default_branch: string;
+  branches: BranchInfo[];
+}
+
+export interface CustomRunRequest {
+  config: CustomRepositoryConfig;
+  branch: string;
+  search_mode?: SearchMode;
+  idempotency_key?: string;
+}
+
 export interface CustomRepositoryConfig {
   repository_url: string;
   commit_sha: string;
