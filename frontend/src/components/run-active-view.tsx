@@ -384,7 +384,7 @@ export function RunActiveView({
   const stateUpper = (activeRun.state || "UNKNOWN").toUpperCase();
 
   return (
-    <div className="mx-auto w-full max-w-[1280px] px-4 sm:px-6 py-6 sm:py-8 space-y-6">
+    <div data-testid="run-active-view" className="mx-auto w-full max-w-[1280px] px-4 sm:px-6 py-6 sm:py-8 space-y-6">
       {/* ------------------------------------------------------------- */}
       {/* AUTHORITATIVE RUN STATUS HEADER                                */}
       {/* ------------------------------------------------------------- */}

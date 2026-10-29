@@ -8,7 +8,6 @@ import {
   ArtifactKind,
   CustomRepositoryConfig,
   CustomConfigValidationResponse,
-  BranchInfo,
   ResolveBranchesResponse,
   CustomRunRequest,
   SUPPORTED_DEMO_TASK_IDS,
@@ -255,6 +254,39 @@ export class MockTransport implements RepoMedicApiClient {
             },
             {
               artifact_id: "art_5e0633b9d304",
+              kind: "evidence",
+              filename: "evidence.json",
+            },
+          ],
+        });
+      }
+      if (runId === "run_4c8b02996ca547a4a134e5ccaf682681") {
+        return Promise.resolve({
+          run_id: "run_4c8b02996ca547a4a134e5ccaf682681",
+          task_id: "TASK-DEMO-JWT",
+          mode: "live" as Mode,
+          search_mode: "sequential",
+          state: "succeeded",
+          reason: "Candidate verified cleanly and resolved upgrade regression",
+          usage: {
+            model_calls: 1,
+            input_tokens: 950,
+            output_tokens: 164,
+            estimated_usd: 0.35,
+          },
+          artifacts: [
+            {
+              artifact_id: "art_d4f48f4e3ca8",
+              kind: "patch",
+              filename: "patch.diff",
+            },
+            {
+              artifact_id: "art_9ca1849f0b53",
+              kind: "log",
+              filename: "verify.log",
+            },
+            {
+              artifact_id: "art_42169ef75078",
               kind: "evidence",
               filename: "evidence.json",
             },

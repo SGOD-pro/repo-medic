@@ -797,6 +797,13 @@ class TursoClient:
 
             max_run_micro_usd = run_row[0]
 
+            existing_op = self._conn.execute(
+                "SELECT status FROM operations WHERE operation_id = ?",
+                (operation_id,),
+            ).fetchone()
+            if existing_op:
+                return {"ok": True, "already_reserved": True, "status": existing_op[0]}
+
             res = self._conn.execute(
                 """INSERT INTO operations (
                      operation_id, run_id, kind, status, reserved_micro_usd,

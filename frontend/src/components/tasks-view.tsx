@@ -241,18 +241,34 @@ export function TasksView({
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           <Button
             size="sm"
-            onClick={() => handleOpenSaved("run_c89257b365a247b0ab8d8f44fb04a779")}
+            onClick={() => handleOpenSaved("run_a72af9a70dbc47ee9ba7c7b8b6ff1226")}
             className="bg-[#5FCB8A] text-[#0D1915] hover:bg-[#5FCB8A]/90 font-medium text-xs h-8 cursor-pointer"
           >
-            Demo Shop Run (run_c89257b)
+            Demo Shop (run_a72af9a)
           </Button>
           <Button
             size="sm"
             variant="outline"
-            onClick={() => handleOpenSaved("run_93c660238e3443a6a18249167eb1939b")}
+            onClick={() => handleOpenSaved("run_4c8b02996ca547a4a134e5ccaf682681")}
             className="border-[rgba(183,201,173,0.3)] bg-[#1B3228] text-[#F7F7F2] hover:bg-[#203c30] text-xs h-8 cursor-pointer"
           >
-            Benchmark Run (run_93c6602)
+            Demo Auth JWT (run_4c8b029)
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleOpenSaved("run_f80b7c8b136f4e37ac27841d3067bc4b")}
+            className="border-[rgba(183,201,173,0.3)] bg-[#1B3228] text-[#F7F7F2] hover:bg-[#203c30] text-xs h-8 cursor-pointer"
+          >
+            Demo Click (run_f80b7c8)
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => handleOpenSaved("run_3b3ffafecdac4813a0f6120d6040d7eb")}
+            className="border-[rgba(183,201,173,0.3)] bg-[#1B3228] text-[#F7F7F2] hover:bg-[#203c30] text-xs h-8 cursor-pointer"
+          >
+            Demo Pydantic (run_3b3ffaf)
           </Button>
         </div>
       </div>

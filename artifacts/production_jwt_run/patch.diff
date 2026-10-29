@@ -1,0 +1,15 @@
+--- a/src/auth/tokens.py
++++ b/src/auth/tokens.py
+@@ -1,7 +1,7 @@
+ import jwt
+ 
+ def generate_token(user_id: str, role: str, secret: str, algorithm: str = "HS256") -> str:
+-    payload = {"sub": user_id, "role": role}
+-    raw = jwt.encode(payload, secret, algorithm=algorithm)
+-    return raw.decode("utf-8")
++    payload = {"sub": user_id, "role": role}
++    encoded = jwt.encode(payload, secret, algorithm=algorithm)
++    return encoded
+ 
+ def decode_token(token: str, secret: str, algorithms: list = None) -> dict:
+     if algorithms is None:

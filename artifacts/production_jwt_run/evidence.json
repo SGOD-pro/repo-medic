@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0.0",
+  "candidate_id": "candidate_1",
+  "task_id": "TASK-DEMO-JWT",
+  "commit_hash": "8b635e7ff84556962f6ec4fee43523778461c938",
+  "dependency": "pyjwt",
+  "from_version": "1.7.1",
+  "to_version": "2.8.0",
+  "verified_version": "2.8.0",
+  "import_origin": "site-packages",
+  "checkpoint_id": "1e39374b-9bc3-42a2-b9a4-00616728231d",
+  "execution_mode": "live",
+  "checks": {
+    "checkpoint_isolated": true,
+    "pre_patch_hash_match": true,
+    "patch_applied": true,
+    "post_patch_hash_match": true,
+    "collection_node_ids_match": true,
+    "tests_passed": true,
+    "zero_new_skips": true,
+    "post_test_hash_match": true,
+    "version_intact": true,
+    "artifacts_persisted": true
+  },
+  "test_summary": {
+    "exit_code": 0,
+    "collected_count": 3,
+    "passed_count": 3,
+    "failed_count": 0,
+    "skipped_count": 0,
+    "xfailed_count": 0
+  },
+  "artifact_hashes": {
+    "patch.diff": "fefb1dc2815058a8a5470c6ca936ab8da9658d92e9d8a327aba79f205587f022",
+    "verify.log": "eaacc639baaeee87472cacdd52acc23e6819f7aa592e17b335b9f17985519075"
+  },
+  "duration_seconds": 44.96954226901289,
+  "created_at": "2026-10-29T16:08:35Z"
+}
