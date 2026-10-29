@@ -209,9 +209,13 @@ export function CustomRepoForm({
     }
   };
 
+  const isCustomExecutionEnabled = Boolean(
+    validationResult?.custom_execution_supported
+  );
+
   const handleOpenSavedDemo = () => {
     if (onViewSavedRun) {
-      onViewSavedRun("run_c89257b365a247b0ab8d8f44fb04a779");
+      onViewSavedRun("run_a72af9a70dbc47ee9ba7c7b8b6ff1226");
     } else if (onSelectDemoTask) {
       onSelectDemoTask("TASK-DEMO-SHOP");
     }
@@ -817,15 +821,23 @@ export function CustomRepoForm({
                 </Button>
               )}
 
-              {/* Active custom execution button */}
+              {/* Custom execution action (gated for container isolation safety) */}
               <div className="ml-auto w-full sm:w-auto">
                 <Button
                   type="button"
                   data-testid="btn-run-custom-repair"
                   onClick={() => void handleStartCustomRun()}
-                  disabled={isStartingRun}
-                  className="w-full sm:w-auto h-11 bg-[#1B3228] hover:bg-[#234235] text-[#5FCB8A] border border-[#5FCB8A]/40 font-semibold text-xs sm:text-sm px-4 rounded-lg flex items-center justify-center gap-2 cursor-pointer shadow-none disabled:opacity-50"
-                  title="Submit custom repository repair run"
+                  disabled={!isCustomExecutionEnabled || isStartingRun}
+                  className={`w-full sm:w-auto h-11 border font-semibold text-xs sm:text-sm px-4 rounded-lg flex items-center justify-center gap-2 shadow-none transition-colors ${
+                    isCustomExecutionEnabled
+                      ? "bg-[#1B3228] hover:bg-[#234235] text-[#5FCB8A] border-[#5FCB8A]/40 cursor-pointer"
+                      : "bg-[#14231C] text-[#A9B8AD] border-[rgba(183,201,173,0.18)] opacity-60 cursor-not-allowed"
+                  }`}
+                  title={
+                    isCustomExecutionEnabled
+                      ? "Submit custom repository repair run"
+                      : "Custom repository execution is currently gated for container isolation safety"
+                  }
                 >
                   {isStartingRun ? (
                     <>
@@ -835,12 +847,26 @@ export function CustomRepoForm({
                   ) : (
                     <>
                       <Lock className="size-4 text-[#E0B45A]" />
-                      Start Custom Repair Run
+                      <span>
+                        {isCustomExecutionEnabled
+                          ? "Start Custom Repair Run"
+                          : "Start Custom Repair Run (Execution Gated)"}
+                      </span>
                     </>
                   )}
                 </Button>
               </div>
             </div>
+
+            {/* Explanatory note under actions */}
+            {!isCustomExecutionEnabled && (
+              <div className="flex items-center gap-2 text-[11px] text-[#C8BA9D]">
+                <Lock className="size-3.5 text-[#E0B45A] shrink-0" />
+                <span>
+                  Custom remote execution is gated off in this safe product slice to protect against untrusted code execution. Pinned branch discovery and configuration validation remain fully operational.
+                </span>
+              </div>
+            )}
 
             {/* ------------------------------------------------------------- */}
             {/* VALIDATION RESULTS SECTION (IMMEDIATELY AFTER ACTIONS)        */}
@@ -859,9 +885,7 @@ export function CustomRepoForm({
                       </span>
                     </div>
                     <p className="text-xs text-[#A9B8AD] leading-relaxed">
-                      Input format, syntax, and schema constraints passed all local checks.
-                      Remote repository reachability and commit existence on GitHub have not been verified across the network.
-                      Custom repository execution is disabled in this safe product slice.
+                      Input format, syntax, and schema constraints passed all local checks. Pinned branch resolution succeeded. Automated remote execution is gated off in this safe product slice for sandbox isolation safety. To run full repairs in an active sandbox, select one of the curated demo tasks.
                     </p>
                   </div>
                 ) : (

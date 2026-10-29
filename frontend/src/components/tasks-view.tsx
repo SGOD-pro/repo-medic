@@ -535,29 +535,57 @@ export function TasksView({
                       if (val) setExecutionMode(val);
                     }}
                   >
-                    <SelectTrigger className="w-full h-10 border-[rgba(183,201,173,0.2)] bg-[#0D1915] text-xs text-[#F7F7F2] rounded-lg px-3 font-medium">
+                    <SelectTrigger
+                      data-testid="select-execution-mode"
+                      className="w-full h-10 border-[rgba(183,201,173,0.2)] bg-[#0D1915] text-xs text-[#F7F7F2] rounded-lg px-3 font-medium"
+                    >
                       <SelectValue placeholder="Select mode" />
                     </SelectTrigger>
                     <SelectContent className="bg-[#15271F] border-[rgba(183,201,173,0.24)] text-[#F7F7F2]">
-                      <SelectItem value="sandbox_live">
-                        Sandbox Live (Nebius / ConTree)
-                      </SelectItem>
                       <SelectItem value="dry_run">
-                        Dry-Run Emulation (Local)
+                        Dry Run Simulation (Offline Fixture, Zero Spend)
+                      </SelectItem>
+                      <SelectItem value="sandbox_live">
+                        Live Sandbox Execution (Nebius Model + ConTree Sandbox)
                       </SelectItem>
                     </SelectContent>
                   </Select>
-                  <span className="block mt-1 text-[11px] text-[#A9B8AD]">
-                    {executionMode === "sandbox_live"
-                      ? "Live demo uses provider resources and remote container sandboxes."
-                      : "Dry-run emulation uses local fixtures without remote spend."}
-                  </span>
+
+                  {/* Explicit Explanation Card per Mode */}
+                  {executionMode === "sandbox_live" ? (
+                    <div
+                      data-testid="mode-explanation-live"
+                      className="mt-2.5 rounded-lg bg-[#1D1A14] border border-[#E0B45A]/30 p-2.5 text-xs space-y-1"
+                    >
+                      <div className="flex items-center gap-1.5 text-[#E0B45A] font-semibold text-[11px] font-mono">
+                        <AlertCircle className="size-3.5 shrink-0" />
+                        <span>LIVE NEBIUS SANDBOX</span>
+                      </div>
+                      <p className="text-[11px] text-[#C8BA9D] leading-relaxed">
+                        Executes live in isolated remote container sandboxes and prompts the Nebius Token Factory model. Consumes real provider API budget.
+                      </p>
+                    </div>
+                  ) : (
+                    <div
+                      data-testid="mode-explanation-dry-run"
+                      className="mt-2.5 rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.14)] p-2.5 text-xs space-y-1"
+                    >
+                      <div className="flex items-center gap-1.5 text-[#5FCB8A] font-semibold text-[11px] font-mono">
+                        <CheckCircle className="size-3.5 shrink-0" />
+                        <span>OFFLINE DRY RUN SIMULATION</span>
+                      </div>
+                      <p className="text-[11px] text-[#A9B8AD] leading-relaxed">
+                        Replays baseline and upgrade test execution using verified local fixture traces. Zero remote API spend and instantaneous verification.
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
 
               {/* Primary Action Button: Start repair run */}
               <Button
                 type="button"
+                data-testid="btn-start-repair-run"
                 disabled={isStarting || !selectedTask}
                 onClick={handleStart}
                 className="w-full h-11 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs sm:text-sm rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-none disabled:opacity-50 disabled:cursor-not-allowed"
@@ -570,7 +598,11 @@ export function TasksView({
                 ) : (
                   <>
                     <Play className="size-4 fill-current" />
-                    Start repair run
+                    <span>
+                      {executionMode === "sandbox_live"
+                        ? "Start Live Sandbox Repair (Nebius)"
+                        : "Start Dry Run Simulation"}
+                    </span>
                   </>
                 )}
               </Button>

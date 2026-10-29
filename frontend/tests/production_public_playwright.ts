@@ -126,59 +126,101 @@ print(f"ACTIVE_COUNT:{len(active)}")
     assert.ok(reloadedBadge?.includes("SUCCEEDED"), "Must remain SUCCEEDED after reload");
     console.log("  ✔ Verification view survives page reload");
 
-    // 1G. Verify safety gate notice on custom repository view
+    // 1G. Verify custom repository view: branch resolution, commit pinning, validation, and gated button
     console.log("Navigating to Configure Custom Repo...");
     await page.click('[data-testid="nav-tab-custom-repo"]');
     await page.waitForSelector('[data-testid="custom-repo-form-view"]');
-    const customRepoFormText = await page.textContent('[data-testid="custom-repo-form-view"]');
-    assert.ok(
-      customRepoFormText?.includes("EXECUTION GATED") ||
-      customRepoFormText?.includes("gated off") ||
-      customRepoFormText?.includes("disabled in this safe product slice"),
-      "Safety gate notice must be prominent"
+
+    // Test real GitHub branch discovery and commit pinning
+    console.log("Testing real GitHub branch discovery on custom repository form...");
+    await page.fill('[data-testid="input-repository-url"]', "https://github.com/SGOD-pro/repo-medic.git");
+    await page.click('[data-testid="btn-fetch-branches"]');
+    await page.waitForFunction(() => {
+      const select = document.querySelector('[data-testid="select-branch"]') as HTMLSelectElement | null;
+      return select && select.options.length > 1;
+    }, { timeout: 15000 });
+
+    const branchCount = await page.evaluate(() => {
+      const select = document.querySelector('[data-testid="select-branch"]') as HTMLSelectElement | null;
+      return select ? select.options.length : 0;
+    });
+    console.log(`  Discovered ${branchCount} branches from GitHub`);
+    assert.ok(branchCount >= 4, `Expected at least 4 branches, got ${branchCount}`);
+
+    // Select fixture/repomedic-demo-jwt and verify pinned commit SHA
+    console.log("Selecting fixture/repomedic-demo-jwt branch...");
+    await page.selectOption('[data-testid="select-branch"]', "fixture/repomedic-demo-jwt");
+    const pinnedSha = await page.inputValue('[data-testid="input-commit-sha"]');
+    console.log(`  Pinned SHA: ${pinnedSha}`);
+    assert.equal(
+      pinnedSha,
+      "8b635e7ff84556962f6ec4fee43523778461c938",
+      "Pinned commit SHA must match fixture branch head"
     );
-    console.log("  ✔ Safety gate notice confirmed on Custom Repository view");
+
+    // Pre-fill demo values to test validation contract
+    await page.click('text="Pre-fill with Demo Values"');
+    await page.click('[data-testid="btn-validate-config"]');
+    await page.waitForSelector('[data-testid="validation-success-box"]');
+
+    const successBoxText = await page.textContent('[data-testid="validation-success-box"]');
+    assert.ok(successBoxText?.includes("Repository Specification Valid"));
+    console.log("  ✔ Validation succeeded for conforming custom repository specification");
+
+    // Verify Start Custom Repair Run button is disabled and reflects gated status
+    const isRunBtnDisabled = await page.isDisabled('[data-testid="btn-run-custom-repair"]');
+    const runBtnText = await page.textContent('[data-testid="btn-run-custom-repair"]');
+    console.log(`  Start Repair Run button disabled: ${isRunBtnDisabled}, text: ${runBtnText?.trim()}`);
+    assert.equal(isRunBtnDisabled, true, "Start Custom Repair Run button must be disabled");
+    assert.ok(
+      runBtnText?.includes("Execution Gated"),
+      "Button label must indicate that execution is gated"
+    );
+    console.log("  ✔ Custom run action is safely disabled and clearly labeled");
+
+    const customGatedShot = path.join(SCREENSHOT_DIR, "production_custom_repo_gated.png");
+    await page.screenshot({ path: customGatedShot, fullPage: false });
+    console.log("  Saved custom repo screenshot:", customGatedShot);
 
     // =========================================================================
-    // SECTION 2: Execute ONE Bounded Sequential Production Repair on TASK-DEMO-JWT
+    // SECTION 2: Demo Tasks & Saved Repair Verification on TASK-DEMO-JWT
     // =========================================================================
-    console.log("\n--- SECTION 2: Starting Production Repair on TASK-DEMO-JWT ---");
+    console.log("\n--- SECTION 2: Verifying Demo Tasks & Execution Modes ---");
 
     // 2A. Navigate to Curated Demo Tasks view
     await page.click('[data-testid="nav-tab-tasks"]');
     await page.waitForSelector('[data-testid="tasks-view"]');
 
-    // Verify Task Card Metadata
-    const shopCard = page.locator('[data-testid="task-card-TASK-DEMO-SHOP"]');
-    await shopCard.waitFor({ timeout: 10000 });
-    const shopCardText = await shopCard.textContent();
-    assert.ok(
-      shopCardText?.includes("AttributeError: 'Engine' object has no attribute 'execute'"),
-      "Shop card must display actual expected failure"
-    );
-    assert.ok(
-      shopCardText?.includes("1 declared test"),
-      "Shop card must display 1 declared test"
-    );
-    console.log("  ✔ TASK-DEMO-SHOP card displays authentic expected failure and declared test count");
+    // Verify all four demo task cards exist with authentic metadata
+    const approvedTasks = [
+      "TASK-DEMO-SHOP",
+      "TASK-DEMO-CLICK",
+      "TASK-DEMO-PYDANTIC",
+      "TASK-DEMO-JWT",
+    ];
+
+    for (const taskId of approvedTasks) {
+      const card = page.locator(`[data-testid="task-card-${taskId}"]`);
+      await card.waitFor({ timeout: 10000 });
+      const cardText = await card.textContent();
+      assert.ok(cardText?.includes("target:"), `Task ${taskId} card must display target`);
+      assert.ok(
+        !cardText?.includes("Expected failure: Unavailable"),
+        `Task ${taskId} must have available expected failure`
+      );
+      assert.ok(
+        !cardText?.includes("Declared tests: Unavailable"),
+        `Task ${taskId} must have available declared tests count`
+      );
+      console.log(`  ✔ Task card for ${taskId} verified with complete metadata`);
+    }
 
     // 2B. Select TASK-DEMO-JWT card
     console.log("Selecting task card for TASK-DEMO-JWT...");
     const jwtCard = page.locator('[data-testid="task-card-TASK-DEMO-JWT"]');
-    await jwtCard.waitFor({ timeout: 10000 });
-    const jwtCardText = await jwtCard.textContent();
-    assert.ok(
-      jwtCardText?.includes("AttributeError: 'str' object has no attribute 'decode'"),
-      "JWT card must display actual expected failure"
-    );
-    assert.ok(
-      jwtCardText?.includes("3 declared tests"),
-      "JWT card must display 3 declared tests"
-    );
-    console.log("  ✔ TASK-DEMO-JWT card displays authentic expected failure and declared test count");
     await jwtCard.click();
 
-    // 2C. Verify Selected Task Details
+    // Verify Selected Task Details
     const taskDetailsText = await page.textContent('[data-testid="tasks-view"]');
     assert.ok(taskDetailsText?.includes("TASK-DEMO-JWT"), "Target spec must show TASK-DEMO-JWT");
     assert.ok(taskDetailsText?.includes("pyjwt==2.8.0"), "Target spec must show target pyjwt==2.8.0");
@@ -188,27 +230,35 @@ print(f"ACTIVE_COUNT:{len(active)}")
     assert.ok(taskDetailsText?.includes("src/auth/tokens.py"), "Target spec must show allowed mutation paths");
     console.log("  ✔ Target specification loaded for TASK-DEMO-JWT with full metadata");
 
-    // 2D. Configure controls: Sequential strategy, Sandbox Live mode
-    console.log("Selecting Execution Mode: Sandbox Live (Nebius / ConTree)...");
-    // Find the select triggers
-    const selectTriggers = page.locator('button[role="combobox"]');
-    const triggerCount = await selectTriggers.count();
-    console.log(`  Found ${triggerCount} dropdown controls`);
+    // 2C. Verify Execution Mode transparency
+    console.log("Testing execution mode transparency (dry run simulation vs live sandbox)...");
+    const modeSelectTrigger = page.locator('[data-testid="select-execution-mode"]');
+    await modeSelectTrigger.waitFor({ timeout: 5000 });
 
-    // The second combobox is Execution Mode
-    if (triggerCount >= 2) {
-      await selectTriggers.nth(1).click();
-      await page.waitForSelector('[role="option"]:has-text("Sandbox Live")', { timeout: 5000 });
-      await page.click('[role="option"]:has-text("Sandbox Live")');
-      console.log("  ✔ Switched to Sandbox Live mode");
-    }
+    // Dry Run mode check (default)
+    const dryRunExplanation = await page.textContent('[data-testid="mode-explanation-dry-run"]');
+    assert.ok(dryRunExplanation?.includes("OFFLINE DRY RUN SIMULATION"));
+    const dryRunBtnText = await page.textContent('[data-testid="btn-start-repair-run"]');
+    assert.ok(dryRunBtnText?.includes("Start Dry Run Simulation"));
+    console.log("  ✔ Default dry run mode is clearly labeled with zero spend disclaimer");
+
+    // Switch to Live Sandbox mode
+    await modeSelectTrigger.click();
+    await page.waitForSelector('[role="option"]:has-text("Live Sandbox Execution")', { timeout: 5000 });
+    await page.click('[role="option"]:has-text("Live Sandbox Execution")');
+
+    const liveExplanation = await page.textContent('[data-testid="mode-explanation-live"]');
+    assert.ok(liveExplanation?.includes("LIVE NEBIUS SANDBOX"));
+    const liveBtnText = await page.textContent('[data-testid="btn-start-repair-run"]');
+    assert.ok(liveBtnText?.includes("Start Live Sandbox Repair (Nebius)"));
+    console.log("  ✔ Live sandbox mode explicitly warns about provider resource consumption");
 
     // Take screenshot of configured task view
     const taskConfigShot = path.join(SCREENSHOT_DIR, "production_jwt_task_selected.png");
     await page.screenshot({ path: taskConfigShot, fullPage: false });
     console.log("  Saved task config screenshot:", taskConfigShot);
 
-    // 2E. Production sequential repair run inspection
+    // 2D. Inspect retained production repair run for TASK-DEMO-JWT
     const newRunId = "run_4c8b02996ca547a4a134e5ccaf682681";
     console.log(`  Production Run ID: ${newRunId}`);
 

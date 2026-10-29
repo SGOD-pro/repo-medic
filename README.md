@@ -112,7 +112,7 @@ pytest tests/
 Download `patch.diff` from the verified production run:
 
 ```bash
-curl -sS https://oflqusaa1e.execute-api.ap-south-1.amazonaws.com/api/runs/run_4c8b02996ca547a4a134e5ccaf682681/artifacts/art_d4f48f4e3ca8/download -o patch.diff
+curl -sS https://oflqusaa1e.execute-api.ap-south-1.amazonaws.com/api/runs/run_4c8b02996ca547a4a134e5ccaf682681/artifacts/art_d4f48f4e3ca8 -o patch.diff
 git apply patch.diff
 ```
 
