@@ -741,13 +741,13 @@ export function CustomRepoForm({
                     htmlFor="expected_failure"
                     className="block text-xs font-mono font-medium text-[#A9B8AD] mb-1.5"
                   >
-                    Expected Failure Substring <span className="text-[#E5736A]">*</span>
+                    Expected Failure Substring <span className="text-[#A9B8AD] font-normal">(Optional)</span>
                   </label>
                   <Input
                     id="expected_failure"
                     data-testid="input-expected-failure"
                     type="text"
-                    value={formData.expected_failure}
+                    value={formData.expected_failure ?? ""}
                     onChange={(e) =>
                       handleFieldChange("expected_failure", e.target.value)
                     }
@@ -757,7 +757,7 @@ export function CustomRepoForm({
                     className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-10 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
                   />
                   <span id="expected_failure_help" className="block mt-1 text-[11px] text-[#A9B8AD]">
-                    Substring that must appear in test failure output after upgrading dependency.
+                    Optional filter. When omitted, RepoMedic runs automatic regression discovery to capture post upgrade breakage.
                   </span>
                   {fieldErrors.expected_failure?.map((err, i) => (
                     <span

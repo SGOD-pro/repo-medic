@@ -14,6 +14,7 @@ class UpgradeResult:
     failure_reproduced: bool = False
     summary: str = ""
     checkpoint_id: str = "chk_upgrade"
+    no_regression_detected: bool = False
 
 
 @dataclass(frozen=True)

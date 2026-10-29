@@ -1,3 +1,4 @@
+import os
 from typing import Any, Dict, List, Optional
 from src.engine.adapters import CommandResult, SandboxAdapter, SandboxPreset
 
@@ -14,6 +15,37 @@ class FakeSandboxAdapter(SandboxAdapter):
         "pyproject.toml": "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
     }
     DEFAULT_NODE_IDS = ["tests/test_app.py::test_one", "tests/test_app.py::test_two"]
+    DEFAULT_SOURCE_FILES = {
+        "src/app.py": "def fix():\n    return False\n",
+        "src/auth/tokens.py": (
+            "import jwt\n\n"
+            "def generate_token(user_id: str, role: str, secret: str, algorithm: str = \"HS256\") -> str:\n"
+            "    payload = {\"sub\": user_id, \"role\": role}\n"
+            "    raw = jwt.encode(payload, secret, algorithm=algorithm)\n"
+            "    return raw.decode(\"utf-8\")\n\n"
+            "def decode_token(token: str, secret: str, algorithms: list = None) -> dict:\n"
+            "    if algorithms is None:\n"
+            "        algorithms = [\"HS256\"]\n"
+            "    return jwt.decode(token, secret, algorithms=algorithms)\n"
+        ),
+        "src/shop/database.py": (
+            "from sqlalchemy import create_engine, text\n\n"
+            "engine = create_engine(\"sqlite:///:memory:\")\n\n"
+            "def init_db():\n"
+            "    engine.execute(text(\"CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT, price REAL, stock INTEGER)\"))\n"
+        ),
+        "src/cli/terminal.py": (
+            "import click\n\n"
+            "def get_width():\n"
+            "    return click.get_terminal_size()[0]\n"
+        ),
+        "src/users/schemas.py": (
+            "from pydantic import BaseModel, Field\n\n"
+            "class User(BaseModel):\n"
+            "    username: str\n"
+            "    email: str = Field(..., regex=r\"^[\\w\\.-]+@[\\w\\.-]+\\.\\w+$\")\n"
+        ),
+    }
 
     def __init__(
         self,
@@ -39,6 +71,7 @@ class FakeSandboxAdapter(SandboxAdapter):
         self._tampered: bool = (preset == SandboxPreset.VERIFY_TEST_TAMPERING)
         self.file_hashes: Dict[str, str] = dict(self.DEFAULT_TEST_HASHES)
         self.node_ids: List[str] = list(self.DEFAULT_NODE_IDS)
+        self.installed_version: str = "2.0.0"
 
     async def create_execution(self, checkpoint_id: str) -> "FakeSandboxAdapter":
         """Creates an independent execution sandbox instance from the specified checkpoint."""
@@ -59,6 +92,7 @@ class FakeSandboxAdapter(SandboxAdapter):
         child._tampered = (child_preset == SandboxPreset.VERIFY_TEST_TAMPERING)
         child.file_hashes = dict(self.file_hashes)
         child.node_ids = list(self.node_ids)
+        child.installed_version = self.installed_version
         self.execution_handles.append(child)
         return child
 
@@ -115,6 +149,26 @@ class FakeSandboxAdapter(SandboxAdapter):
 
         cmd_name = command[0] if command else ""
 
+        # 0. File reading and discovery commands
+        if cmd_name == "cat" and len(command) > 1:
+            rel_file = command[1].replace("\\", "/").strip().lstrip("/")
+            for known_path, content in self.DEFAULT_SOURCE_FILES.items():
+                if rel_file == known_path or rel_file.endswith(known_path) or known_path.endswith(rel_file):
+                    return CommandResult(exit_code=0, stdout=content, stderr="")
+            if os.path.isfile(rel_file):
+                try:
+                    with open(rel_file, "r", encoding="utf-8") as f:
+                        return CommandResult(exit_code=0, stdout=f.read(), stderr="")
+                except Exception:
+                    pass
+            return CommandResult(exit_code=1, stdout="", stderr=f"cat: {rel_file}: No such file or directory")
+
+        if (cmd_name == "git" and len(command) > 2 and command[1] == "ls-files") or cmd_name == "find":
+            path_arg = command[-1] if command else ""
+            norm_arg = path_arg.replace("\\", "/").strip().rstrip("/")
+            matched = [p for p in self.DEFAULT_SOURCE_FILES.keys() if p.startswith(norm_arg) or not norm_arg]
+            return CommandResult(exit_code=0, stdout="\n".join(matched), stderr="")
+
         # 1. Pytest collection command (--collect-only)
         if any("--collect-only" in arg for arg in command):
             if self.preset == SandboxPreset.VERIFY_NODE_ID_MISMATCH:
@@ -147,6 +201,7 @@ class FakeSandboxAdapter(SandboxAdapter):
             for arg in command:
                 if "==" in arg:
                     version = arg.split("==")[-1]
+            self.installed_version = version
             return CommandResult(
                 exit_code=0,
                 stdout="Successfully installed package",
@@ -236,7 +291,7 @@ class FakeSandboxAdapter(SandboxAdapter):
                 stderr="",
                 collected_count=len(self.node_ids),
                 skipped_count=0,
-                installed_version="2.0.0",
+                installed_version=self.installed_version,
                 import_origin="site-packages",
                 collected_node_ids=list(self.node_ids),
             )

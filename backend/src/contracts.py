@@ -42,7 +42,7 @@ class CustomRepositoryConfig(BaseModel):
     to_version: str
     pytest_args: List[str]
     allowed_source_paths: List[str]
-    expected_failure: str
+    expected_failure: Optional[str] = None
 
 
 class CustomRunRequest(BaseModel):
@@ -84,7 +84,7 @@ class TaskSummary(BaseModel):
 class TaskRecipe(TaskSummary):
     test_command: List[str]
     allowed_source_paths: List[str]
-    expected_failure: str
+    expected_failure: Optional[str] = None
     timeout_seconds: int = 600
     max_candidates: int = 3
     max_refinements: int = 1

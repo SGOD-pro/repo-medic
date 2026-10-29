@@ -52,7 +52,7 @@ export function validateTaskRecipe(input: unknown): TaskRecipe {
   if (!Array.isArray(data.allowed_source_paths)) {
     throw new Error("allowed_source_paths must be an array");
   }
-  if (typeof data.expected_failure !== 'string') {
+  if (data.expected_failure !== undefined && data.expected_failure !== null && typeof data.expected_failure !== 'string') {
     throw new Error("expected_failure must be a string");
   }
   if (typeof data.timeout_seconds !== 'number' || data.timeout_seconds <= 0) {
@@ -311,10 +311,10 @@ export function validateCustomRepositoryConfig(
     }
   }
 
-  // Expected failure substring validation
+  // Expected failure substring validation (Optional: enables automatic regression discovery when omitted)
   const expectedFailure = (config.expected_failure || "").trim();
-  if (!expectedFailure) {
-    addError("expected_failure", "Expected failure substring is required");
+  if (expectedFailure && expectedFailure.length > 1000) {
+    addError("expected_failure", "Expected failure substring cannot exceed 1000 characters");
   }
 
   return {

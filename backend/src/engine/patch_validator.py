@@ -66,6 +66,11 @@ def _is_path_allowed(path_str: str, allowed_paths: List[str]) -> bool:
     return False
 
 
+# Public aliases for engine modules
+normalize_path = _normalize_path
+is_path_allowed = _is_path_allowed
+
+
 def validate_patch(diff_content: str, recipe: TaskRecipe) -> PatchValidationResult:
     """
     Validates that a candidate patch is safe to apply:

@@ -49,5 +49,5 @@ def validate_recipe(recipe: TaskRecipe) -> None:
     if not recipe.commit_sha or not recipe.commit_sha.strip():
         raise RecipeValidationError("commit_sha must be a non-empty string")
 
-    if not recipe.expected_failure or not recipe.expected_failure.strip():
+    if recipe.expected_failure is not None and not recipe.expected_failure.strip():
         raise RecipeValidationError("expected_failure must be a non-empty string")

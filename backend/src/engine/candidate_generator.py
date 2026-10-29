@@ -4,10 +4,10 @@ import re
 from typing import Dict, List, Optional
 
 from src.contracts import HostPorts, TaskRecipe
-from src.engine.adapters import ModelAdapter
+from src.engine.adapters import ModelAdapter, SandboxAdapter
 from src.engine.candidate import CandidatePatch, UpgradeResult
 from src.engine.extraction import extract_error_context
-from src.engine.patch_validator import parse_modified_files
+from src.engine.patch_validator import is_path_allowed, normalize_path, parse_modified_files
 
 logger = logging.getLogger("repomedic.candidate_generator")
 
@@ -323,17 +323,26 @@ def build_refinement_prompt(
     recipe: TaskRecipe,
     candidate: CandidatePatch,
     failure_output: str,
+    source_files: Optional[Dict[str, str]] = None,
 ) -> str:
-    """Builds a bounded refinement prompt incorporating prior candidate diff and failure output."""
+    """Builds a bounded refinement prompt incorporating prior candidate diff, failure output, and source files."""
     bounded_failure = failure_output.strip()
     if len(bounded_failure) > MAX_PROMPT_FAILURE_CHARS:
         bounded_failure = bounded_failure[:MAX_PROMPT_FAILURE_CHARS] + "\n... [truncated]"
+
+    source_section = ""
+    if source_files:
+        rendered_files = []
+        for path, content in source_files.items():
+            rendered_files.append(f"File: {path}\n```python\n{content}\n```")
+        source_section = "\n--- Current source file content ---\n" + "\n\n".join(rendered_files) + "\n"
 
     return (
         f"You are an expert automated Python repair engine for Repo Medic.\n"
         f"Task: {recipe.title}\n"
         f"Target dependency: {recipe.dependency} upgraded from {recipe.from_version} to {recipe.to_version}\n"
-        f"Allowed source paths: {', '.join(recipe.allowed_source_paths)}\n\n"
+        f"Allowed source paths: {', '.join(recipe.allowed_source_paths)}\n"
+        f"{source_section}\n"
         f"--- Previous Candidate Patch ({candidate.candidate_id}) ---\n"
         f"{candidate.diff_content}\n\n"
         f"--- Verification Failure Observed ---\n"
@@ -344,7 +353,84 @@ def build_refinement_prompt(
         f"1. Only modify files within allowed source paths: {', '.join(recipe.allowed_source_paths)}.\n"
         f"2. Never edit test files, lockfiles, or project configuration files.\n"
         f"3. Return strictly a unified diff starting with '--- a/' and '+++ b/'.\n"
+        f"4. Match the actual source file lines and indentation exactly.\n"
     )
+
+
+async def collect_target_source_files(
+    recipe: TaskRecipe,
+    error_output: str,
+    sandbox: SandboxAdapter,
+) -> Dict[str, str]:
+    """
+    Discovers and reads relevant source files within recipe.allowed_source_paths from the sandbox.
+    Correctly handles directory prefixes, nested files, and error traceback matches.
+    """
+    if not hasattr(sandbox, "execute_command") or not callable(sandbox.execute_command):
+        return {}
+
+    error_block, error_files = extract_error_context(error_output)
+    target_files: List[str] = []
+
+    # 1. Prioritize files cited directly in error tracebacks if allowed
+    for ef in error_files:
+        norm_ef = normalize_path(ef)
+        if not norm_ef.endswith(".py"):
+            continue
+        if any(norm_ef.startswith(pre) for pre in ("tests/", "test/", ".git/", ".github/")):
+            continue
+        if is_path_allowed(norm_ef, recipe.allowed_source_paths):
+            if norm_ef not in target_files:
+                target_files.append(norm_ef)
+
+    # 2. If no traceback files matched allowed paths, fall back to inspecting allowed_source_paths
+    if not target_files:
+        for p in recipe.allowed_source_paths:
+            norm_p = normalize_path(p)
+            if any(norm_p.startswith(pre) for pre in ("tests/", "test/", ".git/", ".github/")):
+                continue
+            if norm_p.endswith(".py"):
+                if norm_p not in target_files:
+                    target_files.append(norm_p)
+            else:
+                # It is a directory or path prefix (e.g. "src/shop/" or "src/shop" or "src")
+                try:
+                    ls_res = await sandbox.execute_command(["git", "ls-files", norm_p], timeout_seconds=10)
+                    found: List[str] = []
+                    if ls_res.exit_code == 0 and ls_res.stdout:
+                        for line in ls_res.stdout.splitlines():
+                            cf = normalize_path(line)
+                            if cf.endswith(".py") and is_path_allowed(cf, recipe.allowed_source_paths):
+                                if not any(cf.startswith(pre) for pre in ("tests/", "test/", ".git/")):
+                                    found.append(cf)
+                    if not found:
+                        find_res = await sandbox.execute_command(
+                            ["find", norm_p, "-maxdepth", "3", "-type", "f", "-name", "*.py"],
+                            timeout_seconds=10,
+                        )
+                        if find_res.exit_code == 0 and find_res.stdout:
+                            for line in find_res.stdout.splitlines():
+                                cf = normalize_path(line)
+                                if cf.endswith(".py") and is_path_allowed(cf, recipe.allowed_source_paths):
+                                    if not any(cf.startswith(pre) for pre in ("tests/", "test/", ".git/")):
+                                        found.append(cf)
+                    for f in found:
+                        if f not in target_files:
+                            target_files.append(f)
+                except Exception as exc:
+                    logger.warning("Error discovering source files under %s: %s", norm_p, exc)
+
+    # Read content of target files (limit to top 5 to keep context bounded)
+    source_files: Dict[str, str] = {}
+    for tf in target_files[:5]:
+        try:
+            cat_res = await sandbox.execute_command(["cat", tf], timeout_seconds=15)
+            if cat_res.exit_code == 0 and cat_res.stdout:
+                source_files[tf] = cat_res.stdout
+        except Exception as exc:
+            logger.warning("Could not read source file %s from sandbox: %s", tf, exc)
+
+    return source_files
 
 
 async def generate_refinement_patch(
@@ -369,7 +455,9 @@ async def generate_refinement_patch(
             )
 
     try:
-        prompt = build_refinement_prompt(recipe, candidate, failure_output)
+        prompt = build_refinement_prompt(
+            recipe, candidate, failure_output, source_files=source_files
+        )
         raw_response = await model.complete(prompt, max_tokens=2048)
         logger.info("Raw model completion (%d chars): %s", len(raw_response), repr(raw_response[:200]))
 

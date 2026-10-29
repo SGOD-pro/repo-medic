@@ -7,10 +7,14 @@ from src.engine.adapters import ModelAdapter, SandboxAdapter
 from src.engine.baseline import run_baseline_stage
 from src.engine.branch_search import run_branch_refine_search
 from src.engine.candidate import BranchSearchBudget
-from src.engine.candidate_generator import BudgetExceededError, generate_candidate_patch
+from src.engine.candidate_generator import (
+    BudgetExceededError,
+    collect_target_source_files,
+    generate_candidate_patch,
+)
 from src.engine.contree_sandbox import ConTreeSandboxAdapter
 from src.engine.extraction import extract_error_context
-from src.engine.fake_model import FakeModelAdapter
+from src.engine.fake_model import FakeModelAdapter, get_canned_patch_for_recipe
 from src.engine.fake_sandbox import FakeSandboxAdapter
 from src.engine.patch_validator import validate_patch
 from src.engine.token_factory_model import TokenFactoryModelAdapter
@@ -93,7 +97,20 @@ async def repair(
             )
     else:
         active_sandbox = sandbox or FakeSandboxAdapter(reproduced_failure_stderr=recipe.expected_failure)
-        active_model = model or FakeModelAdapter()
+        if model is not None:
+            active_model = model
+        else:
+            canned = get_canned_patch_for_recipe(recipe)
+            if canned is not None:
+                active_model = FakeModelAdapter(canned_response=canned)
+            else:
+                return RepairResult(
+                    state="failed",
+                    reason=(
+                        f"Offline simulation does not support task '{recipe.task_id}'. "
+                        "Live execution mode with Nebius provider is required for un-cached repositories."
+                    ),
+                )
 
     reserved_setup = False
     try:
@@ -137,6 +154,13 @@ async def repair(
             await host.settle("sandbox:setup", 0.20)
             reserved_setup = False
 
+        # If automatic regression discovery detected no failure under target version, finish cleanly
+        if getattr(upgrade, "no_regression_detected", False):
+            return RepairResult(
+                state="succeeded",
+                reason=f"No regression detected: test suite passed cleanly under target version {recipe.to_version}",
+            )
+
         # 7. Check cancellation before repair search
         if await host.cancelled():
             return RepairResult(state="cancelled", reason="User cancelled after upgrade stage")
@@ -165,26 +189,7 @@ async def repair(
             return RepairResult(state=search_result.state, reason=search_result.reason)
 
         # 9. Read source files for allowed paths from sandbox to provide accurate context
-        error_block, error_files = extract_error_context(upgrade.failure_output)
-        innermost_matching = None
-        for ef in reversed(error_files):
-            for p in recipe.allowed_source_paths:
-                if p == ef or ef.endswith(p) or p.endswith(ef) or ef.endswith("/" + p):
-                    innermost_matching = p
-                    break
-            if innermost_matching:
-                break
-        target_paths = [innermost_matching] if innermost_matching else recipe.allowed_source_paths
-
-        source_files: Dict[str, str] = {}
-        if hasattr(active_sandbox, "execute_command"):
-            for rel_path in target_paths:
-                try:
-                    cat_res = await active_sandbox.execute_command(["cat", rel_path], timeout_seconds=15)
-                    if cat_res.exit_code == 0 and cat_res.stdout:
-                        source_files[rel_path] = cat_res.stdout
-                except Exception as exc:
-                    logger.warning("Could not read source file %s from sandbox: %s", rel_path, exc)
+        source_files = await collect_target_source_files(recipe, upgrade.failure_output, active_sandbox)
 
         # Generate candidate patch
         try:

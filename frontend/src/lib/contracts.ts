@@ -46,7 +46,7 @@ export interface CustomRepositoryConfig {
   to_version: string;
   pytest_args: string[];
   allowed_source_paths: string[];
-  expected_failure: string;
+  expected_failure?: string | null;
 }
 
 export interface CustomConfigValidationResponse {
@@ -76,7 +76,7 @@ export interface TaskSummary {
 export interface TaskRecipe extends TaskSummary {
   test_command: string[];
   allowed_source_paths: string[];
-  expected_failure: string;
+  expected_failure?: string | null;
   timeout_seconds: number;
   max_candidates: number;
   max_refinements: number;

@@ -124,10 +124,10 @@ def validate_custom_config(config: CustomRepositoryConfig) -> CustomConfigValida
                 "Allowed source paths must be relative paths within repository root and cannot contain parent directory traversal (..)",
             )
 
-    # Expected failure substring validation
+    # Expected failure substring validation (Optional: enables automatic regression discovery when omitted)
     expected_failure = (config.expected_failure or "").strip()
-    if not expected_failure:
-        add_error("expected_failure", "Expected failure substring is required")
+    if expected_failure and len(expected_failure) > 1000:
+        add_error("expected_failure", "Expected failure substring cannot exceed 1000 characters")
 
     return CustomConfigValidationResponse(
         valid=len(errors) == 0,

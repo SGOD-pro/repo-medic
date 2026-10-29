@@ -109,107 +109,126 @@ export function RunActiveView({
     ? `(${matchedTask.dependency} ${matchedTask.from_version} → ${matchedTask.to_version})`
     : "";
 
-  // Start & Manage Stream
+  // Start & Manage Stream and Hydrate Run Events
   useEffect(() => {
     if (!activeRun?.run_id || !apiClient) return;
     const runId = activeRun.run_id;
 
-    if (activeRun.state === "succeeded" || activeRun.state === "failed" || activeRun.state === "cancelled") {
+    seenSeqsRef.current.clear();
+
+    const handleEvent = (event: EventEnvelope) => {
+      if (seenSeqsRef.current.has(event.seq)) return;
+      seenSeqsRef.current.add(event.seq);
+
+      const currentStartedAt = startedAtRef.current;
+      const elapsedNow = currentStartedAt ? Math.max(0, Math.floor((Date.now() - currentStartedAt) / 1000)) : 0;
+      const m = Math.floor(elapsedNow / 60);
+      const s = elapsedNow % 60;
+      const timeTag = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
+
+      if (event.type === "usage.updated") {
+        const u = event.payload as unknown as UsageSummary;
+        setLiveUsage(u);
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} usage: ${u.model_calls} calls, tokens=${u.input_tokens}+${u.output_tokens}, spend=$${Number(u.estimated_usd).toFixed(4)}`,
+        ]);
+      } else if (event.type === "stage.completed") {
+        const p = event.payload as { stage: StageKey; passed: boolean; summary: string };
+        if (p.stage) {
+          setStageResults((prev) => ({
+            ...prev,
+            [p.stage]: { passed: p.passed, summary: p.summary },
+          }));
+        }
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} stage.${p.stage}: ${p.passed ? "PASSED" : "FAILED"} - ${p.summary}`,
+        ]);
+      } else if (event.type === "candidate.completed") {
+        const c = event.payload as { candidate_id: string; passed: boolean; summary: string };
+        setLiveCandidates((prev) => {
+          const idx = prev.findIndex((item) => item.id === c.candidate_id);
+          const entry: LiveCandidate = {
+            id: c.candidate_id,
+            passed: c.passed,
+            summary: c.summary,
+            timestamp: event.ts || new Date().toISOString(),
+          };
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = entry;
+            return updated;
+          }
+          return [...prev, entry];
+        });
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} candidate.${c.candidate_id}: ${c.passed ? "VERIFIED" : "FAILED"} - ${c.summary}`,
+        ]);
+      } else if (event.type === "run.started") {
+        const startedPayload = event.payload as Record<string, unknown> | undefined;
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} run.started: mode=${startedPayload?.mode} search_mode=${startedPayload?.search_mode}`,
+        ]);
+      } else if (event.type === "run.finished") {
+        const f = event.payload as { state: string; reason: string | null };
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} run.finished: state=${f.state} (${f.reason || "clean completion"})`,
+        ]);
+        apiClient.getRun(runId).then((recovered) => {
+          onUpdateRunRef.current?.(recovered);
+        }).catch(() => {});
+      } else if (event.type === "run.cancelled") {
+        setIsCancelled(true);
+        const cancelledPayload = event.payload as Record<string, unknown> | undefined;
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} run.cancelled: ${(cancelledPayload?.reason as string) || "User initiated cancellation"}`,
+        ]);
+        apiClient.getRun(runId).then((recovered) => {
+          onUpdateRunRef.current?.(recovered);
+        }).catch(() => {});
+      } else if (event.type === "run.error") {
+        const err = event.payload as unknown as ErrorDetail;
+        setErrorDetail(err);
+        setStreamLogs((prev) => [
+          ...prev,
+          `${timeTag} run.error: ${err.code} - ${err.message}`,
+        ]);
+        apiClient.getRun(runId).then((recovered) => {
+          onUpdateRunRef.current?.(recovered);
+        }).catch(() => {});
+      }
+    };
+
+    // Hydrate all existing events immediately
+    apiClient.getRunEvents(runId).then((events) => {
+      if (events && events.length > 0) {
+        for (const evt of events) {
+          handleEvent(evt);
+        }
+        const firstTs = new Date(events[0].ts).getTime();
+        const lastTs = new Date(events[events.length - 1].ts).getTime();
+        if (!isNaN(firstTs) && !isNaN(lastTs) && lastTs >= firstTs) {
+          setElapsedSeconds(Math.max(1, Math.round((lastTs - firstTs) / 1000)));
+        }
+      }
+    }).catch(() => {});
+
+    // Only connect live SSE stream if the run is currently in-flight
+    const isTerm = activeRun.state === "succeeded" || activeRun.state === "failed" || activeRun.state === "cancelled";
+    if (isTerm) {
       return;
     }
 
-    seenSeqsRef.current.clear();
     const fetcher = createEventStreamFetcher(apiClient, runId);
     const manager = new StreamManager({
       runId,
       streamFetcher: fetcher,
-      onEvent: (event: EventEnvelope) => {
-        if (seenSeqsRef.current.has(event.seq)) return;
-        seenSeqsRef.current.add(event.seq);
-
-        const currentStartedAt = startedAtRef.current;
-        const elapsedNow = currentStartedAt ? Math.max(0, Math.floor((Date.now() - currentStartedAt) / 1000)) : 0;
-        const m = Math.floor(elapsedNow / 60);
-        const s = elapsedNow % 60;
-        const timeTag = `[${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}]`;
-
-        if (event.type === "usage.updated") {
-          const u = event.payload as unknown as UsageSummary;
-          setLiveUsage(u);
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} usage: ${u.model_calls} calls, tokens=${u.input_tokens}+${u.output_tokens}, spend=$${Number(u.estimated_usd).toFixed(4)}`,
-          ]);
-        } else if (event.type === "stage.completed") {
-          const p = event.payload as { stage: StageKey; passed: boolean; summary: string };
-          if (p.stage) {
-            setStageResults((prev) => ({
-              ...prev,
-              [p.stage]: { passed: p.passed, summary: p.summary },
-            }));
-          }
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} stage.${p.stage}: ${p.passed ? "PASSED" : "FAILED"} - ${p.summary}`,
-          ]);
-        } else if (event.type === "candidate.completed") {
-          const c = event.payload as { candidate_id: string; passed: boolean; summary: string };
-          setLiveCandidates((prev) => {
-            const idx = prev.findIndex((item) => item.id === c.candidate_id);
-            const entry: LiveCandidate = {
-              id: c.candidate_id,
-              passed: c.passed,
-              summary: c.summary,
-              timestamp: event.ts || new Date().toISOString(),
-            };
-            if (idx >= 0) {
-              const updated = [...prev];
-              updated[idx] = entry;
-              return updated;
-            }
-            return [...prev, entry];
-          });
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} candidate.${c.candidate_id}: ${c.passed ? "VERIFIED" : "FAILED"} - ${c.summary}`,
-          ]);
-        } else if (event.type === "run.started") {
-          const startedPayload = event.payload as Record<string, unknown> | undefined;
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} run.started: mode=${startedPayload?.mode} search_mode=${startedPayload?.search_mode}`,
-          ]);
-        } else if (event.type === "run.finished") {
-          const f = event.payload as { state: string; reason: string | null };
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} run.finished: state=${f.state} (${f.reason || "clean completion"})`,
-          ]);
-          apiClient.getRun(runId).then((recovered) => {
-            onUpdateRunRef.current?.(recovered);
-          }).catch(() => {});
-        } else if (event.type === "run.cancelled") {
-          setIsCancelled(true);
-          const cancelledPayload = event.payload as Record<string, unknown> | undefined;
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} run.cancelled: ${(cancelledPayload?.reason as string) || "User initiated cancellation"}`,
-          ]);
-          apiClient.getRun(runId).then((recovered) => {
-            onUpdateRunRef.current?.(recovered);
-          }).catch(() => {});
-        } else if (event.type === "run.error") {
-          const err = event.payload as unknown as ErrorDetail;
-          setErrorDetail(err);
-          setStreamLogs((prev) => [
-            ...prev,
-            `${timeTag} run.error: ${err.code} - ${err.message}`,
-          ]);
-          apiClient.getRun(runId).then((recovered) => {
-            onUpdateRunRef.current?.(recovered);
-          }).catch(() => {});
-        }
-      },
+      onEvent: handleEvent,
       onStatusChange: (status: ConnectionStatus, attempt: number) => {
         setConnectionStatus(status);
         setReconnectAttempt(attempt);
@@ -398,7 +417,7 @@ export function RunActiveView({
               {displayRepo} {displayDependency}
             </span>
             <Badge className="bg-[#1B3228] text-[#B7C9AD] border-[rgba(183,201,173,0.2)] font-mono text-[10px] px-2 py-0">
-              {activeRun.mode.toUpperCase()}
+              {activeRun.mode === "live" ? "LIVE SANDBOX (NEBIUS)" : "OFFLINE (TURSO)"}
             </Badge>
             <Badge className="bg-[#15271F] text-[#A9B8AD] border-[rgba(183,201,173,0.2)] font-mono text-[10px] px-2 py-0">
               {activeRun.search_mode}
@@ -633,9 +652,10 @@ export function RunActiveView({
             <div className="space-y-3">
               {httpStages.map((stage, idx) => {
                 const res = stageResults[stage.key];
-                const isPassed = res?.passed || (isSuccess && res !== null ? res?.passed : isSuccess);
-                const isFailedStage = res && !res.passed;
-                const isCurrent = !isTerminal && !res && idx === 0;
+                const isPassed = Boolean(res ? res.passed : (isSuccess && isTerminal));
+                const isFailedStage = Boolean(res && !res.passed);
+                const isCurrent = !isTerminal && !res && (idx === 0 || Boolean(stageResults[httpStages[idx - 1].key]?.passed));
+                const isNotRun = isTerminal && !res && !isPassed;
 
                 return (
                   <div
@@ -676,11 +696,11 @@ export function RunActiveView({
                             : "bg-transparent text-[#A9B8AD] border-[rgba(183,201,173,0.16)]"
                         }`}
                       >
-                        {isPassed ? "PASSED" : isFailedStage ? "FAILED" : isCurrent ? "ACTIVE" : "PENDING"}
+                        {isPassed ? "PASSED" : isFailedStage ? "FAILED" : isCurrent ? "ACTIVE" : isNotRun ? "NOT RUN" : "PENDING"}
                       </Badge>
                     </div>
                     <p className="text-[11px] text-[#A9B8AD] pl-6 leading-relaxed">
-                      {res?.summary || stage.defaultDetail}
+                      {res?.summary || (isNotRun ? "Stage was not executed" : stage.defaultDetail)}
                     </p>
                   </div>
                 );

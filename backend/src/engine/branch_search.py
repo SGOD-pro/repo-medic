@@ -13,6 +13,7 @@ from src.engine.candidate import (
 )
 from src.engine.candidate_generator import (
     BudgetExceededError,
+    collect_target_source_files,
     generate_candidate_patch,
     generate_refinement_patch,
 )
@@ -54,26 +55,7 @@ async def run_branch_refine_search(
     total_candidates = 0
     total_refinements = 0
 
-    source_files: Dict[str, str] = {}
-    if hasattr(sandbox, "execute_command"):
-        error_block, error_files = extract_error_context(upgrade.failure_output)
-        innermost_matching = None
-        for ef in reversed(error_files):
-            for p in recipe.allowed_source_paths:
-                if p == ef or ef.endswith(p) or p.endswith(ef) or ef.endswith("/" + p):
-                    innermost_matching = p
-                    break
-            if innermost_matching:
-                break
-        target_paths = [innermost_matching] if innermost_matching else recipe.allowed_source_paths
-
-        for rel_path in target_paths:
-            try:
-                cat_res = await sandbox.execute_command(["cat", rel_path], timeout_seconds=15)
-                if cat_res.exit_code == 0 and cat_res.stdout:
-                    source_files[rel_path] = cat_res.stdout
-            except Exception as exc:
-                logger.warning("Could not read source file %s from sandbox: %s", rel_path, exc)
+    source_files = await collect_target_source_files(recipe, upgrade.failure_output, sandbox)
 
     for branch_idx in range(1, search_budget.max_candidates + 1):
         # 1. Check cancellation before branch generation

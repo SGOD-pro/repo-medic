@@ -88,48 +88,84 @@ async def run_upgrade_stage(
 
     combined_output = f"{test_res.stdout}\n{test_res.stderr}".strip()
 
-    # If tests unexpectedly pass, upgrade failure was NOT reproduced
-    if test_res.exit_code == 0:
-        summary = (
-            f"Upgrade to {recipe.to_version} installed, but tests passed cleanly without reproducing "
-            f"expected failure '{recipe.expected_failure}'"
-        )
-        await host.emit(
-            "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
-        )
-        return UpgradeResult(
-            success=False,
-            installed_version=installed_ver,
-            failure_output=combined_output,
-            exit_code=0,
-            failure_reproduced=False,
-            summary=summary,
+    has_expected = bool(recipe.expected_failure and recipe.expected_failure.strip())
+
+    if has_expected:
+        expected = recipe.expected_failure.strip()
+        # If tests unexpectedly pass, upgrade failure was NOT reproduced
+        if test_res.exit_code == 0:
+            summary = (
+                f"Upgrade to {recipe.to_version} installed, but tests passed cleanly without reproducing "
+                f"expected failure '{expected}'"
+            )
+            await host.emit(
+                "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
+            )
+            return UpgradeResult(
+                success=False,
+                installed_version=installed_ver,
+                failure_output=combined_output,
+                exit_code=0,
+                failure_reproduced=False,
+                summary=summary,
+            )
+
+        # Check whether the expected failure string or pattern is present
+        failure_matched = expected in combined_output or bool(
+            re.search(re.escape(expected), combined_output, re.IGNORECASE)
         )
 
-    # Check whether the expected failure string or pattern is present
-    expected = recipe.expected_failure.strip()
-    failure_matched = expected in combined_output or bool(
-        re.search(re.escape(expected), combined_output, re.IGNORECASE)
-    )
+        if not failure_matched:
+            summary = (
+                f"Post-upgrade tests failed with exit code {test_res.exit_code}, but expected failure "
+                f"pattern '{expected}' was not observed"
+            )
+            await host.emit(
+                "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
+            )
+            return UpgradeResult(
+                success=False,
+                installed_version=installed_ver,
+                failure_output=combined_output,
+                exit_code=test_res.exit_code,
+                failure_reproduced=False,
+                summary=summary,
+            )
+    else:
+        # Automatic regression discovery: no expected failure string provided
+        if test_res.exit_code == 0:
+            summary = f"Upgrade to {recipe.to_version} installed cleanly. No regression detected in test suite."
+            await host.emit(
+                "stage.completed", {"stage": "upgrade", "passed": True, "summary": summary}
+            )
+            return UpgradeResult(
+                success=True,
+                installed_version=installed_ver,
+                failure_output=combined_output,
+                exit_code=0,
+                failure_reproduced=False,
+                summary=summary,
+                no_regression_detected=True,
+            )
 
-    if not failure_matched:
-        summary = (
-            f"Post-upgrade tests failed with exit code {test_res.exit_code}, but expected failure "
-            f"pattern '{expected}' was not observed"
-        )
-        await host.emit(
-            "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
-        )
-        return UpgradeResult(
-            success=False,
-            installed_version=installed_ver,
-            failure_output=combined_output,
-            exit_code=test_res.exit_code,
-            failure_reproduced=False,
-            summary=summary,
-        )
+        # Distinguish test execution failure from environment/collection failure
+        if test_res.exit_code == 5 or ("ERROR collecting" in combined_output and "failed" not in combined_output.lower()):
+            summary = f"Post-upgrade test collection failed under {recipe.to_version} (exit code {test_res.exit_code})"
+            await host.emit(
+                "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}
+            )
+            return UpgradeResult(
+                success=False,
+                installed_version=installed_ver,
+                failure_output=combined_output,
+                exit_code=test_res.exit_code,
+                failure_reproduced=False,
+                summary=summary,
+            )
 
-    # Upgrade succeeded and expected failure reproduced
+        expected = "discovered test failure"
+
+    # Upgrade succeeded and expected/discovered failure reproduced
     checkpoint_id = "chk_upgrade"
     if hasattr(sandbox, "capture_checkpoint") and callable(sandbox.capture_checkpoint):
         try:
@@ -139,9 +175,14 @@ async def run_upgrade_stage(
         except Exception:
             pass
 
-    summary = (
-        f"Upgrade to {recipe.to_version} verified and reproduced expected failure '{expected}'"
-    )
+    if has_expected:
+        summary = (
+            f"Upgrade to {recipe.to_version} verified and reproduced expected failure '{expected}'"
+        )
+    else:
+        summary = (
+            f"Upgrade to {recipe.to_version} verified; captured test regression automatically (exit code {test_res.exit_code})"
+        )
     await host.emit(
         "stage.completed", {"stage": "upgrade", "passed": True, "summary": summary}
     )

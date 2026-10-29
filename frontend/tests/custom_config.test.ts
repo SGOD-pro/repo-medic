@@ -85,13 +85,13 @@ describe("custom repository configuration: validation & safety gate (Spec 0009)"
     assert.ok(result2.field_errors.allowed_source_paths?.some((e) => e.includes("traversal")));
   });
 
-  it("rejects missing expected failure substring", () => {
+  it("allows optional expected failure substring for automatic regression discovery", () => {
     const result = validateCustomRepositoryConfig({
       ...VALID_CONFIG,
       expected_failure: "   ",
     });
-    assert.equal(result.valid, false);
-    assert.ok(result.field_errors.expected_failure?.length > 0);
+    assert.equal(result.valid, true);
+    assert.equal(result.field_errors.expected_failure, undefined);
   });
 
   it("MockTransport validates custom configs with same contract", async () => {
