@@ -1,0 +1,22 @@
+{
+  "task_id": "TASK-DEMO-CLICK",
+  "title": "Upgrade click 7.1.2 to 8.1.7 in repomedic-demo-cli",
+  "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+  "commit_sha": "fdfd88c70f7e8392dcdd9559937ffc3d66e3c70f",
+  "dependency": "click",
+  "from_version": "7.1.2",
+  "to_version": "8.1.7",
+  "test_command": [
+    "pytest",
+    "tests/"
+  ],
+  "allowed_source_paths": [
+    "src/cli/terminal.py"
+  ],
+  "expected_failure": "AttributeError: module 'click' has no attribute 'get_terminal_size'",
+  "timeout_seconds": 600,
+  "tests_count": 2,
+  "baseline_time": "0.15s (Python 3.12)",
+  "max_candidates": 3,
+  "max_refinements": 1
+}

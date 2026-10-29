@@ -10,7 +10,12 @@ TerminalRunState = Literal["succeeded", "failed", "cancelled"]
 ArtifactKind = Literal["patch", "evidence", "log"]
 StageName = Literal["baseline", "upgrade", "repair", "verification"]
 
-SUPPORTED_DEMO_TASK_IDS: tuple[str, ...] = ("TASK-DEMO-SHOP", "TASK-091")
+SUPPORTED_DEMO_TASK_IDS: tuple[str, ...] = (
+    "TASK-DEMO-SHOP",
+    "TASK-091",
+    "TASK-DEMO-PYDANTIC",
+    "TASK-DEMO-CLICK",
+)
 
 
 class CustomRepositoryConfig(BaseModel):

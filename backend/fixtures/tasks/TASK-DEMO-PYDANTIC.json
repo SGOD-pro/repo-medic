@@ -1,0 +1,22 @@
+{
+  "task_id": "TASK-DEMO-PYDANTIC",
+  "title": "Upgrade pydantic 1.10.13 to 2.5.3 in repomedic-demo-users",
+  "repository_url": "https://github.com/SGOD-pro/repo-medic.git",
+  "commit_sha": "a96d3f077dd480f67c863121327866aa51169e48",
+  "dependency": "pydantic",
+  "from_version": "1.10.13",
+  "to_version": "2.5.3",
+  "test_command": [
+    "pytest",
+    "tests/"
+  ],
+  "allowed_source_paths": [
+    "src/users/schemas.py"
+  ],
+  "expected_failure": "`regex` is removed. use `pattern` instead",
+  "timeout_seconds": 600,
+  "tests_count": 2,
+  "baseline_time": "0.18s (Python 3.12)",
+  "max_candidates": 3,
+  "max_refinements": 1
+}

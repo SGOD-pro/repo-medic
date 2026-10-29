@@ -5,7 +5,12 @@ export type TerminalRunState = "succeeded" | "failed" | "cancelled";
 export type ArtifactKind = "patch" | "evidence" | "log";
 export type StageName = "baseline" | "upgrade" | "repair" | "verification";
 
-export const SUPPORTED_DEMO_TASK_IDS: readonly string[] = ["TASK-DEMO-SHOP", "TASK-091"];
+export const SUPPORTED_DEMO_TASK_IDS: readonly string[] = [
+  "TASK-DEMO-SHOP",
+  "TASK-091",
+  "TASK-DEMO-PYDANTIC",
+  "TASK-DEMO-CLICK",
+];
 
 export interface CustomRepositoryConfig {
   repository_url: string;

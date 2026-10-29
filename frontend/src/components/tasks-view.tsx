@@ -52,22 +52,34 @@ function mapSummaryToTaskItem(s: TaskSummary): TaskItem {
   const expectedFailure =
     typeof extra.expected_failure === "string"
       ? extra.expected_failure
+      : s.task_id === "TASK-DEMO-PYDANTIC"
+      ? "`regex` is removed. use `pattern` instead"
+      : s.task_id === "TASK-DEMO-CLICK"
+      ? "AttributeError: module 'click' has no attribute 'get_terminal_size'"
       : `Upgrade regression on ${s.dependency}==${s.to_version}`;
   const allowlist = Array.isArray(extra.allowed_source_paths)
     ? (extra.allowed_source_paths as string[]).join(", ")
     : s.task_id === "TASK-DEMO-SHOP"
     ? "src/shop/"
+    : s.task_id === "TASK-DEMO-PYDANTIC"
+    ? "src/users/"
+    : s.task_id === "TASK-DEMO-CLICK"
+    ? "src/cli/"
     : "src/";
   const testsCount =
     typeof extra.tests_count === "number"
       ? extra.tests_count
-      : (s.task_id === "TASK-DEMO-SHOP" || s.task_id === "TASK-091" ? 1 : 42);
+      : (s.task_id === "TASK-DEMO-SHOP" || s.task_id === "TASK-091" ? 1 : 2);
   const baselineTime =
     typeof extra.baseline_time === "string"
       ? extra.baseline_time
       : (s.task_id === "TASK-DEMO-SHOP" || s.task_id === "TASK-091"
         ? "0.16s (Python 3.12)"
-        : "1.48s (Python 3.11)");
+        : s.task_id === "TASK-DEMO-PYDANTIC"
+        ? "0.18s (Python 3.12)"
+        : s.task_id === "TASK-DEMO-CLICK"
+        ? "0.15s (Python 3.12)"
+        : "0.20s (Python 3.12)");
 
   return {
     id: s.task_id,
