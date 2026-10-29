@@ -12,7 +12,6 @@ import {
   AlertCircle,
   ShieldCheck,
   CheckCircle2,
-  Lock,
   RotateCw,
   Sparkles,
   ArrowRight,
@@ -20,6 +19,7 @@ import {
   CheckCircle,
   ArrowDown,
   GitBranch,
+  Play,
 } from "lucide-react";
 import {
   CustomRepositoryConfig,
@@ -209,10 +209,6 @@ export function CustomRepoForm({
     }
   };
 
-  const isCustomExecutionEnabled = Boolean(
-    validationResult?.custom_execution_supported
-  );
-
   const handleOpenSavedDemo = () => {
     if (onViewSavedRun) {
       onViewSavedRun("run_a72af9a70dbc47ee9ba7c7b8b6ff1226");
@@ -395,23 +391,21 @@ export function CustomRepoForm({
           </div>
         </div>
 
-        {/* Compact Single Gate Notice Banner */}
-        <div className="rounded-xl border border-[#E0B45A]/30 bg-[#1D1A14] p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
+        {/* Supported Scope Banner */}
+        <div className="rounded-xl border border-[#5FCB8A]/30 bg-[#15271F] p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-start justify-between gap-3">
           <div className="flex items-start gap-3">
-            <Lock className="size-4 sm:size-5 text-[#E0B45A] shrink-0 mt-0.5" />
+            <CheckCircle2 className="size-4 sm:size-5 text-[#5FCB8A] shrink-0 mt-0.5" />
             <div>
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-xs sm:text-sm text-[#F7F7F2]">
-                  Custom repository runs are not yet available.
+                  Custom Python repository repair execution is active.
                 </span>
-                <Badge className="bg-[#E0B45A]/20 text-[#E0B45A] border-transparent font-mono text-[10px] px-1.5 py-0">
-                  EXECUTION GATED
+                <Badge className="bg-[#5FCB8A]/20 text-[#5FCB8A] border-transparent font-mono text-[10px] px-1.5 py-0">
+                  EXECUTION ACTIVE
                 </Badge>
               </div>
-              <p className="mt-1 text-xs text-[#C8BA9D] leading-relaxed">
-                You can validate the configuration syntax or view a demo. Arbitrary remote
-                execution, sandbox container spawn, and LLM repairs are strictly gated off
-                to ensure verified isolation and resource safety.
+              <p className="mt-1 text-xs text-[#A9B8AD] leading-relaxed">
+                Configure your public GitHub repository, select a branch to pin the commit SHA, and define dependency targets. RepoMedic validates configuration constraints and runs repairs in isolated environments.
               </p>
             </div>
           </div>
@@ -821,23 +815,19 @@ export function CustomRepoForm({
                 </Button>
               )}
 
-              {/* Custom execution action (gated for container isolation safety) */}
+              {/* Custom execution action */}
               <div className="ml-auto w-full sm:w-auto">
                 <Button
                   type="button"
                   data-testid="btn-run-custom-repair"
                   onClick={() => void handleStartCustomRun()}
-                  disabled={!isCustomExecutionEnabled || isStartingRun}
-                  className={`w-full sm:w-auto h-11 border font-semibold text-xs sm:text-sm px-4 rounded-lg flex items-center justify-center gap-2 shadow-none transition-colors ${
-                    isCustomExecutionEnabled
-                      ? "bg-[#1B3228] hover:bg-[#234235] text-[#5FCB8A] border-[#5FCB8A]/40 cursor-pointer"
-                      : "bg-[#14231C] text-[#A9B8AD] border-[rgba(183,201,173,0.18)] opacity-60 cursor-not-allowed"
-                  }`}
-                  title={
-                    isCustomExecutionEnabled
-                      ? "Submit custom repository repair run"
-                      : "Custom repository execution is currently gated for container isolation safety"
+                  disabled={
+                    isStartingRun ||
+                    !formData.repository_url.trim() ||
+                    !formData.dependency.trim()
                   }
+                  className="w-full sm:w-auto h-11 bg-[#1B3228] hover:bg-[#234235] text-[#5FCB8A] border border-[#5FCB8A]/40 font-semibold text-xs sm:text-sm px-4 rounded-lg flex items-center justify-center gap-2 cursor-pointer shadow-none disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  title="Submit custom repository repair run"
                 >
                   {isStartingRun ? (
                     <>
@@ -846,27 +836,13 @@ export function CustomRepoForm({
                     </>
                   ) : (
                     <>
-                      <Lock className="size-4 text-[#E0B45A]" />
-                      <span>
-                        {isCustomExecutionEnabled
-                          ? "Start Custom Repair Run"
-                          : "Start Custom Repair Run (Execution Gated)"}
-                      </span>
+                      <Play className="size-4 fill-current text-[#5FCB8A]" />
+                      <span>Start Custom Repair Run</span>
                     </>
                   )}
                 </Button>
               </div>
             </div>
-
-            {/* Explanatory note under actions */}
-            {!isCustomExecutionEnabled && (
-              <div className="flex items-center gap-2 text-[11px] text-[#C8BA9D]">
-                <Lock className="size-3.5 text-[#E0B45A] shrink-0" />
-                <span>
-                  Custom remote execution is gated off in this safe product slice to protect against untrusted code execution. Pinned branch discovery and configuration validation remain fully operational.
-                </span>
-              </div>
-            )}
 
             {/* ------------------------------------------------------------- */}
             {/* VALIDATION RESULTS SECTION (IMMEDIATELY AFTER ACTIONS)        */}
@@ -885,7 +861,7 @@ export function CustomRepoForm({
                       </span>
                     </div>
                     <p className="text-xs text-[#A9B8AD] leading-relaxed">
-                      Input format, syntax, and schema constraints passed all local checks. Pinned branch resolution succeeded. Automated remote execution is gated off in this safe product slice for sandbox isolation safety. To run full repairs in an active sandbox, select one of the curated demo tasks.
+                      Input format, syntax, and schema constraints passed all local checks. Pinned branch resolution succeeded. You can now start the custom repair run to execute the automated repair workflow.
                     </p>
                   </div>
                 ) : (

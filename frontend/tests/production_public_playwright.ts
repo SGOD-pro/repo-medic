@@ -167,20 +167,20 @@ print(f"ACTIVE_COUNT:{len(active)}")
     assert.ok(successBoxText?.includes("Repository Specification Valid"));
     console.log("  ✔ Validation succeeded for conforming custom repository specification");
 
-    // Verify Start Custom Repair Run button is disabled and reflects gated status
+    // Verify Start Custom Repair Run button is enabled with valid inputs
     const isRunBtnDisabled = await page.isDisabled('[data-testid="btn-run-custom-repair"]');
     const runBtnText = await page.textContent('[data-testid="btn-run-custom-repair"]');
     console.log(`  Start Repair Run button disabled: ${isRunBtnDisabled}, text: ${runBtnText?.trim()}`);
-    assert.equal(isRunBtnDisabled, true, "Start Custom Repair Run button must be disabled");
+    assert.equal(isRunBtnDisabled, false, "Start Custom Repair Run button must be enabled with valid inputs");
     assert.ok(
-      runBtnText?.includes("Execution Gated"),
-      "Button label must indicate that execution is gated"
+      runBtnText?.includes("Start Custom Repair Run"),
+      "Button label must indicate Start Custom Repair Run"
     );
-    console.log("  ✔ Custom run action is safely disabled and clearly labeled");
+    console.log("  ✔ Custom run action is active and enabled for submission");
 
-    const customGatedShot = path.join(SCREENSHOT_DIR, "production_custom_repo_gated.png");
-    await page.screenshot({ path: customGatedShot, fullPage: false });
-    console.log("  Saved custom repo screenshot:", customGatedShot);
+    const customActiveShot = path.join(SCREENSHOT_DIR, "production_custom_repo_active.png");
+    await page.screenshot({ path: customActiveShot, fullPage: false });
+    console.log("  Saved custom repo screenshot:", customActiveShot);
 
     // =========================================================================
     // SECTION 2: Demo Tasks & Saved Repair Verification on TASK-DEMO-JWT

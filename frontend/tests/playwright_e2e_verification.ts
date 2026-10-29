@@ -70,10 +70,10 @@ async function runVerification() {
     console.log("Validation Success Box rendered:", successBoxText?.substring(0, 100) + "...");
     assert.ok(successBoxText?.includes("Repository Specification Valid"));
 
-    // Verify execution button is disabled with gate message
+    // Verify execution button is enabled with valid inputs
     const isRunBtnDisabled = await desktopPage.isDisabled('[data-testid="btn-run-custom-repair"]');
     console.log("Start Repair Run button disabled:", isRunBtnDisabled);
-    assert.equal(isRunBtnDisabled, true);
+    assert.equal(isRunBtnDisabled, false);
 
     const validShotPath = path.join(SCREENSHOT_DIR, "safe_slice_desktop_valid_gated.png");
     await desktopPage.screenshot({ path: validShotPath, fullPage: true });
