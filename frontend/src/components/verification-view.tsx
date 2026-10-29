@@ -494,6 +494,15 @@ export function VerificationView({
                 >
                   {vm.runState.toUpperCase()}
                 </Badge>
+                {vm.modeLabel && (
+                  <Badge
+                    variant="outline"
+                    data-testid="verification-mode-badge"
+                    className="border-[rgba(183,201,173,0.25)] bg-[#1B3228] font-mono text-xs text-[#B7C9AD]"
+                  >
+                    {vm.modeLabel}
+                  </Badge>
+                )}
                 {activeRun?.run_id && (
                   <Badge
                     variant="outline"
