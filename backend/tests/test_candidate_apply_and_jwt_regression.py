@@ -560,9 +560,13 @@ def test_actual_production_patch_apply_regression(tmp_path):
     raw_diff = diff_path.read_text(encoding="utf-8")
 
     # Pinned commit source for src/shop/database.py at 8c400721558392a23b3af71766f673da02f80040
-    src_content = subprocess.check_output(
-        ["git", "cat-file", "-p", "8c400721558392a23b3af71766f673da02f80040:src/shop/database.py"]
-    ).decode("utf-8")
+    src_file = diff_path.parent / "database_before.py"
+    if src_file.exists():
+        src_content = src_file.read_text(encoding="utf-8")
+    else:
+        src_content = subprocess.check_output(
+            ["git", "cat-file", "-p", "8c400721558392a23b3af71766f673da02f80040:src/shop/database.py"]
+        ).decode("utf-8")
 
     # Set up clean temporary git repository matching the pinned commit
     repo_dir = tmp_path / "repo_prod_patch"
