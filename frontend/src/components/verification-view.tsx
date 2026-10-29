@@ -12,7 +12,6 @@ import {
   FileCode,
   FileText,
   Clock,
-  Cpu,
   ShieldCheck,
   Copy,
   Check,
@@ -20,6 +19,7 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronUp,
+  Play,
 } from "lucide-react";
 import { RunSummary, ArtifactSummary } from "@/lib/contracts";
 import { RepoMedicApiClient } from "@/lib/api";
@@ -271,6 +271,7 @@ export function VerificationView({
   const [patchContent, setPatchContent] = useState<string | null>(null);
   const [evidenceData, setEvidenceData] = useState<Record<string, unknown> | null>(null);
   const [downloadingArtifactId, setDownloadingArtifactId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!activeRun || !apiClient) return;
@@ -352,6 +353,7 @@ export function VerificationView({
   const handleDownloadArtifact = async (artifact: ArtifactSummary) => {
     if (!activeRun || !apiClient) return;
     setDownloadingArtifactId(artifact.artifact_id);
+    setDownloadError(null);
     try {
       const content = await apiClient.getArtifact(
         activeRun.run_id,
@@ -368,8 +370,9 @@ export function VerificationView({
       link.download = artifact.filename;
       link.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (err) {
-      console.error("Failed to download artifact:", err);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Download failed";
+      setDownloadError(`Failed to download ${artifact.filename}: ${msg}`);
     } finally {
       setDownloadingArtifactId(null);
     }
@@ -390,24 +393,68 @@ export function VerificationView({
   const patchArtifact = activeRun?.artifacts?.find((a) => a.kind === "patch");
   const evidenceArtifact = activeRun?.artifacts?.find((a) => a.kind === "evidence");
 
+  // -------------------------------------------------------------
+  // EMPTY STATE: When no run is selected
+  // -------------------------------------------------------------
+  if (!activeRun) {
+    return (
+      <div data-testid="verification-view" className="mx-auto w-full max-w-[1280px] px-4 sm:px-6 py-12">
+        <div className="rounded-xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] p-8 sm:p-12 text-center max-w-xl mx-auto">
+          <div className="size-12 rounded-full bg-[#1B3228] border border-[rgba(183,201,173,0.2)] flex items-center justify-center mx-auto mb-4">
+            <ShieldCheck className="size-6 text-[#A9B8AD]" />
+          </div>
+          <h2 className="text-xl font-semibold text-[#F7F7F2] mb-2">
+            No Verification Results Selected
+          </h2>
+          <p className="text-xs sm:text-sm text-[#A9B8AD] mb-6 leading-relaxed">
+            Select a completed repair run or view a saved demo to inspect verified candidate patches, test logs, and contract evidence.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Button
+              type="button"
+              onClick={onRunAnotherTask}
+              className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs sm:text-sm px-4 rounded-lg cursor-pointer"
+            >
+              <Play className="size-3.5 fill-current" />
+              Choose a Demo Task
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                window.location.search = "?runId=run_c89257b365a247b0ab8d8f44fb04a779";
+              }}
+              className="h-10 border-[rgba(183,201,173,0.3)] bg-[#0D1915] text-[#F7F7F2] hover:bg-[#1B3228] text-xs sm:text-sm px-4 rounded-lg cursor-pointer"
+            >
+              Load Demo Shop Run
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="mx-auto w-full max-w-[1280px] px-6 py-8">
-      {/* Top Banner Card: Render Selected Run State and Reason */}
+    <div
+      data-testid="verification-view"
+      className="mx-auto w-full max-w-[1280px] px-4 sm:px-6 py-6 sm:py-8 space-y-6"
+    >
+      {/* ------------------------------------------------------------- */}
+      {/* TOP BANNER: OUTCOME & REASON                                  */}
+      {/* ------------------------------------------------------------- */}
       <Card
-        className={`rounded-[20px] p-6 mb-6 border ${
+        className={`rounded-xl p-5 sm:p-6 border shadow-none ${
           vm.isPass
             ? "bg-[#15271F] border-[rgba(183,201,173,0.2)]"
             : vm.isFail
-            ? "bg-[#271515] border-[#E5736A]/30"
-            : vm.isCancelled
-            ? "bg-[#272015] border-[#E0B45A]/30"
-            : "bg-[#15271F] border-[rgba(183,201,173,0.2)]"
+            ? "bg-[#241414] border-[#E5736A]/30"
+            : "bg-[#1D1A14] border-[#E0B45A]/30"
         }`}
       >
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-start gap-3.5">
             <div
-              className={`mt-0.5 rounded-full p-1.5 border ${
+              className={`mt-0.5 rounded-full p-1.5 border shrink-0 ${
                 vm.isPass
                   ? "bg-[#5FCB8A]/20 border-[#5FCB8A]/30"
                   : vm.isFail
@@ -425,7 +472,7 @@ export function VerificationView({
             </div>
             <div>
               <div className="flex flex-wrap items-center gap-2.5">
-                <h1 className="text-xl font-semibold text-[#F7F7F2]">
+                <h1 className="text-lg sm:text-xl font-semibold text-[#F7F7F2]">
                   {vm.isPass
                     ? "Verified Source Repair Completed"
                     : vm.isFail
@@ -448,379 +495,305 @@ export function VerificationView({
                 {activeRun?.run_id && (
                   <Badge
                     variant="outline"
-                    className="border-[rgba(183,201,173,0.24)] bg-transparent font-mono text-[11px] text-[#A9B8AD] px-2 py-0.5"
+                    className="border-[rgba(183,201,173,0.2)] bg-[#0D1915] font-mono text-xs text-[#A9B8AD]"
                   >
                     {activeRun.run_id}
                   </Badge>
                 )}
-                <Badge
-                  variant="outline"
-                  className="border-[rgba(183,201,173,0.24)] bg-transparent font-mono text-[11px] text-[#A9B8AD] px-2 py-0.5"
-                >
-                  {vm.modeLabel}
-                </Badge>
+                {vm.regressionsBadgeText && (
+                  <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
+                    {vm.regressionsBadgeText}
+                  </Badge>
+                )}
               </div>
-
               {activeRun?.task_id && (
                 <p className="mt-1 text-xs text-[#A9B8AD]">
-                  Task <span className="font-mono text-[#F7F7F2]">{activeRun.task_id}</span>
-                  {activeRun.search_mode ? ` using ${activeRun.search_mode} strategy` : ""}
+                  Task <span className="font-mono text-[#F7F7F2] font-medium">{activeRun.task_id}</span>
+                  {activeRun.search_mode ? ` · ${activeRun.search_mode === "branch_refine" ? "Branch & Refine" : "Sequential Direct"} strategy` : ""}
                 </p>
               )}
-
-              {activeRun?.reason && (
-                <p className="mt-2 text-xs font-mono text-[#E5736A] bg-[#E5736A]/10 border border-[#E5736A]/20 rounded px-2.5 py-1">
-                  Reason: {activeRun.reason}
-                </p>
-              )}
+              <p className="text-xs sm:text-sm text-[#A9B8AD] mt-1.5 leading-relaxed">
+                {activeRun.reason || (vm.isPass
+                  ? "All original test assertions passed in clean container verification. Patch ready for review."
+                  : vm.isFail
+                  ? "Repair candidates failed post-patch verification or safety validation."
+                  : "Run was cancelled by operator.")}
+              </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5 font-mono text-xs text-[#A9B8AD] whitespace-nowrap">
-            <span
-              className={`size-2 rounded-full ${
-                vm.isPass ? "bg-[#5FCB8A]" : vm.isFail ? "bg-[#E5736A]" : "bg-[#E0B45A]"
-              }`}
-            />
-            <span>{vm.isPass ? "Sandbox Terminated Cleanly" : "Process Halted"}</span>
+          <div className="flex flex-wrap items-center gap-2 shrink-0 self-end md:self-auto">
+            {patchArtifact && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={downloadingArtifactId === patchArtifact.artifact_id}
+                onClick={() => handleDownloadArtifact(patchArtifact)}
+                className="h-9 border-[rgba(183,201,173,0.3)] bg-[#0D1915] text-[#F7F7F2] hover:bg-[#1B3228] text-xs px-3 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="size-3.5 text-[#5FCB8A]" />
+                <span>{downloadingArtifactId === patchArtifact.artifact_id ? "Downloading..." : "Download patch"}</span>
+              </Button>
+            )}
+            {evidenceArtifact && (
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={downloadingArtifactId === evidenceArtifact.artifact_id}
+                onClick={() => handleDownloadArtifact(evidenceArtifact)}
+                className="h-9 border-[rgba(183,201,173,0.3)] bg-[#0D1915] text-[#F7F7F2] hover:bg-[#1B3228] text-xs px-3 rounded-lg flex items-center gap-1.5 cursor-pointer"
+              >
+                <Download className="size-3.5 text-[#7FB3D5]" />
+                <span>{downloadingArtifactId === evidenceArtifact.artifact_id ? "Downloading..." : "Download evidence"}</span>
+              </Button>
+            )}
+            <Button
+              size="sm"
+              onClick={onRunAnotherTask}
+              className="h-9 bg-[#1B3228] text-[#F7F7F2] hover:bg-[#203c30] border border-[rgba(183,201,173,0.2)] text-xs px-3 rounded-lg flex items-center gap-1.5 cursor-pointer"
+            >
+              <RotateCcw className="size-3.5" />
+              <span>Run another task</span>
+            </Button>
           </div>
         </div>
+
+        {downloadError && (
+          <div className="mt-3 p-2.5 rounded-lg bg-[#241414] border border-[#E5736A]/40 text-xs font-mono text-[#E5736A]">
+            {downloadError}
+          </div>
+        )}
       </Card>
 
-      {/* Verification Report Card */}
-      <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-6 mb-8">
-        <div className="flex items-center justify-between mb-2">
-          <span className="font-mono text-xs tracking-wider text-[#A9B8AD] uppercase">
-            VERIFICATION REPORT
-          </span>
+      {/* ------------------------------------------------------------- */}
+      {/* EVIDENCE SUMMARY BENTO GRID                                   */}
+      {/* ------------------------------------------------------------- */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+        {/* Metric 1: Preserved Tests */}
+        <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4">
+          <div className="flex items-center justify-between text-xs font-mono text-[#A9B8AD] mb-1">
+            <span>PRESERVED TESTS</span>
+            <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-mono text-[#F7F7F2]">
+            {vm.ratioDisplay}
+          </div>
+          <div className="text-[11px] text-[#A9B8AD] mt-1">
+            {vm.testsPassed !== null ? "All assertions verified" : "Test metrics unavailable"}
+          </div>
+        </div>
+
+        {/* Metric 2: Verification Time */}
+        <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4">
+          <div className="flex items-center justify-between text-xs font-mono text-[#A9B8AD] mb-1">
+            <span>VERIFICATION TIME</span>
+            <Clock className="size-3.5 text-[#7FB3D5]" />
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-mono text-[#F7F7F2]">
+            {vm.verificationTimeText}
+          </div>
+          <div className="text-[11px] text-[#A9B8AD] mt-1">
+            Isolated container run
+          </div>
+        </div>
+
+        {/* Metric 3: Integrity Check */}
+        <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4">
+          <div className="flex items-center justify-between text-xs font-mono text-[#A9B8AD] mb-1">
+            <span>TEST INTEGRITY</span>
+            <ShieldCheck className="size-3.5 text-[#5FCB8A]" />
+          </div>
+          <div className="text-sm sm:text-base font-bold font-mono text-[#F7F7F2] truncate mt-1">
+            {vm.testFilesUnchangedVisible ? "Unmodified" : vm.astProofSupported ? "Verified" : "Evaluated"}
+          </div>
+          <div className="text-[11px] text-[#A9B8AD] mt-1 truncate">
+            {vm.hashCheckBadgeText}
+          </div>
+        </div>
+
+        {/* Metric 4: Estimated Usage */}
+        <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4">
+          <div className="flex items-center justify-between text-xs font-mono text-[#A9B8AD] mb-1">
+            <span>ESTIMATED SPEND</span>
+            <span className="text-[10px] text-[#A9B8AD]">USD</span>
+          </div>
+          <div className="text-xl sm:text-2xl font-bold font-mono text-[#F7F7F2]">
+            {vm.costText}
+          </div>
+          <div className="text-[11px] text-[#A9B8AD] mt-1">
+            Estimated model usage
+          </div>
+        </div>
+      </div>
+
+      {/* Proof Note when AST or checks exist */}
+      {vm.astProofText && (
+        <div className="rounded-lg bg-[#15271F] border border-[rgba(183,201,173,0.12)] px-4 py-2.5 flex items-center justify-between text-xs text-[#A9B8AD] font-mono">
           <div className="flex items-center gap-2">
-            {vm.regressionsBadgeText && (
-              <Badge
-                className={`border-transparent font-mono text-xs px-2 py-0.5 ${
-                  vm.testsFailed === 0
-                    ? "bg-[#5FCB8A]/15 text-[#5FCB8A]"
-                    : "bg-[#E5736A]/15 text-[#E5736A]"
-                }`}
-              >
-                {vm.regressionsBadgeText}
-              </Badge>
-            )}
-            {vm.testFilesUnchangedVisible && (
-              <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
-                {vm.hashCheckBadgeText}
-              </Badge>
-            )}
+            <ShieldCheck className="size-4 text-[#5FCB8A]" />
+            <span>{vm.astProofText}</span>
           </div>
+          {vm.signatureBadgeText && (
+            <Badge className="bg-[#1B3228] text-[#5FCB8A] border-[rgba(183,201,173,0.2)] text-[10px] px-2 py-0">
+              {vm.signatureBadgeText}
+            </Badge>
+          )}
         </div>
+      )}
 
-        <h2 className="text-2xl font-semibold text-[#F7F7F2] mb-6">
-          {vm.headerTitle}
-        </h2>
-
-        {/* 5 Metric Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-          <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
-            <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Tests Pass / Total
-            </span>
-            <div className="flex items-center justify-between">
-              <span
-                className={`font-mono text-sm font-semibold ${
-                  vm.isPass ? "text-[#5FCB8A]" : "text-[#E5736A]"
-                }`}
-              >
-                {vm.ratioDisplay}
-              </span>
-              {vm.isPass ? (
-                <CheckCircle2 className="size-4 text-[#5FCB8A]" />
-              ) : (
-                <XCircle className="size-4 text-[#E5736A]" />
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
-            <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Characterization Tests
-            </span>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                {vm.characterizationTestsText}
-              </span>
-              <FileCode className="size-4 text-[#A9B8AD]" />
-            </div>
-          </div>
-
-          <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
-            <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Files Changed
-            </span>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                {parsedDiffFiles.length} {parsedDiffFiles.length === 1 ? "file" : "files"}
-              </span>
-              <FileText className="size-4 text-[#A9B8AD]" />
-            </div>
-          </div>
-
-          <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between">
-            <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Verification Time
-            </span>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                {vm.verificationTimeText}
-              </span>
-              <Clock className="size-4 text-[#A9B8AD]" />
-            </div>
-          </div>
-
-          <div className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between col-span-2 md:col-span-1">
-            <span className="text-[11px] font-mono text-[#A9B8AD] mb-3">
-              Estimated Cost
-            </span>
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-semibold text-[#F7F7F2]">
-                {vm.costText}
-              </span>
-              <Cpu className="size-4 text-[#A9B8AD]" />
-            </div>
-          </div>
-        </div>
-
-        {/* Proof Detail Bar */}
-        <div className="rounded-xl bg-[#0D1915] border border-[rgba(183,201,173,0.12)] px-4 py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs font-mono text-[#A9B8AD]">
+      {/* ------------------------------------------------------------- */}
+      {/* PATCH DIFF VIEWER                                             */}
+      {/* ------------------------------------------------------------- */}
+      <div className="space-y-4">
+        <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <ShieldCheck
-              className={`size-4 shrink-0 ${
-                vm.astProofSupported ? "text-[#5FCB8A]" : "text-[#A9B8AD]"
-              }`}
-            />
-            <span className={vm.astProofSupported ? "text-[#F7F7F2]" : "text-[#A9B8AD]"}>
-              {vm.astProofText}
-            </span>
+            <FileCode className="size-5 text-[#5FCB8A]" />
+            <h2 className="text-base sm:text-lg font-semibold text-[#F7F7F2]">
+              Synthesized Candidate Patch
+            </h2>
+            <Badge className="bg-[#1B3228] text-[#B7C9AD] border-[rgba(183,201,173,0.2)] font-mono text-xs px-2 py-0">
+              {parsedDiffFiles.length} {parsedDiffFiles.length === 1 ? "file" : "files"} changed
+            </Badge>
           </div>
-          <div className="whitespace-nowrap">
-            <span>Mode: </span>
-            <span className="text-[#F7F7F2]">{vm.modeLabel}</span>
-          </div>
+          {parsedDiffFiles.length > 1 && (
+            <button
+              type="button"
+              onClick={toggleCollapseAll}
+              className="text-xs text-[#A9B8AD] hover:text-[#F7F7F2] font-mono cursor-pointer"
+            >
+              {collapsedFiles.size > 0 ? "Expand All" : "Collapse All"}
+            </button>
+          )}
         </div>
-      </Card>
 
-      {/* Actual Artifacts Section with Download by artifact_id */}
-      {activeRun?.artifacts && activeRun.artifacts.length > 0 && (
-        <Card className="rounded-[20px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-base font-semibold text-[#F7F7F2]">
+        {parsedDiffFiles.length === 0 ? (
+          <div className="rounded-xl border border-[rgba(183,201,173,0.16)] bg-[#15271F] p-8 text-center text-xs text-[#A9B8AD]">
+            {activeRun.state === "succeeded"
+              ? "Loading patch artifact..."
+              : "No patch diff produced for this run."}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {parsedDiffFiles.map((file, idx) => {
+              const isCollapsed = collapsedFiles.has(file.filename);
+              return (
+                <div
+                  key={idx}
+                  className="rounded-xl border border-[rgba(183,201,173,0.16)] bg-[#0D1915] overflow-hidden"
+                >
+                  {/* File Header */}
+                  <div
+                    onClick={() => toggleCollapse(file.filename)}
+                    className="flex items-center justify-between px-4 py-2.5 bg-[#15271F] border-b border-[rgba(183,201,173,0.12)] cursor-pointer select-none"
+                  >
+                    <div className="flex items-center gap-2">
+                      {isCollapsed ? (
+                        <ChevronDown className="size-4 text-[#A9B8AD]" />
+                      ) : (
+                        <ChevronUp className="size-4 text-[#A9B8AD]" />
+                      )}
+                      <span className="font-mono text-xs font-semibold text-[#F7F7F2]">
+                        {file.filename}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-1.5 font-mono text-[11px]">
+                        <span className="text-[#5FCB8A]">+{file.additions}</span>
+                        <span className="text-[#E5736A]">-{file.deletions}</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          copyFileDiff(file, idx);
+                        }}
+                        className="text-xs text-[#A9B8AD] hover:text-[#F7F7F2] flex items-center gap-1 cursor-pointer"
+                        title="Copy diff"
+                      >
+                        {copiedFileIndex === idx ? (
+                          <Check className="size-3 text-[#5FCB8A]" />
+                        ) : (
+                          <Copy className="size-3" />
+                        )}
+                        <span className="hidden sm:inline">{copiedFileIndex === idx ? "Copied" : "Copy"}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Diff Content Box */}
+                  {!isCollapsed && (
+                    <div className="p-3 font-mono text-xs overflow-x-auto max-h-[500px] leading-relaxed">
+                      {file.lines.map((line, lIdx) => (
+                        <div
+                          key={lIdx}
+                          className={`flex items-start px-2 py-0.5 rounded ${
+                            line.type === "add"
+                              ? "bg-[#5FCB8A]/10 text-[#5FCB8A]"
+                              : line.type === "delete"
+                              ? "bg-[#E5736A]/10 text-[#E5736A]"
+                              : "text-[#A9B8AD]"
+                          }`}
+                        >
+                          <span className="w-10 text-[10px] text-[#A9B8AD]/60 select-none text-right pr-3 shrink-0">
+                            {line.newNum || line.oldNum || ""}
+                          </span>
+                          <span className="w-4 select-none shrink-0 font-bold">
+                            {line.type === "add" ? "+" : line.type === "delete" ? "-" : " "}
+                          </span>
+                          <span className="whitespace-pre flex-1 break-all select-text">
+                            {line.content}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* ------------------------------------------------------------- */}
+      {/* RUN ARTIFACTS LIST                                             */}
+      {/* ------------------------------------------------------------- */}
+      {activeRun.artifacts && activeRun.artifacts.length > 0 && (
+        <Card className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-5 shadow-none">
+          <div className="flex items-center gap-2 mb-3">
+            <FileText className="size-4 text-[#A9B8AD]" />
+            <h3 className="text-sm font-semibold text-[#F7F7F2]">
               Run Artifacts ({activeRun.artifacts.length})
             </h3>
-            <span className="font-mono text-xs text-[#A9B8AD]">
-              Downloads addressable by artifact id
-            </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             {activeRun.artifacts.map((art) => (
               <div
                 key={art.artifact_id}
-                className="rounded-xl bg-[#1B3228] border border-[rgba(183,201,173,0.12)] p-4 flex flex-col justify-between gap-3"
+                className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3 flex items-center justify-between gap-2"
               >
                 <div>
-                  <div className="flex items-center justify-between mb-1.5">
-                    <Badge className="bg-[#15271F] text-[#5FCB8A] border-[rgba(183,201,173,0.2)] font-mono text-[10px] uppercase">
-                      {art.kind}
-                    </Badge>
-                    <span className="font-mono text-[10px] text-[#A9B8AD]">
-                      {art.artifact_id}
-                    </span>
-                  </div>
-                  <div className="font-mono text-xs font-semibold text-[#F7F7F2] truncate">
+                  <div className="font-mono text-xs font-semibold text-[#F7F7F2] truncate max-w-[180px]">
                     {art.filename}
+                  </div>
+                  <div className="font-mono text-[10px] text-[#A9B8AD]">
+                    {art.kind.toUpperCase()} · {art.artifact_id.substring(0, 8)}
                   </div>
                 </div>
                 <Button
                   size="sm"
-                  variant="outline"
-                  onClick={() => handleDownloadArtifact(art)}
+                  variant="ghost"
                   disabled={downloadingArtifactId === art.artifact_id}
-                  className="w-full h-8 border-[rgba(183,201,173,0.24)] bg-[#15271F] hover:bg-[#1B3228] text-xs text-[#F7F7F2] gap-1.5"
+                  onClick={() => handleDownloadArtifact(art)}
+                  className="h-7 text-xs text-[#5FCB8A] hover:bg-[#1B3228] px-2 cursor-pointer shrink-0"
                 >
-                  <Download className="size-3" />
-                  {downloadingArtifactId === art.artifact_id ? "Downloading..." : `Download ${art.kind}`}
+                  <Download className="size-3.5" />
                 </Button>
               </div>
             ))}
           </div>
         </Card>
       )}
-
-      {/* Unified Change Manifest / Patch Diff */}
-      <div className="mb-8">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-baseline gap-2">
-            <h3 className="text-lg font-semibold text-[#F7F7F2]">
-              Unified Change Manifest
-            </h3>
-            <span className="text-xs text-[#A9B8AD]">
-              {parsedDiffFiles.length} {parsedDiffFiles.length === 1 ? "file inspected" : "files inspected"}
-            </span>
-          </div>
-
-          {parsedDiffFiles.length > 0 && (
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={toggleCollapseAll}
-                className="text-xs text-[#A9B8AD] hover:text-[#F7F7F2] h-7 px-2"
-              >
-                {collapsedFiles.size > 0 ? "Expand All" : "Collapse All"}
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {parsedDiffFiles.length > 0 ? (
-          parsedDiffFiles.map((file, idx) => {
-            const isCollapsed = collapsedFiles.has(file.filename);
-            return (
-              <Card
-                key={file.filename}
-                className="rounded-[16px] bg-[#15271F] border border-[rgba(183,201,173,0.16)] overflow-hidden mb-4"
-              >
-                <div className="flex items-center justify-between bg-[#1B3228] px-4 py-2.5 border-b border-[rgba(183,201,173,0.12)] font-mono text-xs">
-                  <div
-                    className="flex items-center gap-2 cursor-pointer"
-                    onClick={() => toggleCollapse(file.filename)}
-                  >
-                    <FileCode className="size-4 text-[#A9B8AD]" />
-                    <span className="font-semibold text-[#F7F7F2]">
-                      {file.filename}
-                    </span>
-                    {isCollapsed ? (
-                      <ChevronDown className="size-3.5 text-[#A9B8AD]" />
-                    ) : (
-                      <ChevronUp className="size-3.5 text-[#A9B8AD]" />
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-1.5 font-mono text-[11px]">
-                      <span className="text-[#5FCB8A] font-semibold">
-                        +{file.additions}
-                      </span>
-                      <span className="text-[#E5736A] font-semibold">
-                        -{file.deletions}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => copyFileDiff(file, idx)}
-                      className="text-[#A9B8AD] hover:text-[#F7F7F2] transition-colors p-1"
-                      title="Copy file diff"
-                    >
-                      {copiedFileIndex === idx ? (
-                        <Check className="size-3.5 text-[#5FCB8A]" />
-                      ) : (
-                        <Copy className="size-3.5" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                {!isCollapsed && (
-                  <div className="p-3 font-mono text-[12px] bg-[#0D1915] overflow-x-auto leading-relaxed">
-                    <table className="w-full border-collapse">
-                      <tbody>
-                        {file.lines.map((line, lIdx) => (
-                          <tr
-                            key={lIdx}
-                            className={
-                              line.type === "add"
-                                ? "bg-[#5FCB8A]/10 text-[#5FCB8A]"
-                                : line.type === "delete"
-                                ? "bg-[#E5736A]/10 text-[#E5736A]"
-                                : "hover:bg-[#15271F]/50"
-                            }
-                          >
-                            <td className="w-8 select-none text-right pr-3 text-[#A9B8AD]/50">
-                              {line.oldNum ?? ""}
-                            </td>
-                            <td className="w-8 select-none text-right pr-4 text-[#A9B8AD]/50">
-                              {line.newNum ?? ""}
-                            </td>
-                            <td className="pl-2">
-                              {line.type === "add"
-                                ? `+ ${line.content}`
-                                : line.type === "delete"
-                                ? `- ${line.content}`
-                                : `  ${line.content}`}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </Card>
-            );
-          })
-        ) : (
-          <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.12)] p-6 text-center text-xs font-mono text-[#A9B8AD]">
-            No patch artifact produced for this run.
-          </div>
-        )}
-      </div>
-
-      {/* Bottom Actions Row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
-        <div className="flex flex-wrap items-center gap-3">
-          {patchArtifact && (
-            <Button
-              onClick={() => handleDownloadArtifact(patchArtifact)}
-              className="h-10 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer shadow-none"
-            >
-              <Download className="size-3.5" />
-              Download Patch (.diff)
-            </Button>
-          )}
-
-          {evidenceArtifact && (
-            <Button
-              variant="outline"
-              onClick={() => handleDownloadArtifact(evidenceArtifact)}
-              className="h-10 border-[rgba(183,201,173,0.32)] bg-[#15271F] hover:bg-[#1B3228] text-[#F7F7F2] text-xs px-4 rounded-lg flex items-center gap-2 cursor-pointer"
-            >
-              <Download className="size-3.5 text-[#A9B8AD]" />
-              Download Evidence Package (.json)
-            </Button>
-          )}
-
-          <Button
-            variant="ghost"
-            onClick={onRunAnotherTask}
-            className="h-10 text-[#A9B8AD] hover:text-[#F7F7F2] hover:bg-[#1B3228] text-xs px-3 rounded-lg flex items-center gap-1.5 cursor-pointer"
-          >
-            <RotateCcw className="size-3.5" />
-            Run another task
-          </Button>
-        </div>
-
-        {vm.signatureBadgeText && (
-          <Badge className="bg-[#15271F] border border-[rgba(183,201,173,0.24)] text-[#5FCB8A] font-mono text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start sm:self-auto">
-            <ShieldCheck className="size-3.5" />
-            {vm.signatureBadgeText}
-          </Badge>
-        )}
-      </div>
-
-      <p className="mt-4 text-[11px] font-mono text-[#A9B8AD]">
-        RepoMedic does not automatically merge or alter your git remote. Review
-        and apply via{" "}
-        <code className="text-[#F7F7F2] bg-[#15271F] px-1.5 py-0.5 rounded border border-[rgba(183,201,173,0.16)]">
-          git apply repomedic-fix.patch
-        </code>
-        .
-      </p>
     </div>
   );
 }

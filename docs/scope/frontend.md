@@ -29,7 +29,7 @@ Handle connection loss, explicit cancellation, and backend errors safely.
 - [x] Sequence deduplication and RunSummary recovery on terminal events
 - [x] User initiated cancellation handling
 
-### 5. Safe product slice · in progress
+### 5. Safe product slice · done
 Home navigation, custom repository validation with disabled execution gate, truthful presentation, and supported demo policy.
 spec: ../specs/0009-first-safe-product-slice.md
 **Done when:** Users can navigate saved demo runs, configure and validate custom repositories with disabled execution gate, inspect truthful terminal run results, and choose supported demo tasks without acceptance fixtures.

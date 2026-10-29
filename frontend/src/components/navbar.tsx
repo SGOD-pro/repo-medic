@@ -8,7 +8,7 @@ import { User, FileText, History } from "lucide-react";
 import { useHistoryStore } from "@/lib/history-store";
 import { RunSummary } from "@/lib/contracts";
 
-export type ActiveTab = "tasks" | "custom_repo" | "run_active" | "verification";
+export type ActiveTab = "custom_repo" | "tasks" | "run_active" | "verification";
 
 interface NavbarProps {
   activeTab: ActiveTab;
@@ -23,7 +23,7 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
   const isMock = (process.env.NEXT_PUBLIC_API_TRANSPORT || defaultTransport) === "mock";
   const mode = activeRun?.mode;
 
-  let modeBadgeText = "TURSO PERSISTENCE / OFFLINE MODE";
+  let modeBadgeText = "OFFLINE MODE (TURSO)";
   let modeSubtitle = "Remote Turso · Python Engine";
 
   if (isMock) {
@@ -34,30 +34,41 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
     modeSubtitle = "Remote Turso · Nebius Token Factory";
   } else if (mode === "replay") {
     modeBadgeText = "REPLAY MODE (TURSO)";
-    modeSubtitle = "Remote Turso · Recorded Sandbox Traces";
+    modeSubtitle = "Remote Turso · Recorded Traces";
   } else {
-    modeBadgeText = "LIVE HTTP API (AWS / TURSO)";
+    modeBadgeText = "OFFLINE MODE (TURSO)";
     modeSubtitle = "Remote API Gateway · Turso Persistence";
   }
 
   return (
-    <header className="sticky top-0 z-40 w-full border-b border-[rgba(183,201,173,0.16)] bg-[#0D1915]/95 backdrop-blur-none px-6 py-3">
-      <div className="mx-auto flex max-w-[1280px] items-center justify-between gap-4">
-        {/* Left: Brand + Demo Status */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold text-lg tracking-tight text-[#F7F7F2]">
+    <header className="sticky top-0 z-40 w-full border-b border-[rgba(183,201,173,0.16)] bg-[#0D1915]/95 backdrop-blur-sm px-4 sm:px-6 py-2.5">
+      <div className="mx-auto flex max-w-[1280px] flex-wrap items-center justify-between gap-3">
+        {/* Left: Brand + Mode Status */}
+        <div className="flex items-center gap-3">
+          <div
+            className="flex items-center gap-2 cursor-pointer select-none"
+            onClick={() => onTabChange("custom_repo")}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                onTabChange("custom_repo");
+              }
+            }}
+            aria-label="RepoMedic Home"
+          >
+            <span className="font-semibold text-base sm:text-lg tracking-tight text-[#F7F7F2]">
               RepoMedic
             </span>
             <Badge
               variant="outline"
               className="border-[rgba(183,201,173,0.24)] bg-transparent font-mono text-[11px] text-[#A9B8AD] px-1.5 py-0"
             >
-              V0.9.4
+              v0.9.4
             </Badge>
           </div>
 
-          <div className="hidden sm:flex items-center gap-2 text-xs">
+          <div className="hidden md:flex items-center gap-2 text-xs">
             {isMock ? (
               <Badge className="bg-[#7FB3D5]/15 text-[#7FB3D5] border-transparent font-medium gap-1.5 px-2.5 py-0.5 rounded-full">
                 <span className="size-1.5 rounded-full bg-[#7FB3D5]" />
@@ -65,25 +76,28 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
               </Badge>
             ) : (
               <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-medium gap-1.5 px-2.5 py-0.5 rounded-full">
-                <span className="size-1.5 rounded-full bg-[#5FCB8A] animate-pulse" />
+                <span className="size-1.5 rounded-full bg-[#5FCB8A]" />
                 {modeBadgeText}
               </Badge>
             )}
-            <span className="font-mono text-[#A9B8AD] text-[12px]">
+            <span className="font-mono text-[#A9B8AD] text-[11px] hidden lg:inline">
               {modeSubtitle}
             </span>
           </div>
         </div>
 
-        {/* Center: Main View Switcher Tabs */}
-        <div className="flex items-center bg-[#15271F] p-1 rounded-lg border border-[rgba(183,201,173,0.16)]">
+        {/* Center: Destination Tabs */}
+        <nav
+          aria-label="Main Destinations"
+          className="order-3 sm:order-2 flex w-full sm:w-auto items-center overflow-x-auto bg-[#15271F] p-1 rounded-lg border border-[rgba(183,201,173,0.16)]"
+        >
           <button
             type="button"
             data-testid="nav-tab-custom-repo"
             onClick={() => onTabChange("custom_repo")}
-            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
               activeTab === "custom_repo"
-                ? "bg-[#1B3228] text-[#F7F7F2] shadow-none"
+                ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
             }`}
           >
@@ -93,9 +107,9 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             type="button"
             data-testid="nav-tab-tasks"
             onClick={() => onTabChange("tasks")}
-            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
               activeTab === "tasks"
-                ? "bg-[#1B3228] text-[#F7F7F2] shadow-none"
+                ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
             }`}
           >
@@ -105,9 +119,9 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             type="button"
             data-testid="nav-tab-run-active"
             onClick={() => onTabChange("run_active")}
-            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
               activeTab === "run_active"
-                ? "bg-[#1B3228] text-[#F7F7F2] shadow-none"
+                ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
             }`}
           >
@@ -117,27 +131,28 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             type="button"
             data-testid="nav-tab-verification"
             onClick={() => onTabChange("verification")}
-            className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+            className={`min-h-[32px] px-3 py-1 text-xs font-medium rounded-md transition-colors whitespace-nowrap focus-visible:ring-1 focus-visible:ring-[#B7C9AD] outline-none ${
               activeTab === "verification"
-                ? "bg-[#1B3228] text-[#F7F7F2] shadow-none"
+                ? "bg-[#1B3228] text-[#F7F7F2] shadow-sm"
                 : "text-[#A9B8AD] hover:text-[#F7F7F2]"
             }`}
           >
             Verification &amp; Results
           </button>
-        </div>
+        </nav>
 
         {/* Right: History, Docs Action & User Avatar */}
-        <div className="flex items-center gap-3">
+        <div className="order-2 sm:order-3 flex items-center gap-2.5">
           <Button
             variant="outline"
             size="sm"
             onClick={() => setHistoryOpen(true)}
-            className="border-[rgba(183,201,173,0.32)] bg-[#15271F] text-[#F7F7F2] hover:bg-[#1B3228] hover:text-[#F7F7F2] text-xs h-8 px-3 rounded-md gap-1.5"
+            className="border-[rgba(183,201,173,0.32)] bg-[#15271F] text-[#F7F7F2] hover:bg-[#1B3228] hover:text-[#F7F7F2] text-xs h-8 px-2.5 sm:px-3 rounded-md gap-1.5 focus-visible:ring-1 focus-visible:ring-[#B7C9AD]"
             title="Open past run history"
+            aria-label="Open past run history"
           >
             <History className="size-3.5 text-[#5FCB8A]" />
-            <span>History</span>
+            <span className="hidden xs:inline">History</span>
             {runs.length > 0 && (
               <Badge className="bg-[#1B3228] text-[#5FCB8A] border-[rgba(183,201,173,0.2)] font-mono text-[10px] px-1.5 py-0 rounded-full ml-0.5">
                 {runs.length}
@@ -149,14 +164,15 @@ export function Navbar({ activeTab, onTabChange, onOpenDocs, activeRun }: Navbar
             variant="outline"
             size="sm"
             onClick={onOpenDocs}
-            className="hidden sm:flex border-[rgba(183,201,173,0.32)] bg-transparent text-[#F7F7F2] hover:bg-[#1B3228] hover:text-[#F7F7F2] text-xs h-8 px-3 rounded-md gap-1.5"
+            className="hidden sm:flex border-[rgba(183,201,173,0.32)] bg-transparent text-[#F7F7F2] hover:bg-[#1B3228] hover:text-[#F7F7F2] text-xs h-8 px-3 rounded-md gap-1.5 focus-visible:ring-1 focus-visible:ring-[#B7C9AD]"
+            aria-label="Documentation and Specs"
           >
             <FileText className="size-3.5 text-[#A9B8AD]" />
-            Docs / Specs
+            <span>Docs</span>
           </Button>
 
-          <Avatar className="size-8 border border-[rgba(183,201,173,0.2)] bg-[#15271F] cursor-pointer">
-            <AvatarFallback className="bg-[#15271F] text-[#F7F7F2] text-xs">
+          <Avatar className="size-8 border border-[rgba(183,201,173,0.2)] bg-[#15271F]">
+            <AvatarFallback className="bg-[#15271F] text-[#F7F7F2] text-xs font-mono">
               <User className="size-4 text-[#A9B8AD]" />
             </AvatarFallback>
           </Avatar>

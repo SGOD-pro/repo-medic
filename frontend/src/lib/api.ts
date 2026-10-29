@@ -363,7 +363,7 @@ export class HttpTransport implements RepoMedicApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async getTasks(policy = "supported_demo"): Promise<TaskSummary[]> {
+  async getTasks(policy?: string): Promise<TaskSummary[]> {
     const url = policy
       ? `${this.baseUrl}/tasks?policy=${encodeURIComponent(policy)}`
       : `${this.baseUrl}/tasks`;

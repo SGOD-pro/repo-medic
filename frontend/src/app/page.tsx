@@ -33,18 +33,72 @@ export default function Home() {
     return idempotencyKeysRef.current[taskId];
   };
 
+  const updateUrlParam = useCallback((runId: string | null) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (runId) {
+      url.searchParams.set("runId", runId);
+    } else {
+      url.searchParams.delete("runId");
+    }
+    window.history.replaceState(null, "", url.toString());
+  }, []);
+
+  const handleViewSavedRun = useCallback(
+    (runId: string) => {
+      updateUrlParam(runId);
+      apiClient
+        .getRun(runId)
+        .then((run) => {
+          setActiveRun(run);
+          setSelectedTaskId(run.task_id);
+          setStrategy(run.search_mode);
+          updateRun(run.run_id, {
+            state: run.state,
+            reason: run.reason,
+            cost_usd: run.usage?.estimated_usd,
+          });
+          if (
+            run.state === "succeeded" ||
+            run.state === "failed" ||
+            run.state === "cancelled"
+          ) {
+            setActiveTab("verification");
+          } else {
+            setActiveTab("run_active");
+          }
+        })
+        .catch(() => {
+          window.location.search = `?runId=${runId}`;
+        });
+    },
+    [apiClient, updateRun, updateUrlParam]
+  );
+
   // URL search parameter synchronization & reload on initial boot
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const runIdFromUrl = params.get("runId");
+    const tabFromUrl = params.get("tab");
+
+    if (
+      tabFromUrl === "tasks" ||
+      tabFromUrl === "custom_repo" ||
+      tabFromUrl === "run_active" ||
+      tabFromUrl === "verification"
+    ) {
+      queueMicrotask(() => {
+        if (isMounted) setActiveTab(tabFromUrl);
+      });
+    }
 
     let isMounted = true;
 
     if (runIdFromUrl) {
       // 1. Check in active store runs
       const storeRuns = useHistoryStore.getState().runs;
-      let existing = storeRuns.find((r) => r.run_id === runIdFromUrl);
+      let existing = storeRuns.find((r: HistoryRunItem) => r.run_id === runIdFromUrl);
 
       // 2. Check localStorage synchronously if store is still hydrating
       if (!existing && typeof window !== "undefined") {
@@ -118,17 +172,6 @@ export default function Home() {
     };
   }, [apiClient, updateRun]);
 
-  const updateUrlParam = (runId: string | null) => {
-    if (typeof window === "undefined") return;
-    const url = new URL(window.location.href);
-    if (runId) {
-      url.searchParams.set("runId", runId);
-    } else {
-      url.searchParams.delete("runId");
-    }
-    window.history.replaceState(null, "", url.toString());
-  };
-
   const handleStartRun = async (taskId: string, chosenStrategy: SearchMode, mode?: Mode) => {
     const idempotencyKey = getOrGenerateKey(taskId);
     try {
@@ -163,7 +206,7 @@ export default function Home() {
         search_mode: run.search_mode,
         started_at: new Date().toISOString(),
         completed_at: null,
-        duration: "00:00s", // Initial placeholder elapsed time, updated upon run completion
+        duration: "00:00s",
         tests_passed: null,
         tests_failed: null,
         cost_usd: run.usage.estimated_usd,
@@ -309,6 +352,7 @@ export default function Home() {
               setSelectedTaskId(taskId);
               setActiveTab("tasks");
             }}
+            onViewSavedRun={handleViewSavedRun}
           />
         )}
 
@@ -321,6 +365,7 @@ export default function Home() {
             setStrategy={setStrategy}
             apiClient={apiClient}
             onSwitchToCustom={() => setActiveTab("custom_repo")}
+            onViewSavedRun={handleViewSavedRun}
           />
         )}
 

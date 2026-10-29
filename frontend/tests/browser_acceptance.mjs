@@ -56,6 +56,17 @@ async function runAcceptanceSuite() {
 
   let sequentialRunId = null;
 
+  async function ensureTasksView() {
+    const tasksView = page.locator('[data-testid="tasks-view"]');
+    if (!(await tasksView.isVisible({ timeout: 1000 }).catch(() => false))) {
+      const navTasks = page.locator('[data-testid="nav-tab-tasks"]').first();
+      if (await navTasks.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await navTasks.click();
+      }
+    }
+    await tasksView.waitFor({ state: "visible", timeout: 10000 });
+  }
+
   try {
     // -------------------------------------------------------------
     // CHECK 1: Task Selection & Dynamic getTasks() Loading
@@ -64,8 +75,7 @@ async function runAcceptanceSuite() {
     await page.goto(BASE_URL, { waitUntil: "domcontentloaded" });
 
     // Verify task discovery container
-    const tasksView = page.locator('[data-testid="tasks-view"]');
-    await tasksView.waitFor({ state: "visible", timeout: 10000 });
+    await ensureTasksView();
 
     // Ensure TASK-084 card exists with full metadata
     const task84Card = page.locator('text=TASK-084').first();
@@ -179,6 +189,7 @@ async function runAcceptanceSuite() {
       await runAnotherBtn.click();
     } else {
       await page.goto(BASE_URL);
+      await ensureTasksView();
     }
     await page.waitForTimeout(500);
 
@@ -223,6 +234,7 @@ async function runAcceptanceSuite() {
     // -------------------------------------------------------------
     console.log("\n[CHECK 4] Testing Run Cancellation Flow...");
     await page.goto(BASE_URL);
+    await ensureTasksView();
     await page.waitForTimeout(500);
     await page.click('text=TASK-084');
     await page.waitForTimeout(300);
@@ -267,6 +279,7 @@ async function runAcceptanceSuite() {
     // -------------------------------------------------------------
     console.log("\n[CHECK 6] Testing Failure Flow on TASK-091...");
     await page.goto(BASE_URL);
+    await ensureTasksView();
     await page.waitForTimeout(500);
 
     // Select TASK-091 card
@@ -302,6 +315,7 @@ async function runAcceptanceSuite() {
     // -------------------------------------------------------------
     console.log("\n[CHECK 7] Testing browser stream interruption, background completion, and recovery without duplicate events...");
     await page.goto(BASE_URL);
+    await ensureTasksView();
     await page.waitForTimeout(500);
 
     // Select TASK-084

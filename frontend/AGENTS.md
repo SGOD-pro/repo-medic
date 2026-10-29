@@ -48,6 +48,7 @@ npm run test:acceptance
 * React 19 server and client components
 * Styling using Tailwind CSS v4
 * Respect package boundaries, Package A owns frontend UI and checks
+* Design system: build all UI to DESIGN.MD (art direction and the maximalist product bar); token values live in CSS.
 
 ## Gotchas
 

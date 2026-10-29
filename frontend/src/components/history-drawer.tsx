@@ -21,7 +21,6 @@ import {
   Trash2,
   History,
   ArrowRight,
-  ExternalLink,
 } from "lucide-react";
 
 interface HistoryDrawerProps {
@@ -78,12 +77,14 @@ export function HistoryDrawer({ onSelectRun }: HistoryDrawerProps) {
     }
   };
 
-  const formatTimestamp = (isoString: string) => {
+  const formatTimestamp = (isoString?: string | null) => {
+    if (!isoString) return "Unavailable";
     try {
       const date = new Date(isoString);
+      if (isNaN(date.getTime())) return "Unavailable";
       return date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
     } catch {
-      return isoString;
+      return "Unavailable";
     }
   };
 
@@ -94,7 +95,7 @@ export function HistoryDrawer({ onSelectRun }: HistoryDrawerProps) {
         className="w-full sm:max-w-md bg-[#0D1915] border-l border-[rgba(183,201,173,0.16)] text-[#F7F7F2] p-0 flex flex-col z-50"
       >
         {/* Drawer Header */}
-        <SheetHeader className="p-6 border-b border-[rgba(183,201,173,0.16)] bg-[#11221B]/60">
+        <SheetHeader className="p-5 sm:p-6 border-b border-[rgba(183,201,173,0.16)] bg-[#11221B]/60">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
               <History className="size-5 text-[#5FCB8A]" />
@@ -110,8 +111,8 @@ export function HistoryDrawer({ onSelectRun }: HistoryDrawerProps) {
                 variant="ghost"
                 size="sm"
                 onClick={clearHistory}
-                className="text-xs text-[#A9B8AD] hover:text-[#E5736A] hover:bg-[#E5736A]/10 h-8 px-2.5 gap-1.5"
-                title="Clear all saved run history"
+                className="text-xs text-[#A9B8AD] hover:text-[#E5736A] hover:bg-[#E5736A]/10 h-8 px-2.5 gap-1.5 cursor-pointer"
+                title="Clear local run records"
               >
                 <Trash2 className="size-3.5" />
                 Clear
@@ -120,12 +121,12 @@ export function HistoryDrawer({ onSelectRun }: HistoryDrawerProps) {
           </div>
           <SheetDescription className="text-xs text-[#A9B8AD] mt-1">
             Persisted repair runs across tasks and evaluation sandboxes. Click any
-            run to reload its state.
+            run to reload its state and evidence.
           </SheetDescription>
         </SheetHeader>
 
         {/* Runs List */}
-        <ScrollArea className="flex-1 p-6">
+        <ScrollArea className="flex-1 p-4 sm:p-6">
           {runs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-center px-4">
               <div className="size-12 rounded-full bg-[#15271F] border border-[rgba(183,201,173,0.16)] flex items-center justify-center mb-3">
@@ -135,13 +136,13 @@ export function HistoryDrawer({ onSelectRun }: HistoryDrawerProps) {
                 No past runs recorded
               </h3>
               <p className="text-xs text-[#A9B8AD] max-w-xs leading-relaxed">
-                When you initiate repair tasks or evaluations, completed runs will
-                be preserved here for inspection and verification.
+                When you initiate repair tasks or view demo scenarios, completed runs will
+                be recorded here for inspection and verification.
               </p>
             </div>
           ) : (
             <div className="flex flex-col gap-3">
-              {runs.map((run) => (
+              {runs.map((run: HistoryRunItem) => (
                 <div
                   key={run.run_id}
                   onClick={() => handleSelectRun(run)}
@@ -152,56 +153,45 @@ export function HistoryDrawer({ onSelectRun }: HistoryDrawerProps) {
                       handleSelectRun(run);
                     }
                   }}
-                  className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4 cursor-pointer hover:border-[#5FCB8A]/40 hover:bg-[#182C23] transition-all group focus:outline-none focus:ring-1 focus:ring-[#5FCB8A]"
+                  className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-3.5 sm:p-4 cursor-pointer hover:border-[#5FCB8A]/40 hover:bg-[#182C23] transition-all group focus:outline-none focus:ring-1 focus:ring-[#5FCB8A]"
                 >
                   {/* Top row: task id, status badge, timestamp */}
-                  <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center justify-between mb-1.5">
                     <span className="font-mono text-xs font-semibold text-[#5FCB8A]">
                       {run.task_id}
                     </span>
                     <div className="flex items-center gap-2">
-                      <span className="text-[11px] font-mono text-[#A9B8AD]">
+                      {getStatusBadge(run.state)}
+                      <span className="font-mono text-[11px] text-[#A9B8AD]">
                         {formatTimestamp(run.started_at)}
                       </span>
-                      {getStatusBadge(run.state)}
                     </div>
                   </div>
 
-                  {/* Title / Description */}
-                  <h4 className="text-xs font-medium text-[#F7F7F2] line-clamp-1 mb-2 group-hover:text-[#5FCB8A] transition-colors">
+                  {/* Title & Dependency Bump */}
+                  <h4 className="text-xs sm:text-sm font-medium text-[#F7F7F2] line-clamp-1 mb-1">
                     {run.task_title}
                   </h4>
-
-                  {/* Dependency transition */}
-                  <div className="flex items-center gap-1.5 text-[11px] font-mono text-[#A9B8AD] mb-3 bg-[#0D1915]/60 rounded-md px-2 py-1 border border-[rgba(183,201,173,0.08)]">
-                    <span className="text-[#F7F7F2] font-semibold">
-                      {run.dependency}
-                    </span>
-                    <span>{run.from_version}</span>
-                    <ArrowRight className="size-3 text-[#A9B8AD]" />
-                    <span className="text-[#5FCB8A]">{run.to_version}</span>
+                  <div className="font-mono text-[11px] text-[#A9B8AD] mb-2.5">
+                    {run.dependency} {run.from_version} → {run.to_version}
                   </div>
 
-                  {/* Metrics footer: duration, tests, spend */}
-                  <div className="flex items-center justify-between text-[11px] font-mono text-[#A9B8AD] pt-2 border-t border-[rgba(183,201,173,0.08)]">
-                    <div className="flex items-center gap-3">
-                      {run.duration && (
-                        <span>
-                          ⏱️ {run.duration}
-                        </span>
-                      )}
-                      {run.tests_passed !== null && run.tests_passed !== undefined && (
-                        <span className="text-[#5FCB8A]">
-                          ✓ {run.tests_passed} passed
-                        </span>
-                      )}
-                      {run.cost_usd !== null && run.cost_usd !== undefined && (
-                        <span>${run.cost_usd.toFixed(2)}</span>
-                      )}
+                  {/* Bottom row: run_id, mode, metrics */}
+                  <div className="flex items-center justify-between pt-2 border-t border-[rgba(183,201,173,0.1)] text-[11px] font-mono text-[#A9B8AD]">
+                    <div className="flex items-center gap-2">
+                      <span className="truncate max-w-[120px]">{run.run_id}</span>
+                      <Badge className="bg-[#0D1915] text-[#A9B8AD] border-[rgba(183,201,173,0.16)] text-[9px] px-1.5 py-0 uppercase">
+                        {run.mode}
+                      </Badge>
                     </div>
-                    <span className="text-[11px] text-[#5FCB8A] opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1">
-                      Reload <ExternalLink className="size-3" />
-                    </span>
+
+                    <div className="flex items-center gap-2 text-[#F7F7F2]">
+                      {run.duration && <span>{run.duration}</span>}
+                      {run.cost_usd !== null && run.cost_usd !== undefined && (
+                        <span className="text-[#5FCB8A]">${run.cost_usd.toFixed(2)}</span>
+                      )}
+                      <ArrowRight className="size-3 text-[#A9B8AD] group-hover:text-[#5FCB8A] transition-colors" />
+                    </div>
                   </div>
                 </div>
               ))}
