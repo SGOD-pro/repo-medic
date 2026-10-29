@@ -66,6 +66,11 @@ export interface TaskSummary {
   dependency: string;
   from_version: string;
   to_version: string;
+  expected_failure?: string | null;
+  test_command?: string[] | null;
+  allowed_source_paths?: string[] | null;
+  tests_count?: number | null;
+  baseline_time?: string | null;
 }
 
 export interface TaskRecipe extends TaskSummary {

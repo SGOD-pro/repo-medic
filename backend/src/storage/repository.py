@@ -1,11 +1,13 @@
 import asyncio
 import base64
 import hashlib
+import json
 import logging
 import uuid
 from typing import Any, cast
 import httpx
 from src.config import settings
+from src.fixtures import find_task_fixture_dir
 from src.contracts import (
     ArtifactKind,
     ArtifactSummary,
@@ -159,33 +161,122 @@ class D1StorageRepository:
         """Delete exact entities recorded in the acceptance manifest."""
         return self.client.cleanup_manifest(manifest)
 
+    def _map_task_summary(self, t: dict[str, Any]) -> TaskSummary:
+        recipe_data: dict[str, Any] = {}
+        raw_recipe = t.get("recipe_json")
+        if raw_recipe:
+            if isinstance(raw_recipe, str):
+                try:
+                    parsed = json.loads(raw_recipe)
+                    if isinstance(parsed, dict):
+                        recipe_data = parsed
+                except Exception:
+                    recipe_data = {}
+            elif isinstance(raw_recipe, dict):
+                recipe_data = raw_recipe
+
+        # Check if declared metadata is missing from stored record; fallback to genuine fixture file if present
+        task_id = t.get("task_id", "")
+        fixture_data: dict[str, Any] = {}
+        missing_fields = (
+            "expected_failure" not in recipe_data
+            or "tests_count" not in recipe_data
+            or "baseline_time" not in recipe_data
+            or "allowed_source_paths" not in recipe_data
+            or "test_command" not in recipe_data
+        )
+        if task_id and missing_fields:
+            fixture_dir = find_task_fixture_dir()
+            if fixture_dir:
+                fixture_file = fixture_dir / f"{task_id}.json"
+                if fixture_file.is_file():
+                    try:
+                        with open(fixture_file, "r", encoding="utf-8") as f:
+                            parsed_fix = json.load(f)
+                            if isinstance(parsed_fix, dict):
+                                fixture_data = parsed_fix
+                    except Exception:
+                        fixture_data = {}
+
+        expected_failure = (
+            t.get("expected_failure")
+            or recipe_data.get("expected_failure")
+            or fixture_data.get("expected_failure")
+        )
+        test_command = (
+            t.get("test_command")
+            or recipe_data.get("test_command")
+            or fixture_data.get("test_command")
+        )
+        allowed_source_paths = (
+            t.get("allowed_source_paths")
+            or recipe_data.get("allowed_source_paths")
+            or fixture_data.get("allowed_source_paths")
+        )
+        tests_count = (
+            t.get("tests_count")
+            if t.get("tests_count") is not None
+            else recipe_data.get("tests_count")
+            if recipe_data.get("tests_count") is not None
+            else fixture_data.get("tests_count")
+        )
+        baseline_time = (
+            t.get("baseline_time")
+            or recipe_data.get("baseline_time")
+            or fixture_data.get("baseline_time")
+        )
+
+        clean_expected_failure = (
+            str(expected_failure).strip()
+            if isinstance(expected_failure, str) and expected_failure.strip()
+            else None
+        )
+        clean_test_command = (
+            [str(x) for x in test_command]
+            if isinstance(test_command, list) and test_command
+            else None
+        )
+        clean_allowed_source_paths = (
+            [str(x) for x in allowed_source_paths]
+            if isinstance(allowed_source_paths, list) and allowed_source_paths
+            else None
+        )
+        clean_tests_count: int | None = None
+        if tests_count is not None and not isinstance(tests_count, bool):
+            try:
+                clean_tests_count = int(tests_count)
+            except (ValueError, TypeError):
+                clean_tests_count = None
+
+        clean_baseline_time = (
+            str(baseline_time).strip()
+            if isinstance(baseline_time, str) and baseline_time.strip()
+            else None
+        )
+
+        return TaskSummary(
+            task_id=t["task_id"],
+            title=t["title"],
+            repository_url=t["repository_url"],
+            commit_sha=t["commit_sha"],
+            dependency=t["dependency"],
+            from_version=t["from_version"],
+            to_version=t["to_version"],
+            expected_failure=clean_expected_failure,
+            test_command=clean_test_command,
+            allowed_source_paths=clean_allowed_source_paths,
+            tests_count=clean_tests_count,
+            baseline_time=clean_baseline_time,
+        )
+
     def list_tasks(self) -> list[TaskSummary]:
         raw_tasks = self.client.list_tasks()
-        return [
-            TaskSummary(
-                task_id=t["task_id"],
-                title=t["title"],
-                repository_url=t["repository_url"],
-                commit_sha=t["commit_sha"],
-                dependency=t["dependency"],
-                from_version=t["from_version"],
-                to_version=t["to_version"],
-            )
-            for t in raw_tasks
-        ]
+        return [self._map_task_summary(t) for t in raw_tasks]
 
     def get_task(self, task_id: str) -> TaskSummary | None:
         try:
             t = self.client.get_task(task_id)
-            return TaskSummary(
-                task_id=t["task_id"],
-                title=t["title"],
-                repository_url=t["repository_url"],
-                commit_sha=t["commit_sha"],
-                dependency=t["dependency"],
-                from_version=t["from_version"],
-                to_version=t["to_version"],
-            )
+            return self._map_task_summary(t)
         except (httpx.HTTPStatusError, StorageError) as e:
             status_code = getattr(e, "status_code", None) or (
                 getattr(e.response, "status_code", None) if hasattr(e, "response") else None

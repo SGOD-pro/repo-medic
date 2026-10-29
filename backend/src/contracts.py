@@ -74,15 +74,20 @@ class TaskSummary(BaseModel):
     dependency: str
     from_version: str
     to_version: str
+    expected_failure: Optional[str] = None
+    test_command: Optional[List[str]] = None
+    allowed_source_paths: Optional[List[str]] = None
+    tests_count: Optional[int] = None
+    baseline_time: Optional[str] = None
 
 
 class TaskRecipe(TaskSummary):
     test_command: List[str]
     allowed_source_paths: List[str]
     expected_failure: str
-    timeout_seconds: int
-    max_candidates: int
-    max_refinements: int
+    timeout_seconds: int = 600
+    max_candidates: int = 3
+    max_refinements: int = 1
 
 
 class ArtifactSummary(BaseModel):

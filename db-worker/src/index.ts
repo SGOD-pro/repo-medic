@@ -145,20 +145,29 @@ export default {
           return errorResponse("invalid_request", "Missing required task fields", 400);
         }
 
-        let recipeObj = body.recipe_json;
-        if (!recipeObj && (body as Record<string, unknown>).test_command) {
-          recipeObj = {
-            test_command: (body as Record<string, unknown>).test_command,
-            allowed_source_paths: (body as Record<string, unknown>).allowed_source_paths || ["src/"],
-            expected_failure: (body as Record<string, unknown>).expected_failure || "",
-            timeout_seconds: (body as Record<string, unknown>).timeout_seconds || 600,
-            max_candidates: (body as Record<string, unknown>).max_candidates || 3,
-            max_refinements: (body as Record<string, unknown>).max_refinements || 1,
-          };
+        let recipeObj = body.recipe_json as Record<string, unknown> | string | undefined;
+        if (typeof recipeObj === "string") {
+          try {
+            recipeObj = JSON.parse(recipeObj);
+          } catch {
+            recipeObj = undefined;
+          }
         }
-        const recipeJsonStr = typeof recipeObj === "string"
-          ? recipeObj
-          : recipeObj ? JSON.stringify(recipeObj) : null;
+        if (!recipeObj || typeof recipeObj !== "object") {
+          recipeObj = {};
+        }
+        const b = body as Record<string, unknown>;
+        const recipeKeys = [
+          "test_command", "allowed_source_paths", "expected_failure",
+          "timeout_seconds", "max_candidates", "max_refinements",
+          "tests_count", "baseline_time"
+        ];
+        for (const k of recipeKeys) {
+          if (b[k] !== undefined && (recipeObj as Record<string, unknown>)[k] === undefined) {
+            (recipeObj as Record<string, unknown>)[k] = b[k];
+          }
+        }
+        const recipeJsonStr = Object.keys(recipeObj).length > 0 ? JSON.stringify(recipeObj) : null;
         const now = new Date().toISOString();
 
         await env.DB.prepare(

@@ -245,18 +245,40 @@ class TursoClient:
             raise StorageError("invalid_request", "Missing required task fields", 400)
 
         recipe_obj = task_data.get("recipe_json")
-        if not recipe_obj and "test_command" in task_data:
-            recipe_obj = {
-                "test_command": task_data.get("test_command"),
-                "allowed_source_paths": task_data.get("allowed_source_paths", ["src/"]),
-                "expected_failure": task_data.get("expected_failure", ""),
-                "timeout_seconds": task_data.get("timeout_seconds", 600),
-                "max_candidates": task_data.get("max_candidates", 3),
-                "max_refinements": task_data.get("max_refinements", 1),
-            }
-        recipe_json_str = (
-            recipe_obj if isinstance(recipe_obj, str) else json.dumps(recipe_obj) if recipe_obj else None
-        )
+        if isinstance(recipe_obj, str):
+            try:
+                recipe_obj = json.loads(recipe_obj)
+            except Exception:
+                recipe_obj = None
+
+        if not isinstance(recipe_obj, dict):
+            recipe_obj = {}
+
+        # Preserve all known recipe and declared fixture metadata fields
+        recipe_field_keys = [
+            "test_command",
+            "allowed_source_paths",
+            "expected_failure",
+            "timeout_seconds",
+            "max_candidates",
+            "max_refinements",
+            "tests_count",
+            "baseline_time",
+        ]
+        for key in recipe_field_keys:
+            if key in task_data and task_data[key] is not None:
+                recipe_obj[key] = task_data[key]
+
+        # Preserve any additional non-column metadata from task_data
+        standard_cols = {
+            "task_id", "title", "repository_url", "commit_sha",
+            "dependency", "from_version", "to_version", "recipe_json", "created_at"
+        }
+        for k, v in task_data.items():
+            if k not in standard_cols and v is not None and k not in recipe_obj:
+                recipe_obj[k] = v
+
+        recipe_json_str = json.dumps(recipe_obj) if recipe_obj else None
         now = _now_iso()
 
         with self._op_lock():

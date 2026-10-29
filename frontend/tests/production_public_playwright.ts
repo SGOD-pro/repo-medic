@@ -148,10 +148,34 @@ print(f"ACTIVE_COUNT:{len(active)}")
     await page.click('[data-testid="nav-tab-tasks"]');
     await page.waitForSelector('[data-testid="tasks-view"]');
 
+    // Verify Task Card Metadata
+    const shopCard = page.locator('[data-testid="task-card-TASK-DEMO-SHOP"]');
+    await shopCard.waitFor({ timeout: 10000 });
+    const shopCardText = await shopCard.textContent();
+    assert.ok(
+      shopCardText?.includes("AttributeError: 'Engine' object has no attribute 'execute'"),
+      "Shop card must display actual expected failure"
+    );
+    assert.ok(
+      shopCardText?.includes("1 declared test"),
+      "Shop card must display 1 declared test"
+    );
+    console.log("  ✔ TASK-DEMO-SHOP card displays authentic expected failure and declared test count");
+
     // 2B. Select TASK-DEMO-JWT card
     console.log("Selecting task card for TASK-DEMO-JWT...");
     const jwtCard = page.locator('[data-testid="task-card-TASK-DEMO-JWT"]');
     await jwtCard.waitFor({ timeout: 10000 });
+    const jwtCardText = await jwtCard.textContent();
+    assert.ok(
+      jwtCardText?.includes("AttributeError: 'str' object has no attribute 'decode'"),
+      "JWT card must display actual expected failure"
+    );
+    assert.ok(
+      jwtCardText?.includes("3 declared tests"),
+      "JWT card must display 3 declared tests"
+    );
+    console.log("  ✔ TASK-DEMO-JWT card displays authentic expected failure and declared test count");
     await jwtCard.click();
 
     // 2C. Verify Selected Task Details
@@ -159,7 +183,10 @@ print(f"ACTIVE_COUNT:{len(active)}")
     assert.ok(taskDetailsText?.includes("TASK-DEMO-JWT"), "Target spec must show TASK-DEMO-JWT");
     assert.ok(taskDetailsText?.includes("pyjwt==2.8.0"), "Target spec must show target pyjwt==2.8.0");
     assert.ok(taskDetailsText?.includes("8b635e7ff8"), "Target spec must show pinned commit SHA");
-    console.log("  ✔ Target specification loaded for TASK-DEMO-JWT");
+    assert.ok(taskDetailsText?.includes("3 declared tests (fixture metadata)"), "Target spec must show declared tests count");
+    assert.ok(taskDetailsText?.includes("0.15s (Python 3.12)"), "Target spec must show baseline timing");
+    assert.ok(taskDetailsText?.includes("src/auth/tokens.py"), "Target spec must show allowed mutation paths");
+    console.log("  ✔ Target specification loaded for TASK-DEMO-JWT with full metadata");
 
     // 2D. Configure controls: Sequential strategy, Sandbox Live mode
     console.log("Selecting Execution Mode: Sandbox Live (Nebius / ConTree)...");

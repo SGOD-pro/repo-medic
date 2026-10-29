@@ -41,22 +41,21 @@ function mapSummaryToTaskItem(s: TaskSummary): TaskItem {
   const repoName = s.repository_url
     ? s.repository_url.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")
     : "Unavailable";
-  const extra = s as unknown as Record<string, unknown>;
   const expectedFailure =
-    typeof extra.expected_failure === "string" && extra.expected_failure.trim()
-      ? extra.expected_failure
+    typeof s.expected_failure === "string" && s.expected_failure.trim()
+      ? s.expected_failure.trim()
       : "Unavailable";
   const allowlist =
-    Array.isArray(extra.allowed_source_paths) && extra.allowed_source_paths.length > 0
-      ? (extra.allowed_source_paths as string[]).join(", ")
+    Array.isArray(s.allowed_source_paths) && s.allowed_source_paths.length > 0
+      ? s.allowed_source_paths.join(", ")
       : "Unavailable";
   const testsCount =
-    typeof extra.tests_count === "number"
-      ? extra.tests_count
+    typeof s.tests_count === "number" && !isNaN(s.tests_count)
+      ? s.tests_count
       : null;
   const baselineTime =
-    typeof extra.baseline_time === "string" && extra.baseline_time.trim()
-      ? extra.baseline_time
+    typeof s.baseline_time === "string" && s.baseline_time.trim()
+      ? s.baseline_time.trim()
       : "Unavailable";
 
   return {
@@ -408,8 +407,8 @@ export function TasksView({
                   <span>·</span>
                   <div>
                     {task.testsCount !== null
-                      ? `${task.testsCount} preserved test${task.testsCount === 1 ? "" : "s"}`
-                      : "Preserved tests: Unavailable"}
+                      ? `${task.testsCount} declared test${task.testsCount === 1 ? "" : "s"}`
+                      : "Declared tests: Unavailable"}
                   </div>
                 </div>
 
@@ -480,12 +479,12 @@ export function TasksView({
                   </div>
                   <div className="text-[11px] font-mono text-[#A9B8AD]">
                     {selectedTask.testsCount !== null
-                      ? `${selectedTask.testsCount} preserved test${selectedTask.testsCount === 1 ? "" : "s"}`
-                      : "Preserved tests: Unavailable"}
+                      ? `${selectedTask.testsCount} declared test${selectedTask.testsCount === 1 ? "" : "s"} (fixture metadata)`
+                      : "Declared tests: Unavailable"}
                     {" · "}
                     {selectedTask.baselineTime !== "Unavailable"
-                      ? `passing in ${selectedTask.baselineTime}`
-                      : "Baseline: Unavailable"}
+                      ? `declared baseline timing: ${selectedTask.baselineTime}`
+                      : "Baseline timing: Unavailable"}
                   </div>
                 </div>
 
