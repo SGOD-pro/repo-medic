@@ -131,6 +131,8 @@ export interface VerificationViewModel {
   verificationTimeText: string;
   costText: string;
   signatureBadgeText: string | null;
+  patchApplied: boolean;
+  preservedSubtitle: string;
 }
 
 export function resolveVerificationViewModel(
@@ -154,6 +156,9 @@ export function resolveVerificationViewModel(
     modeLabel = "MOCK TRANSPORT";
   }
 
+  const checks = evidenceData?.checks as Record<string, boolean> | undefined;
+  const patchApplied = checks?.patch_applied ?? true;
+
   const testSummary = evidenceData?.test_summary as Record<string, number> | undefined;
   const testsPassed = typeof testSummary?.passed_count === "number"
     ? testSummary.passed_count
@@ -173,17 +178,21 @@ export function resolveVerificationViewModel(
       ? testsPassed + testsFailed
       : null);
 
-  const ratioDisplay = testsPassed !== null && totalCollected !== null
+  const ratioDisplay = !patchApplied
+    ? "Not Run"
+    : testsPassed !== null && totalCollected !== null
     ? `${testsPassed} / ${totalCollected}`
     : "Unavailable";
 
   let headerTitle: string;
-  if (isPass) {
+  if (!patchApplied) {
+    headerTitle = "Candidate patch failed to apply cleanly";
+  } else if (isPass) {
     headerTitle = testsPassed !== null && totalCollected !== null
       ? `Behavior preserved (${testsPassed}/${totalCollected} tests passing)`
       : "Verified Source Repair Completed";
   } else if (isFail) {
-    headerTitle = testsFailed !== null
+    headerTitle = testsFailed !== null && testsFailed > 0
       ? `Verification check failed (${testsFailed} tests failing)`
       : "Source Repair Failed";
   } else if (isCancelled) {
@@ -193,11 +202,13 @@ export function resolveVerificationViewModel(
   }
 
   let regressionsBadgeText: string | null = null;
-  if (testsFailed !== null) {
-    regressionsBadgeText = testsFailed === 0 ? "0 REGRESSIONS" : `${testsFailed} FAILURES`;
+  if (!patchApplied) {
+    regressionsBadgeText = "PATCH APPLY FAILED";
+  } else if (isPass) {
+    regressionsBadgeText = testsFailed === 0 ? "0 REGRESSIONS" : null;
+  } else if (isFail) {
+    regressionsBadgeText = testsFailed !== null && testsFailed > 0 ? `${testsFailed} FAILURES` : "VERIFICATION FAILED";
   }
-
-  const checks = evidenceData?.checks as Record<string, boolean> | undefined;
   const testFilesUnchangedVisible = isPass && Boolean(checks?.post_patch_hash_match);
   const hashCheckBadgeText = "Test files unchanged";
   const astBadgeVisible = testFilesUnchangedVisible;
@@ -239,6 +250,17 @@ export function resolveVerificationViewModel(
     signatureBadgeText = "Verification Checks Passed";
   }
 
+  let preservedSubtitle: string;
+  if (isPass && testsPassed !== null) {
+    preservedSubtitle = "All assertions verified";
+  } else if (isFail) {
+    preservedSubtitle = !patchApplied
+      ? "Patch application failed · 0 tests run"
+      : "Verification not completed";
+  } else {
+    preservedSubtitle = "Test metrics unavailable";
+  }
+
   return {
     runState,
     isPass,
@@ -260,6 +282,8 @@ export function resolveVerificationViewModel(
     verificationTimeText,
     costText,
     signatureBadgeText,
+    patchApplied,
+    preservedSubtitle,
   };
 }
 
@@ -512,7 +536,13 @@ export function VerificationView({
                   </Badge>
                 )}
                 {vm.regressionsBadgeText && (
-                  <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent font-mono text-xs px-2 py-0.5">
+                  <Badge
+                    className={`border-transparent font-mono text-xs px-2 py-0.5 ${
+                      vm.isPass
+                        ? "bg-[#5FCB8A]/15 text-[#5FCB8A]"
+                        : "bg-[#E5736A]/20 text-[#E5736A]"
+                    }`}
+                  >
                     {vm.regressionsBadgeText}
                   </Badge>
                 )}
@@ -584,13 +614,17 @@ export function VerificationView({
         <div className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-4">
           <div className="flex items-center justify-between text-xs font-mono text-[#A9B8AD] mb-1">
             <span>PRESERVED TESTS</span>
-            <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+            {vm.isPass ? (
+              <CheckCircle2 className="size-3.5 text-[#5FCB8A]" />
+            ) : (
+              <XCircle className="size-3.5 text-[#E5736A]" />
+            )}
           </div>
           <div className="text-xl sm:text-2xl font-bold font-mono text-[#F7F7F2]">
             {vm.ratioDisplay}
           </div>
           <div className="text-[11px] text-[#A9B8AD] mt-1">
-            {vm.testsPassed !== null ? "All assertions verified" : "Test metrics unavailable"}
+            {vm.preservedSubtitle}
           </div>
         </div>
 

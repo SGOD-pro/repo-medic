@@ -202,10 +202,27 @@ async def repair(
                 estimated_cost=0.05,
                 source_files=source_files,
             )
+            await host.emit(
+                "stage.completed",
+                {
+                    "stage": "repair",
+                    "passed": True,
+                    "summary": f"Synthesized candidate patch {candidate.candidate_id}",
+                },
+            )
         except BudgetExceededError as exc:
+            await host.emit(
+                "stage.completed",
+                {"stage": "repair", "passed": False, "summary": str(exc)},
+            )
             return RepairResult(state="failed", reason=str(exc))
         except Exception as exc:
-            return RepairResult(state="failed", reason=f"Candidate generation error: {exc}")
+            reason = f"Candidate generation error: {exc}"
+            await host.emit(
+                "stage.completed",
+                {"stage": "repair", "passed": False, "summary": reason},
+            )
+            return RepairResult(state="failed", reason=reason)
 
         # 10. Validate patch safety against allowed source paths
         patch_validation = validate_patch(candidate.diff_content, recipe)

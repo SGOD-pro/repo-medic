@@ -162,6 +162,13 @@ export function RunActiveView({
           }
           return [...prev, entry];
         });
+        setStageResults((prev) => ({
+          ...prev,
+          repair: {
+            passed: prev.repair?.passed || c.passed,
+            summary: prev.repair?.passed ? prev.repair.summary : c.summary,
+          },
+        }));
         setStreamLogs((prev) => [
           ...prev,
           `${timeTag} candidate.${c.candidate_id}: ${c.passed ? "VERIFIED" : "FAILED"} - ${c.summary}`,
@@ -286,12 +293,8 @@ export function RunActiveView({
   const currentLogText =
     streamLogs.length > 0
       ? streamLogs.join("\n")
-      : activeRun?.state === "succeeded"
-      ? `[00:00] run.started: mode=${activeRun.mode} search_mode=${activeRun.search_mode}\n[00:01] stage.baseline: PASSED - Baseline passes on pinned commit\n[00:04] stage.upgrade: PASSED - Upgraded target and captured failure\n[00:09] candidate.cand_1: VERIFIED - Candidate patch passed test suite\n[00:10] stage.verification: PASSED - Clean verification run passed\n[00:10] run.finished: state=succeeded (clean completion)`
-      : activeRun?.state === "failed"
-      ? `[00:00] run.started: mode=${activeRun.mode} search_mode=${activeRun.search_mode}\n[00:01] stage.baseline: PASSED - Baseline passes\n[00:04] stage.upgrade: PASSED - Upgraded target\n[00:08] run.error: REPAIR_FAILED - ${activeRun.reason || "Patch safety validation failed"}\n[00:08] run.finished: state=failed (${activeRun.reason || "Patch safety validation failed"})`
-      : activeRun?.state === "cancelled"
-      ? `[00:00] run.started: mode=${activeRun?.mode || "live"}\n[00:02] run.cancelled: User initiated cancellation\n[00:02] run.finished: state=cancelled`
+      : isTerminal
+      ? `[00:00] run.finished: state=${activeRun?.state || "unknown"} (${activeRun?.reason || "clean completion"})`
       : `[${formatElapsed(elapsedSeconds)}] Connecting to event stream for ${activeRun?.run_id || "active run"}...\nAwaiting stage and candidate execution events...`;
 
   const copyLogToClipboard = () => {
@@ -652,10 +655,54 @@ export function RunActiveView({
             <div className="space-y-3">
               {httpStages.map((stage, idx) => {
                 const res = stageResults[stage.key];
-                const isPassed = Boolean(res ? res.passed : (isSuccess && isTerminal));
-                const isFailedStage = Boolean(res && !res.passed);
-                const isCurrent = !isTerminal && !res && (idx === 0 || Boolean(stageResults[httpStages[idx - 1].key]?.passed));
-                const isNotRun = isTerminal && !res && !isPassed;
+                const isNoRegression = Boolean(
+                  activeRun?.reason?.toLowerCase().includes("no regression detected")
+                );
+                const isSkippedDueToNoRegression =
+                  isNoRegression && (stage.key === "repair" || stage.key === "verification");
+
+                let badgeText: "PASSED" | "FAILED" | "ACTIVE" | "NOT RUN" | "PENDING" | "UNAVAILABLE";
+                let summaryText: string;
+
+                if (res) {
+                  badgeText = res.passed ? "PASSED" : "FAILED";
+                  summaryText = res.summary;
+                } else if (
+                  stage.key === "repair" &&
+                  (liveCandidates.length > 0 || Boolean(stageResults["verification"]))
+                ) {
+                  badgeText = "PASSED";
+                  summaryText =
+                    liveCandidates.length > 0
+                      ? `${liveCandidates.length} candidate${liveCandidates.length === 1 ? "" : "s"} synthesized`
+                      : "Candidate patch synthesized";
+                } else if (isSkippedDueToNoRegression) {
+                  badgeText = "NOT RUN";
+                  summaryText = "No regression detected in target version; repair not required";
+                } else if (isTerminal) {
+                  const prevPassed = idx === 0 ? false : Boolean(stageResults[httpStages[idx - 1].key]?.passed);
+                  const isEarlierFailed = httpStages.slice(0, idx).some((s) => stageResults[s.key] && !stageResults[s.key]?.passed);
+                  if (isEarlierFailed || (idx > 0 && !prevPassed)) {
+                    badgeText = "NOT RUN";
+                    summaryText = "Stage was not reached before run terminated";
+                  } else {
+                    badgeText = "UNAVAILABLE";
+                    summaryText = "Execution evidence unavailable for this stage";
+                  }
+                } else {
+                  const isPrevPassed = idx === 0 || Boolean(stageResults[httpStages[idx - 1].key]?.passed);
+                  if (isPrevPassed && !res) {
+                    badgeText = "ACTIVE";
+                    summaryText = stage.defaultDetail;
+                  } else {
+                    badgeText = "PENDING";
+                    summaryText = stage.defaultDetail;
+                  }
+                }
+
+                const isPassed = badgeText === "PASSED";
+                const isFailedStage = badgeText === "FAILED";
+                const isCurrent = badgeText === "ACTIVE";
 
                 return (
                   <div
@@ -696,11 +743,11 @@ export function RunActiveView({
                             : "bg-transparent text-[#A9B8AD] border-[rgba(183,201,173,0.16)]"
                         }`}
                       >
-                        {isPassed ? "PASSED" : isFailedStage ? "FAILED" : isCurrent ? "ACTIVE" : isNotRun ? "NOT RUN" : "PENDING"}
+                        {badgeText}
                       </Badge>
                     </div>
                     <p className="text-[11px] text-[#A9B8AD] pl-6 leading-relaxed">
-                      {res?.summary || (isNotRun ? "Stage was not executed" : stage.defaultDetail)}
+                      {summaryText}
                     </p>
                   </div>
                 );

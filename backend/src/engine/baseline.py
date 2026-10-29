@@ -161,6 +161,16 @@ async def run_baseline_stage(
         )
         return BaselineOutcome(passed=False, summary=summary)
 
+    if not recipe.expected_failure and res1.collected_count == 0:
+        summary = (
+            "Baseline test collection empty: 0 tests collected; automatic regression discovery "
+            "requires a meaningful passing baseline"
+        )
+        await host.emit(
+            "stage.completed", {"stage": "baseline", "passed": False, "summary": summary}
+        )
+        return BaselineOutcome(passed=False, summary=summary)
+
     # 6. Cancellation check after check 2
     if await host.cancelled():
         return BaselineOutcome(

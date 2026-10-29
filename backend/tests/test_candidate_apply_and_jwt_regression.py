@@ -1,16 +1,24 @@
+import json
 import os
 import subprocess
 import tempfile
+from pathlib import Path
 import pytest
 
 from src.contracts import HostPorts, RepairRequest, TaskRecipe
 from src.engine.adapters import CommandResult, SandboxPreset
-from src.engine.candidate_generator import collect_target_source_files
+from src.engine.baseline import run_baseline_stage
+from src.engine.candidate_generator import (
+    collect_target_source_files,
+    normalize_diff_context,
+)
 from src.engine.fake_model import (
+    DEFAULT_VALID_PATCH,
     DEMO_TASK_CANNED_PATCHES,
     FakeModelAdapter,
     JWT_VALID_PATCH,
     SHOP_VALID_PATCH,
+    UNSAFE_TEST_PATCH,
     get_canned_patch_for_recipe,
 )
 from src.engine.fake_sandbox import FakeSandboxAdapter
@@ -303,3 +311,416 @@ async def test_automatic_regression_discovery_with_failure():
     assert upgrade_res.success is True
     assert upgrade_res.failure_reproduced is True
     assert "captured test regression automatically" in upgrade_res.summary
+
+
+def test_jwt_candidate_allowlist_rejection():
+    """Verify production error: candidate proposing src/app.py is rejected against JWT allowed_source_paths."""
+    recipe = TaskRecipe(
+        task_id="TASK-DEMO-JWT",
+        title="Upgrade pyjwt 1.7.1 to 2.8.0 in repomedic-demo-auth",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8b635e7ff84556962f6ec4fee43523778461c938",
+        dependency="pyjwt",
+        from_version="1.7.1",
+        to_version="2.8.0",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/auth/tokens.py"],
+        expected_failure="AttributeError: 'str' object has no attribute 'decode'",
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    # DEFAULT_VALID_PATCH modifies src/app.py
+    res = validate_patch(DEFAULT_VALID_PATCH, recipe)
+    assert res.valid is False
+    assert any("File 'src/app.py' is outside recipe allowed source paths" in v for v in res.violations)
+    assert "Patch safety validation failed" in res.reason
+
+
+@pytest.mark.asyncio
+async def test_known_error_match_and_mismatch():
+    """Verify known error reproduction matches and reports clear diagnostic on mismatch."""
+    recipe = TaskRecipe(
+        task_id="TASK-MATCH-TEST",
+        title="Known error test",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8c400721558392a23b3af71766f673da02f80040",
+        dependency="sqlalchemy",
+        from_version="1.4.48",
+        to_version="2.0.19",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/"],
+        expected_failure="AttributeError: Engine has no execute",
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    # 1. Matching failure
+    host_match = InMemoryHost()
+    sandbox_match = FakeSandboxAdapter(reproduced_failure_stderr="AttributeError: Engine has no execute")
+    res_match = await run_upgrade_stage(recipe, sandbox_match, host_match)
+    assert res_match.success is True
+    assert res_match.failure_reproduced is True
+
+    # 2. Mismatching failure
+    recipe_mismatch = recipe.model_copy(update={"expected_failure": "CustomMismatchPatternExpected"})
+    host_mismatch = InMemoryHost()
+    sandbox_mismatch = FakeSandboxAdapter(reproduced_failure_stderr="AttributeError: Engine has no execute")
+    res_mismatch = await run_upgrade_stage(recipe_mismatch, sandbox_mismatch, host_mismatch)
+    assert res_mismatch.success is False
+    assert res_mismatch.failure_reproduced is False
+    assert "CustomMismatchPatternExpected' was not observed" in res_mismatch.summary
+
+
+@pytest.mark.asyncio
+async def test_automatic_discovery_empty_baseline():
+    """Verify automatic regression discovery fails baseline when 0 tests are collected."""
+    recipe = TaskRecipe(
+        task_id="TASK-EMPTY-BASELINE",
+        title="Empty baseline test",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8c400721558392a23b3af71766f673da02f80040",
+        dependency="sqlalchemy",
+        from_version="1.4.48",
+        to_version="2.0.19",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/"],
+        expected_failure=None,
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    host = InMemoryHost()
+    sandbox = FakeSandboxAdapter()
+    sandbox.node_ids = []  # 0 collected tests
+
+    baseline_res = await run_baseline_stage(recipe, sandbox, host)
+    assert baseline_res.passed is False
+    assert "Baseline test collection empty: 0 tests collected" in baseline_res.summary
+
+
+@pytest.mark.asyncio
+async def test_automatic_discovery_install_failure():
+    """Verify dependency upgrade install failure is distinguished from regression and preserved."""
+    recipe = TaskRecipe(
+        task_id="TASK-INSTALL-FAIL",
+        title="Install failure test",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8c400721558392a23b3af71766f673da02f80040",
+        dependency="sqlalchemy",
+        from_version="1.4.48",
+        to_version="2.0.19",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/"],
+        expected_failure=None,
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    host = InMemoryHost()
+    sandbox = FakeSandboxAdapter(preset=SandboxPreset.UPGRADE_INSTALL_FAIL)
+    upgrade_res = await run_upgrade_stage(recipe, sandbox, host)
+
+    assert upgrade_res.success is False
+    assert "Package upgrade command failed" in upgrade_res.summary
+
+
+@pytest.mark.asyncio
+async def test_automatic_discovery_collection_failure():
+    """Verify post-upgrade collection failure (exit code 5) is distinguished from test regression."""
+    recipe = TaskRecipe(
+        task_id="TASK-COLLECTION-FAIL",
+        title="Collection failure test",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8c400721558392a23b3af71766f673da02f80040",
+        dependency="sqlalchemy",
+        from_version="1.4.48",
+        to_version="2.0.19",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/"],
+        expected_failure=None,
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    host = InMemoryHost()
+    sandbox = FakeSandboxAdapter()
+
+    # Override execute_command to return exit code 5 (Pytest collection error)
+    orig_exec = sandbox.execute_command
+
+    async def mock_exec(cmd, **kwargs):
+        if cmd == recipe.test_command:
+            return CommandResult(
+                exit_code=5,
+                stdout="ERROR collecting tests/test_broken.py\nImportError: No module named broken",
+                stderr="",
+            )
+        return await orig_exec(cmd, **kwargs)
+
+    sandbox.execute_command = mock_exec
+    upgrade_res = await run_upgrade_stage(recipe, sandbox, host)
+
+    assert upgrade_res.success is False
+    assert "Post-upgrade test collection failed under 2.0.19 (exit code 5)" in upgrade_res.summary
+
+
+@pytest.mark.asyncio
+async def test_automatic_discovery_timeout_failure():
+    """Verify test execution timeout failure is caught and preserved with clear diagnostic."""
+    recipe = TaskRecipe(
+        task_id="TASK-TIMEOUT-FAIL",
+        title="Timeout failure test",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8c400721558392a23b3af71766f673da02f80040",
+        dependency="sqlalchemy",
+        from_version="1.4.48",
+        to_version="2.0.19",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/"],
+        expected_failure=None,
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    host = InMemoryHost()
+    sandbox = FakeSandboxAdapter()
+
+    orig_exec = sandbox.execute_command
+
+    async def mock_timeout(cmd, **kwargs):
+        if cmd == recipe.test_command:
+            raise TimeoutError("Test execution exceeded 60s timeout ceiling")
+        return await orig_exec(cmd, **kwargs)
+
+    sandbox.execute_command = mock_timeout
+    upgrade_res = await run_upgrade_stage(recipe, sandbox, host)
+
+    assert upgrade_res.success is False
+    assert "Post-upgrade test execution timed out" in upgrade_res.summary
+
+
+def test_unchanged_test_verification():
+    """Verify candidate patch attempting to modify test files is strictly rejected."""
+    recipe = TaskRecipe(
+        task_id="TASK-DEMO-JWT",
+        title="Upgrade pyjwt 1.7.1 to 2.8.0 in repomedic-demo-auth",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8b635e7ff84556962f6ec4fee43523778461c938",
+        dependency="pyjwt",
+        from_version="1.7.1",
+        to_version="2.8.0",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/auth/tokens.py"],
+        expected_failure="AttributeError: 'str' object has no attribute 'decode'",
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    res = validate_patch(UNSAFE_TEST_PATCH, recipe)
+    assert res.valid is False
+    assert any("not permitted: tests/test_app.py" in v for v in res.violations)
+    assert "Patch safety validation failed" in res.reason
+
+
+def test_all_canned_demo_task_recipes_offline_compatibility():
+    """Verify all curated demo task recipes have valid canned patches matching their allowed source paths."""
+    fixtures_dir = Path(__file__).resolve().parent.parent / "fixtures" / "tasks"
+    demo_tasks = ["TASK-DEMO-JWT", "TASK-DEMO-SHOP", "TASK-DEMO-CLICK", "TASK-DEMO-PYDANTIC"]
+
+    for task_id in demo_tasks:
+        fixture_path = fixtures_dir / f"{task_id}.json"
+        assert fixture_path.exists(), f"Missing fixture file for {task_id}"
+        with open(fixture_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        recipe = TaskRecipe(**data)
+
+        canned = get_canned_patch_for_recipe(recipe)
+        assert canned is not None, f"Canned patch missing for {task_id}"
+        val = validate_patch(canned, recipe)
+        assert val.valid is True, f"Canned patch for {task_id} failed validation: {val.violations}"
+
+
+def test_actual_production_patch_apply_regression(tmp_path):
+    """Reproduce the exact production patch failure from run_05ff3b08a62b49b98a69cabb7573ed37 and verify clean application."""
+    diff_path = (
+        Path(__file__).resolve().parent.parent.parent
+        / "artifacts"
+        / "run_05ff3b08a62b49b98a69cabb7573ed37"
+        / "patch.diff"
+    )
+    assert diff_path.exists(), f"Saved patch artifact missing at {diff_path}"
+    raw_diff = diff_path.read_text(encoding="utf-8")
+
+    # Pinned commit source for src/shop/database.py at 8c400721558392a23b3af71766f673da02f80040
+    src_content = subprocess.check_output(
+        ["git", "cat-file", "-p", "8c400721558392a23b3af71766f673da02f80040:src/shop/database.py"]
+    ).decode("utf-8")
+
+    # Set up clean temporary git repository matching the pinned commit
+    repo_dir = tmp_path / "repo_prod_patch"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    shop_dir = repo_dir / "src" / "shop"
+    shop_dir.mkdir(parents=True)
+    db_file = shop_dir / "database.py"
+    db_file.write_text(src_content, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=RepoMedic", "-c", "user.email=ci@repo-medic.local", "commit", "-m", "init"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
+    )
+
+    # 1. Verify un-normalized raw diff fails git apply with the exact error observed in production
+    raw_apply = subprocess.run(
+        ["git", "apply", "--check", "-v", "--recount", "--unidiff-zero", "--whitespace=nowarn"],
+        cwd=str(repo_dir),
+        input=raw_diff,
+        text=True,
+        capture_output=True,
+    )
+    assert raw_apply.returncode != 0
+    assert "patch failed: src/shop/database.py:6" in raw_apply.stderr
+    assert "patch does not apply" in raw_apply.stderr
+
+    # 2. Normalize diff using authentic source lines
+    source_files = {"src/shop/database.py": src_content}
+    normalized_diff = normalize_diff_context(raw_diff, source_files=source_files)
+    assert normalized_diff != raw_diff
+
+    # 3. Verify normalized diff applies cleanly
+    norm_apply = subprocess.run(
+        ["git", "apply", "--check", "-v", "--recount", "--unidiff-zero", "--whitespace=nowarn"],
+        cwd=str(repo_dir),
+        input=normalized_diff,
+        text=True,
+        capture_output=True,
+    )
+    assert norm_apply.returncode == 0
+    assert "Checking patch src/shop/database.py..." in norm_apply.stderr
+
+    # 4. Apply the patch and verify content
+    subprocess.run(
+        ["git", "apply", "--recount", "--unidiff-zero", "--whitespace=nowarn"],
+        cwd=str(repo_dir),
+        input=normalized_diff,
+        text=True,
+        check=True,
+    )
+    updated_source = db_file.read_text(encoding="utf-8")
+    assert "with engine.begin() as conn:" in updated_source
+    assert "with engine.connect() as conn:" in updated_source
+
+
+def test_ambiguous_patch_rejected_without_guessing():
+    """Verify hunks matching multiple locations ambiguously are rejected without guessing."""
+    source_text = (
+        "def compute_alpha():\n"
+        "    return None\n"
+        "\n"
+        "def compute_beta():\n"
+        "    return None\n"
+    )
+    ambiguous_diff = (
+        "--- a/src/calc.py\n"
+        "+++ b/src/calc.py\n"
+        "@@ -2,1 +2,1 @@\n"
+        "-    return None\n"
+        "+    return 42\n"
+    )
+    source_files = {"src/calc.py": source_text}
+    result = normalize_diff_context(ambiguous_diff, source_files=source_files)
+    assert result.strip() == ambiguous_diff.strip()
+
+
+def test_mismatched_patch_fails_clearly(tmp_path):
+    """Verify mismatched patch fails git apply clearly and does not corrupt source."""
+    source_text = "def greet(name: str) -> str:\n    return f'Hello {name}'\n"
+    mismatched_diff = (
+        "--- a/src/greet.py\n"
+        "+++ b/src/greet.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-def goodbye(name: str) -> str:\n"
+        "-    return f'Bye {name}'\n"
+        "+def farewell(name: str) -> str:\n"
+        "+    return f'Farewell {name}'\n"
+    )
+    repo_dir = tmp_path / "repo_mismatch"
+    repo_dir.mkdir()
+    subprocess.run(["git", "init"], cwd=str(repo_dir), check=True, capture_output=True)
+    src_dir = repo_dir / "src"
+    src_dir.mkdir(parents=True)
+    greet_file = src_dir / "greet.py"
+    greet_file.write_text(source_text, encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=str(repo_dir), check=True, capture_output=True)
+    subprocess.run(
+        ["git", "-c", "user.name=RepoMedic", "-c", "user.email=ci@repo-medic.local", "commit", "-m", "init"],
+        cwd=str(repo_dir),
+        check=True,
+        capture_output=True,
+    )
+
+    source_files = {"src/greet.py": source_text}
+    normalized = normalize_diff_context(mismatched_diff, source_files=source_files)
+    res = subprocess.run(
+        ["git", "apply", "--check", "-v", "--recount", "--unidiff-zero", "--whitespace=nowarn"],
+        cwd=str(repo_dir),
+        input=normalized,
+        text=True,
+        capture_output=True,
+    )
+    assert res.returncode != 0
+    assert "patch failed: src/greet.py:1" in res.stderr
+    assert greet_file.read_text(encoding="utf-8") == source_text
+
+
+@pytest.mark.asyncio
+async def test_repair_emits_repair_stage_completed_event():
+    """Verify repair stage emits stage.completed with stage: repair when candidate is generated."""
+    recipe = TaskRecipe(
+        task_id="TASK-DEMO-JWT",
+        title="Upgrade pyjwt 1.7.1 to 2.8.0 in repomedic-demo-auth",
+        repository_url="https://github.com/SGOD-pro/repo-medic.git",
+        commit_sha="8b635e7ff84556962f6ec4fee43523778461c938",
+        dependency="pyjwt",
+        from_version="1.7.1",
+        to_version="2.8.0",
+        test_command=["pytest", "tests/"],
+        allowed_source_paths=["src/auth/tokens.py"],
+        expected_failure="AttributeError: 'str' object has no attribute 'decode'",
+        timeout_seconds=60,
+        max_candidates=3,
+        max_refinements=1,
+    )
+
+    request = RepairRequest(
+        run_id="run_repair_event_test",
+        task_id="TASK-DEMO-JWT",
+        mode="offline",
+        search_mode="sequential",
+        max_run_usd=2.0,
+    )
+
+    host = InMemoryHost()
+    result = await repair(request, recipe, host)
+
+    assert result.state == "succeeded"
+    repair_events = [
+        e
+        for e in host.events
+        if e.get("type") == "stage.completed"
+        and e.get("payload", {}).get("stage") == "repair"
+    ]
+    assert len(repair_events) == 1
+    assert repair_events[0]["payload"]["passed"] is True
+
+

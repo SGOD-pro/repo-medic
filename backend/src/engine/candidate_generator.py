@@ -1,7 +1,7 @@
 import difflib
 import logging
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from src.contracts import HostPorts, TaskRecipe
 from src.engine.adapters import ModelAdapter, SandboxAdapter
@@ -64,6 +64,111 @@ def build_repair_prompt(
     )
 
 
+def _reconcile_hunk_with_source(
+    hunk_header: str,
+    hunk_lines: List[str],
+    src_lines: List[str],
+) -> Tuple[str, List[str]]:
+    """Deterministically reconcile hunk context and blank lines against source lines.
+
+    Preserves additions without change. Reconciles blank lines and deletions
+    only when non-empty lines match uniquely in the source file. Rejects
+    ambiguous or non-matching hunks without modification.
+    """
+    old_entries = [
+        (idx, line[0], line[1:])
+        for idx, line in enumerate(hunk_lines)
+        if line.startswith(("-", " "))
+    ]
+    if not old_entries:
+        return hunk_header, hunk_lines
+
+    non_empty_old = [
+        (idx, prefix, text)
+        for idx, prefix, text in old_entries
+        if text.strip()
+    ]
+    if not non_empty_old:
+        return hunk_header, hunk_lines
+
+    target_non_empty = [text for _, _, text in non_empty_old]
+    src_non_empty = [(i, line) for i, line in enumerate(src_lines) if line.strip()]
+    src_non_empty_lines = [line for _, line in src_non_empty]
+
+    matches = [
+        k
+        for k in range(len(src_non_empty_lines) - len(target_non_empty) + 1)
+        if src_non_empty_lines[k : k + len(target_non_empty)] == target_non_empty
+    ]
+
+    # Reject ambiguous (>1) or non-matching (0) hunks without guessing
+    if len(matches) != 1:
+        return hunk_header, hunk_lines
+
+    k = matches[0]
+    first_src_idx = src_non_empty[k][0]
+    last_src_idx = src_non_empty[k + len(target_non_empty) - 1][0]
+
+    leading_blanks = non_empty_old[0][0]
+    start_src = first_src_idx
+    while leading_blanks > 0 and start_src > 0 and src_lines[start_src - 1].strip() == "":
+        start_src -= 1
+        leading_blanks -= 1
+
+    trailing_blanks = len(old_entries) - 1 - non_empty_old[-1][0]
+    end_src = last_src_idx
+    while trailing_blanks > 0 and end_src + 1 < len(src_lines) and src_lines[end_src + 1].strip() == "":
+        end_src += 1
+        trailing_blanks -= 1
+
+    additions_before = [
+        l for idx, l in enumerate(hunk_lines[:old_entries[0][0]]) if l.startswith("+")
+    ]
+
+    additions_after_old: Dict[int, List[str]] = {}
+    for i in range(len(old_entries)):
+        cur_idx = old_entries[i][0]
+        next_idx = old_entries[i + 1][0] if i + 1 < len(old_entries) else len(hunk_lines)
+        additions_after_old[cur_idx] = [
+            hunk_lines[j]
+            for j in range(cur_idx + 1, next_idx)
+            if hunk_lines[j].startswith("+")
+        ]
+
+    reconstructed: List[str] = list(additions_before)
+    old_non_empty_idx = 0
+
+    for s_idx in range(start_src, end_src + 1):
+        s_line = src_lines[s_idx]
+        if s_line.strip():
+            orig_old_idx = non_empty_old[old_non_empty_idx][0]
+            prefix = non_empty_old[old_non_empty_idx][1]
+            reconstructed.append(prefix + s_line)
+            reconstructed.extend(additions_after_old.get(orig_old_idx, []))
+            old_non_empty_idx += 1
+        else:
+            # Reconcile blank line inside deletion vs context block
+            prefix = "-"
+            if old_non_empty_idx < len(non_empty_old):
+                next_prefix = non_empty_old[old_non_empty_idx][1]
+                prev_prefix = (
+                    non_empty_old[old_non_empty_idx - 1][1]
+                    if old_non_empty_idx > 0
+                    else next_prefix
+                )
+                if prev_prefix == " " or next_prefix == " ":
+                    prefix = " "
+            elif old_non_empty_idx > 0:
+                if non_empty_old[old_non_empty_idx - 1][1] == " ":
+                    prefix = " "
+            reconstructed.append(prefix + s_line)
+
+    old_cnt = sum(1 for l in reconstructed if not l.startswith("+"))
+    new_cnt = sum(1 for l in reconstructed if not l.startswith("-"))
+    new_hdr = f"@@ -{start_src + 1},{old_cnt} +{start_src + 1},{new_cnt} @@"
+    return new_hdr, reconstructed
+
+
 def normalize_diff_context(diff_text: str, source_files: Optional[Dict[str, str]] = None) -> str:
     """Normalize patch hunks by restoring missing blank line context and repairing bare hunk headers."""
     lines = diff_text.splitlines()
@@ -84,6 +189,7 @@ def normalize_diff_context(diff_text: str, source_files: Optional[Dict[str, str]
             continue
 
         if line.startswith("@@"):
+            hunk_header = line
             hunk_lines: List[str] = []
             j = i + 1
             while j < len(lines) and not lines[j].startswith(("--- ", "+++ ", "diff ", "@@")):
@@ -97,57 +203,32 @@ def normalize_diff_context(diff_text: str, source_files: Optional[Dict[str, str]
                 i = j
                 continue
 
+            # Deterministic reconciliation against exact source lines when available
+            if current_file and source_files and current_file in source_files:
+                src_lines = source_files[current_file].splitlines()
+                hdr, body = _reconcile_hunk_with_source(hunk_header, hunk_lines, src_lines)
+                repaired_lines.append(hdr)
+                repaired_lines.extend(body)
+                i = j
+                continue
+
+            # Fallback bare hunk header repair when source_files are not provided
             if not re.match(r"^@@\s+-\d+", line):
                 start_line = 1
-                if current_file and source_files:
-                    src_lines = source_files[current_file].splitlines()
-                    first_ctx = None
-                    for h_line in hunk_lines:
-                        if h_line.startswith((" ", "-")) and h_line[1:].strip():
-                            first_ctx = h_line[1:]
-                            break
-                    if first_ctx is not None:
-                        for idx, s_line in enumerate(src_lines):
-                            if s_line == first_ctx:
-                                start_line = idx + 1
-                                break
-
                 repaired_lines.append(f"@@ -{start_line},{old_count} +{start_line},{new_count} @@")
-                i += 1
+                repaired_lines.extend(hunk_lines)
+                i = j
                 continue
+
+            repaired_lines.append(line)
+            repaired_lines.extend(hunk_lines)
+            i = j
+            continue
+
         repaired_lines.append(line)
         i += 1
 
-    if not source_files:
-        return "\n".join(repaired_lines) + ("\n" if diff_text.endswith("\n") else "")
-
-    current_file = None
-    new_lines: List[str] = []
-    for i, line in enumerate(repaired_lines):
-        if line.startswith("--- a/"):
-            rel_path = line[6:].strip()
-            current_file = rel_path if rel_path in source_files else None
-        elif line.startswith("+++ b/"):
-            pass
-        elif (
-            current_file
-            and i > 0
-            and line.startswith(" ")
-            and line.strip().startswith(("def ", "class ", "async def "))
-        ):
-            prev = repaired_lines[i - 1]
-            if prev.startswith(("+", "-")):
-                src_content = source_files[current_file]
-                src_lines = src_content.splitlines()
-                target_str = line.strip()
-                for s_idx, s_line in enumerate(src_lines):
-                    if s_line.strip() == target_str:
-                        if s_idx > 0 and src_lines[s_idx - 1].strip() == "":
-                            new_lines.append(" ")
-                        break
-        new_lines.append(line)
-
-    return "\n".join(new_lines) + "\n"
+    return "\n".join(repaired_lines) + ("\n" if diff_text.endswith("\n") else "")
 
 
 def _detect_matching_source_file(code_body: str, source_files: Dict[str, str], text: str = "") -> Optional[str]:

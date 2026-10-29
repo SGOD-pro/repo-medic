@@ -149,7 +149,7 @@ async def run_upgrade_stage(
             )
 
         # Distinguish test execution failure from environment/collection failure
-        if test_res.exit_code == 5 or ("ERROR collecting" in combined_output and "failed" not in combined_output.lower()):
+        if test_res.exit_code in (2, 3, 4, 5) or ("ERROR collecting" in combined_output and "failed" not in combined_output.lower()):
             summary = f"Post-upgrade test collection failed under {recipe.to_version} (exit code {test_res.exit_code})"
             await host.emit(
                 "stage.completed", {"stage": "upgrade", "passed": False, "summary": summary}

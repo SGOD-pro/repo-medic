@@ -124,7 +124,9 @@ export default function Home() {
           if (!isMounted) return;
           setSelectedTaskId(item.task_id);
           setStrategy(item.search_mode);
-          if (
+          if (tabFromUrl) {
+            setActiveTab(tabFromUrl as ActiveTab);
+          } else if (
             item.state === "succeeded" ||
             item.state === "failed" ||
             item.state === "cancelled"
@@ -149,7 +151,9 @@ export default function Home() {
             reason: run.reason,
             cost_usd: run.usage?.estimated_usd,
           });
-          if (
+          if (tabFromUrl) {
+            setActiveTab(tabFromUrl as ActiveTab);
+          } else if (
             run.state === "succeeded" ||
             run.state === "failed" ||
             run.state === "cancelled"

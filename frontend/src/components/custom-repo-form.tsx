@@ -741,7 +741,7 @@ export function CustomRepoForm({
                     htmlFor="expected_failure"
                     className="block text-xs font-mono font-medium text-[#A9B8AD] mb-1.5"
                   >
-                    Expected Failure Substring <span className="text-[#A9B8AD] font-normal">(Optional)</span>
+                    Expected Failure Substring <span className="text-[#A9B8AD] font-normal">(Optional · Advanced Option)</span>
                   </label>
                   <Input
                     id="expected_failure"
@@ -757,7 +757,7 @@ export function CustomRepoForm({
                     className="bg-[#0D1915] border-[rgba(183,201,173,0.2)] text-xs font-mono text-[#F7F7F2] h-10 focus-visible:ring-1 focus-visible:ring-[#5FCB8A]"
                   />
                   <span id="expected_failure_help" className="block mt-1 text-[11px] text-[#A9B8AD]">
-                    Optional filter. When omitted, RepoMedic runs automatic regression discovery to capture post upgrade breakage.
+                    Optional advanced filter. Leave blank for automatic regression discovery: RepoMedic will run baseline tests, perform dependency upgrade, and capture real post-upgrade test regressions automatically.
                   </span>
                   {fieldErrors.expected_failure?.map((err, i) => (
                     <span
