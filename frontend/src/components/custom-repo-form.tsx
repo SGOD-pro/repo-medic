@@ -33,7 +33,7 @@ interface CustomRepoFormProps {
 }
 
 const DEMO_PREFILL: CustomRepositoryConfig = {
-  repository_url: "https://github.com/SGOD-pro/repomedic-demo-shop",
+  repository_url: "https://github.com/SGOD-pro/repo-medic.git",
   commit_sha: "8c400721558392a23b3af71766f673da02f80040",
   dependency: "sqlalchemy",
   from_version: "1.4.48",

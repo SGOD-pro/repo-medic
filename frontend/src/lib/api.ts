@@ -158,6 +158,7 @@ export class MockTransport implements RepoMedicApiClient {
     mode?: Mode,
     _idempotencyKey?: string
   ): Promise<RunSummary> {
+    void _idempotencyKey;
     const task = CURATED_TASKS.find((t) => t.task_id === taskId) || CURATED_TASKS[0];
     const runId = `run_${task.task_id.toLowerCase().replace("-", "_")}_${Date.now()}`;
     const run: RunSummary = {
@@ -363,7 +364,7 @@ export class HttpTransport implements RepoMedicApiClient {
     this.baseUrl = baseUrl;
   }
 
-  async getTasks(policy?: string): Promise<TaskSummary[]> {
+  async getTasks(policy = "supported_demo"): Promise<TaskSummary[]> {
     const url = policy
       ? `${this.baseUrl}/tasks?policy=${encodeURIComponent(policy)}`
       : `${this.baseUrl}/tasks`;
@@ -382,9 +383,6 @@ export class HttpTransport implements RepoMedicApiClient {
           SUPPORTED_DEMO_TASK_IDS.includes(t.task_id) &&
           !t.repository_url?.toLowerCase().includes("example")
       );
-      if (tasks.length === 0) {
-        tasks = SUPPORTED_DEMO_TASKS;
-      }
     }
     return tasks;
   }

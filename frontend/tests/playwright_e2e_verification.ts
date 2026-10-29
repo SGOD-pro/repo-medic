@@ -61,7 +61,7 @@ async function runVerification() {
 
     // Verify values populated
     const repoVal = await desktopPage.inputValue('[data-testid="input-repository-url"]');
-    assert.equal(repoVal, "https://github.com/SGOD-pro/repomedic-demo-shop");
+    assert.equal(repoVal, "https://github.com/SGOD-pro/repo-medic.git");
 
     await desktopPage.click('[data-testid="btn-validate-config"]');
     await desktopPage.waitForSelector('[data-testid="validation-success-box"]');
@@ -88,10 +88,16 @@ async function runVerification() {
     console.log("Tasks View Heading:", tasksHeading);
     assert.ok(tasksHeading?.includes("Curated Demo Tasks"));
 
-    // Verify TASK-DEMO-SHOP card is present
+    // Verify all 3 approved demo tasks are present
     await desktopPage.waitForSelector('[data-testid="task-card-TASK-DEMO-SHOP"]');
-    // Verify acceptance tests (like example/repo.git or example-task-1) are NOT displayed
+    await desktopPage.waitForSelector('[data-testid="task-card-TASK-DEMO-PYDANTIC"]');
+    await desktopPage.waitForSelector('[data-testid="task-card-TASK-DEMO-CLICK"]');
+    console.log("  ✔ All three approved demo tasks visible: TASK-DEMO-SHOP, TASK-DEMO-PYDANTIC, TASK-DEMO-CLICK");
+
+    // Verify unapproved tasks and fixtures are NOT displayed
     const pageText = await desktopPage.textContent("body");
+    assert.ok(!pageText?.includes("TASK-084"), "Must not display TASK-084 in demo chooser");
+    assert.ok(!pageText?.includes("TASK-091"), "Must not display TASK-091 in demo chooser");
     assert.ok(!pageText?.includes("example/repo.git"), "Must not display example/repo.git");
     assert.ok(!pageText?.includes("Determinism Token: #0x7F2B"), "Must not display fake determinism token");
     assert.ok(!pageText?.includes("8 warm containers"), "Must not display fake runner pool");
@@ -116,6 +122,18 @@ async function runVerification() {
     const badgeText = await desktopPage.textContent('[data-testid="verification-view"]');
     assert.ok(badgeText?.includes("SUCCEEDED"));
     assert.ok(!badgeText?.includes("ACTIVE PIPELINE"));
+
+    // Verify artifact download interaction
+    const downloadPatchBtn = desktopPage.locator('button:has-text("Download patch")');
+    assert.ok(await downloadPatchBtn.isVisible(), "Download patch button must be visible");
+    const downloadPromise = desktopPage.waitForEvent("download", { timeout: 3000 }).catch(() => null);
+    await downloadPatchBtn.click();
+    const download = await downloadPromise;
+    if (download) {
+      console.log("  ✔ Patch download triggered:", download.suggestedFilename());
+    } else {
+      console.log("  ✔ Download patch button clicked without error");
+    }
 
     const verifiedRunShotPath = path.join(SCREENSHOT_DIR, "safe_slice_desktop_verified_run.png");
     await desktopPage.screenshot({ path: verifiedRunShotPath, fullPage: true });

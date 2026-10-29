@@ -21,8 +21,8 @@ import {
   CheckCircle,
   PlusCircle,
 } from "lucide-react";
-import { SearchMode, TaskSummary, Mode } from "@/lib/contracts";
-import { RepoMedicApiClient, createApiClient, SUPPORTED_DEMO_TASKS } from "@/lib/api";
+import { SearchMode, TaskSummary, Mode, APPROVED_DEMO_TASK_IDS } from "@/lib/contracts";
+import { RepoMedicApiClient, createApiClient } from "@/lib/api";
 
 interface TaskItem {
   id: string;
@@ -31,7 +31,7 @@ interface TaskItem {
   commitSha: string;
   dependency: string;
   targetVersion: string;
-  testsCount: number;
+  testsCount: number | null;
   expectedFailure: string;
   baselineTime: string;
   allowlist: string;
@@ -40,45 +40,30 @@ interface TaskItem {
 function mapSummaryToTaskItem(s: TaskSummary): TaskItem {
   const repoName = s.repository_url
     ? s.repository_url.replace(/^https?:\/\/github\.com\//, "").replace(/\.git$/, "")
-    : "python/repo";
+    : "Unavailable";
   const extra = s as unknown as Record<string, unknown>;
   const expectedFailure =
-    typeof extra.expected_failure === "string"
+    typeof extra.expected_failure === "string" && extra.expected_failure.trim()
       ? extra.expected_failure
-      : s.task_id === "TASK-DEMO-PYDANTIC"
-      ? "`regex` is removed. use `pattern` instead"
-      : s.task_id === "TASK-DEMO-CLICK"
-      ? "AttributeError: module 'click' has no attribute 'get_terminal_size'"
-      : `Upgrade regression on ${s.dependency}==${s.to_version}`;
-  const allowlist = Array.isArray(extra.allowed_source_paths)
-    ? (extra.allowed_source_paths as string[]).join(", ")
-    : s.task_id === "TASK-DEMO-SHOP"
-    ? "src/shop/"
-    : s.task_id === "TASK-DEMO-PYDANTIC"
-    ? "src/users/"
-    : s.task_id === "TASK-DEMO-CLICK"
-    ? "src/cli/"
-    : "src/";
+      : "Unavailable";
+  const allowlist =
+    Array.isArray(extra.allowed_source_paths) && extra.allowed_source_paths.length > 0
+      ? (extra.allowed_source_paths as string[]).join(", ")
+      : "Unavailable";
   const testsCount =
     typeof extra.tests_count === "number"
       ? extra.tests_count
-      : (s.task_id === "TASK-DEMO-SHOP" || s.task_id === "TASK-091" ? 1 : s.task_id === "TASK-084" ? 42 : 2);
+      : null;
   const baselineTime =
-    typeof extra.baseline_time === "string"
+    typeof extra.baseline_time === "string" && extra.baseline_time.trim()
       ? extra.baseline_time
-      : (s.task_id === "TASK-DEMO-SHOP" || s.task_id === "TASK-091"
-        ? "0.16s (Python 3.12)"
-        : s.task_id === "TASK-DEMO-PYDANTIC"
-        ? "0.18s (Python 3.12)"
-        : s.task_id === "TASK-DEMO-CLICK"
-        ? "0.15s (Python 3.12)"
-        : "0.20s (Python 3.12)");
+      : "Unavailable";
 
   return {
     id: s.task_id,
     repo: repoName,
     title: s.title,
-    commitSha: s.commit_sha,
+    commitSha: s.commit_sha || "Unavailable",
     dependency: s.dependency,
     targetVersion: s.to_version,
     testsCount,
@@ -125,21 +110,21 @@ export function TasksView({
     setLoadError(null);
     try {
       const client = apiClient || createApiClient();
-      const rawTasks = await client.getTasks();
+      const rawTasks = await client.getTasks("supported_demo");
       // Filter out any acceptance test fixtures or example repos
       const filtered = rawTasks.filter((t) => {
         const repo = (t.repository_url || "").toLowerCase();
-        const id = (t.task_id || "").toLowerCase();
+        const id = (t.task_id || "");
         return (
           !repo.includes("example") &&
           !id.includes("example-task") &&
           !id.startsWith("task_live_") &&
-          !id.startsWith("test_")
+          !id.startsWith("test_") &&
+          APPROVED_DEMO_TASK_IDS.includes(id)
         );
       });
 
-      const effectiveTasks = filtered.length > 0 ? filtered : SUPPORTED_DEMO_TASKS;
-      const items = effectiveTasks.map(mapSummaryToTaskItem);
+      const items = filtered.map(mapSummaryToTaskItem);
       // Ensure TASK-DEMO-SHOP is at top
       items.sort((a, b) => (a.id === "TASK-DEMO-SHOP" ? -1 : b.id === "TASK-DEMO-SHOP" ? 1 : 0));
 
@@ -149,6 +134,8 @@ export function TasksView({
         if (!currentSelected || !items.some((t) => t.id === currentSelected)) {
           setSelectedTaskId(items[0].id);
         }
+      } else {
+        setSelectedTaskId("");
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to load tasks";
@@ -170,20 +157,8 @@ export function TasksView({
     };
   }, [fetchTasks]);
 
-  const selectedTask =
-    tasks.find((t) => t.id === selectedTaskId) ||
-    tasks[0] || {
-      id: selectedTaskId || "TASK-DEMO-SHOP",
-      repo: "SGOD-pro/repo-medic",
-      title: "Upgrade sqlalchemy 1.4.48 to 2.0.19 in repomedic-demo-shop",
-      commitSha: "8c400721558392a23b3af71766f673da02f80040",
-      dependency: "sqlalchemy",
-      targetVersion: "2.0.19",
-      testsCount: 1,
-      expectedFailure: "AttributeError: 'Engine' object has no attribute 'execute'",
-      baselineTime: "0.16s (Python 3.12)",
-      allowlist: "src/shop/",
-    };
+  const selectedTask: TaskItem | null =
+    tasks.find((t) => t.id === selectedTaskId) || tasks[0] || null;
 
   const handleOpenSaved = (runId: string) => {
     if (onViewSavedRun) {
@@ -194,7 +169,7 @@ export function TasksView({
   };
 
   const handleStart = async () => {
-    if (isStarting) return;
+    if (isStarting || !selectedTask) return;
     setIsStarting(true);
     try {
       await onStartRun(
@@ -401,7 +376,11 @@ export function TasksView({
                 <div className="flex flex-wrap items-center gap-2.5 text-xs font-mono text-[#A9B8AD] mb-2.5">
                   <div className="flex items-center gap-1">
                     <GitCommit className="size-3.5" />
-                    <span>{task.commitSha.substring(0, 7)}</span>
+                    <span>
+                      {task.commitSha !== "Unavailable"
+                        ? task.commitSha.substring(0, 7)
+                        : "Unavailable"}
+                    </span>
                   </div>
                   <span>·</span>
                   <div>
@@ -411,7 +390,11 @@ export function TasksView({
                     </span>
                   </div>
                   <span>·</span>
-                  <div>{task.testsCount} preserved test{task.testsCount === 1 ? "" : "s"}</div>
+                  <div>
+                    {task.testsCount !== null
+                      ? `${task.testsCount} preserved test${task.testsCount === 1 ? "" : "s"}`
+                      : "Preserved tests: Unavailable"}
+                  </div>
                 </div>
 
                 {/* Expected Failure Substring Inset */}
@@ -430,138 +413,158 @@ export function TasksView({
 
         {/* Right Column: Selected Summary, Settings & Persistent Start Action (5 cols) */}
         <div className="lg:col-span-5 flex flex-col gap-4 lg:sticky lg:top-20">
-          <Card className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-5 sm:p-6 shadow-none">
-            {/* Header: Eyebrow + Target Repository */}
-            <div className="flex items-center justify-between gap-2 mb-2">
-              <span className="font-mono text-xs tracking-wider text-[#A9B8AD] uppercase">
-                SELECTED TARGET SPECIFICATION
-              </span>
-              <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent text-[10px] font-semibold px-2 py-0.5 rounded-full">
-                READY
-              </Badge>
-            </div>
-
-            <h2 className="text-base sm:text-lg font-semibold text-[#F7F7F2] mb-4 break-words">
-              {selectedTask.repo}
-            </h2>
-
-            {/* Target Spec Bento Summary */}
-            <div className="space-y-2.5 mb-5 text-xs">
-              <div className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[#A9B8AD] font-mono">Task ID &amp; Target</span>
-                  <span className="font-mono text-[#F7F7F2] font-medium">
-                    {selectedTask.id}
-                  </span>
-                </div>
-                <div className="text-[12px] font-mono text-[#F7F7F2]">
-                  {selectedTask.dependency}=={selectedTask.targetVersion}
-                </div>
+          {!selectedTask ? (
+            <Card className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-5 sm:p-6 shadow-none text-center">
+              <div className="py-12">
+                <Layers className="size-8 mx-auto mb-3 text-[#A9B8AD]" />
+                <p className="text-sm font-medium text-[#F7F7F2]">No Task Selected</p>
+                <p className="text-xs text-[#A9B8AD] mt-1">
+                  No repair task is currently selected or available.
+                </p>
               </div>
-
-              <div className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[#A9B8AD] font-mono">Baseline Pinned Commit</span>
-                  <span className="font-mono text-[#F7F7F2]">
-                    {selectedTask.commitSha.substring(0, 10)}...
-                  </span>
-                </div>
-                <div className="text-[11px] font-mono text-[#A9B8AD]">
-                  {selectedTask.testsCount} preserved test{selectedTask.testsCount === 1 ? "" : "s"} passing in {selectedTask.baselineTime}
-                </div>
-              </div>
-
-              <div className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3">
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-[#A9B8AD] font-mono">Mutation Allowlist</span>
-                  <span className="font-mono text-[#5FCB8A] text-[11px]">TESTS IMMUTABLE</span>
-                </div>
-                <div className="text-[11px] font-mono text-[#A9B8AD]">
-                  Allowed: {selectedTask.allowlist}
-                </div>
-              </div>
-            </div>
-
-            {/* Controls: Strategy and Mode */}
-            <div className="space-y-3 pt-3 border-t border-[rgba(183,201,173,0.12)] mb-5">
-              <div>
-                <label className="block text-xs font-mono text-[#A9B8AD] mb-1.5">
-                  Repair Search Strategy
-                </label>
-                <Select
-                  value={strategy}
-                  onValueChange={(val: string | null) => {
-                    if (val) setStrategy(val as SearchMode);
-                  }}
-                >
-                  <SelectTrigger className="w-full h-10 border-[rgba(183,201,173,0.2)] bg-[#0D1915] text-xs text-[#F7F7F2] rounded-lg px-3 font-medium">
-                    <SelectValue placeholder="Select strategy" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#15271F] border-[rgba(183,201,173,0.24)] text-[#F7F7F2]">
-                    <SelectItem value="sequential">
-                      Sequential Direct (Single Pass)
-                    </SelectItem>
-                    <SelectItem value="branch_refine">
-                      Branch &amp; Refine (Max 3 Candidates)
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-mono text-[#A9B8AD] mb-1.5">
-                  Execution Mode
-                </label>
-                <Select
-                  value={executionMode}
-                  onValueChange={(val: string | null) => {
-                    if (val) setExecutionMode(val);
-                  }}
-                >
-                  <SelectTrigger className="w-full h-10 border-[rgba(183,201,173,0.2)] bg-[#0D1915] text-xs text-[#F7F7F2] rounded-lg px-3 font-medium">
-                    <SelectValue placeholder="Select mode" />
-                  </SelectTrigger>
-                  <SelectContent className="bg-[#15271F] border-[rgba(183,201,173,0.24)] text-[#F7F7F2]">
-                    <SelectItem value="sandbox_live">
-                      Sandbox Live (Nebius / ConTree)
-                    </SelectItem>
-                    <SelectItem value="dry_run">
-                      Dry-Run Emulation (Local)
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <span className="block mt-1 text-[11px] text-[#A9B8AD]">
-                  {executionMode === "sandbox_live"
-                    ? "Live demo uses provider resources and remote container sandboxes."
-                    : "Dry-run emulation uses local fixtures without remote spend."}
+            </Card>
+          ) : (
+            <Card className="rounded-xl bg-[#15271F] border border-[rgba(183,201,173,0.16)] p-5 sm:p-6 shadow-none">
+              {/* Header: Eyebrow + Target Repository */}
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <span className="font-mono text-xs tracking-wider text-[#A9B8AD] uppercase">
+                  SELECTED TARGET SPECIFICATION
                 </span>
+                <Badge className="bg-[#5FCB8A]/15 text-[#5FCB8A] border-transparent text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                  READY
+                </Badge>
               </div>
-            </div>
 
-            {/* Primary Action Button: Start repair run */}
-            <Button
-              type="button"
-              disabled={isStarting}
-              onClick={handleStart}
-              className="w-full h-11 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs sm:text-sm rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-none disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {isStarting ? (
-                <>
-                  <RotateCw className="size-4 animate-spin" />
-                  Starting repair run...
-                </>
-              ) : (
-                <>
-                  <Play className="size-4 fill-current" />
-                  Start repair run
-                </>
-              )}
-            </Button>
+              <h2 className="text-base sm:text-lg font-semibold text-[#F7F7F2] mb-4 break-words">
+                {selectedTask.repo}
+              </h2>
 
-            <p className="mt-3 text-[11px] text-[#A9B8AD] text-center leading-relaxed">
-              Executes in an isolated sandbox. Test suite integrity is verified against baseline hashes.
-            </p>
-          </Card>
+              {/* Target Spec Bento Summary */}
+              <div className="space-y-2.5 mb-5 text-xs">
+                <div className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[#A9B8AD] font-mono">Task ID &amp; Target</span>
+                    <span className="font-mono text-[#F7F7F2] font-medium">
+                      {selectedTask.id}
+                    </span>
+                  </div>
+                  <div className="text-[12px] font-mono text-[#F7F7F2]">
+                    {selectedTask.dependency}=={selectedTask.targetVersion}
+                  </div>
+                </div>
+
+                <div className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[#A9B8AD] font-mono">Baseline Pinned Commit</span>
+                    <span className="font-mono text-[#F7F7F2]">
+                      {selectedTask.commitSha !== "Unavailable"
+                        ? `${selectedTask.commitSha.substring(0, 10)}...`
+                        : "Unavailable"}
+                    </span>
+                  </div>
+                  <div className="text-[11px] font-mono text-[#A9B8AD]">
+                    {selectedTask.testsCount !== null
+                      ? `${selectedTask.testsCount} preserved test${selectedTask.testsCount === 1 ? "" : "s"}`
+                      : "Preserved tests: Unavailable"}
+                    {" · "}
+                    {selectedTask.baselineTime !== "Unavailable"
+                      ? `passing in ${selectedTask.baselineTime}`
+                      : "Baseline: Unavailable"}
+                  </div>
+                </div>
+
+                <div className="rounded-lg bg-[#0D1915] border border-[rgba(183,201,173,0.12)] p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[#A9B8AD] font-mono">Mutation Allowlist</span>
+                    <span className="font-mono text-[#5FCB8A] text-[11px]">TESTS IMMUTABLE</span>
+                  </div>
+                  <div className="text-[11px] font-mono text-[#A9B8AD]">
+                    Allowed: {selectedTask.allowlist}
+                  </div>
+                </div>
+              </div>
+
+              {/* Controls: Strategy and Mode */}
+              <div className="space-y-3 pt-3 border-t border-[rgba(183,201,173,0.12)] mb-5">
+                <div>
+                  <label className="block text-xs font-mono text-[#A9B8AD] mb-1.5">
+                    Repair Search Strategy
+                  </label>
+                  <Select
+                    value={strategy}
+                    onValueChange={(val: string | null) => {
+                      if (val) setStrategy(val as SearchMode);
+                    }}
+                  >
+                    <SelectTrigger className="w-full h-10 border-[rgba(183,201,173,0.2)] bg-[#0D1915] text-xs text-[#F7F7F2] rounded-lg px-3 font-medium">
+                      <SelectValue placeholder="Select strategy" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#15271F] border-[rgba(183,201,173,0.24)] text-[#F7F7F2]">
+                      <SelectItem value="sequential">
+                        Sequential Direct (Single Pass)
+                      </SelectItem>
+                      <SelectItem value="branch_refine">
+                        Branch &amp; Refine (Max 3 Candidates)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-mono text-[#A9B8AD] mb-1.5">
+                    Execution Mode
+                  </label>
+                  <Select
+                    value={executionMode}
+                    onValueChange={(val: string | null) => {
+                      if (val) setExecutionMode(val);
+                    }}
+                  >
+                    <SelectTrigger className="w-full h-10 border-[rgba(183,201,173,0.2)] bg-[#0D1915] text-xs text-[#F7F7F2] rounded-lg px-3 font-medium">
+                      <SelectValue placeholder="Select mode" />
+                    </SelectTrigger>
+                    <SelectContent className="bg-[#15271F] border-[rgba(183,201,173,0.24)] text-[#F7F7F2]">
+                      <SelectItem value="sandbox_live">
+                        Sandbox Live (Nebius / ConTree)
+                      </SelectItem>
+                      <SelectItem value="dry_run">
+                        Dry-Run Emulation (Local)
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <span className="block mt-1 text-[11px] text-[#A9B8AD]">
+                    {executionMode === "sandbox_live"
+                      ? "Live demo uses provider resources and remote container sandboxes."
+                      : "Dry-run emulation uses local fixtures without remote spend."}
+                  </span>
+                </div>
+              </div>
+
+              {/* Primary Action Button: Start repair run */}
+              <Button
+                type="button"
+                disabled={isStarting || !selectedTask}
+                onClick={handleStart}
+                className="w-full h-11 bg-[#B7C9AD] hover:bg-[#C8D8BF] text-[#102D25] font-semibold text-xs sm:text-sm rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer shadow-none disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isStarting ? (
+                  <>
+                    <RotateCw className="size-4 animate-spin" />
+                    Starting repair run...
+                  </>
+                ) : (
+                  <>
+                    <Play className="size-4 fill-current" />
+                    Start repair run
+                  </>
+                )}
+              </Button>
+
+              <p className="mt-3 text-[11px] text-[#A9B8AD] text-center leading-relaxed">
+                Executes in an isolated sandbox. Test suite integrity is verified against baseline hashes.
+              </p>
+            </Card>
+          )}
         </div>
       </div>
     </div>

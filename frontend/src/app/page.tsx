@@ -180,17 +180,17 @@ export default function Home() {
       setActiveRun(run);
       setRunStartedAt(Date.now());
 
-      const allTasks = await apiClient.getTasks().catch(() => CURATED_TASKS);
+      const allTasks = await apiClient.getTasks("supported_demo").catch(() => CURATED_TASKS);
       const task =
         allTasks.find((t) => t.task_id === taskId) ||
         CURATED_TASKS.find((t) => t.task_id === taskId) || {
           task_id: taskId,
-          title: "sqlalchemy v1.4.48 to v2.0.19 in repomedic-demo-shop",
-          repository_url: "https://github.com/SGOD-pro/repo-medic.git",
-          commit_sha: "8c40072",
-          dependency: "sqlalchemy",
-          from_version: "1.4.48",
-          to_version: "2.0.19",
+          title: taskId,
+          repository_url: "Unavailable",
+          commit_sha: "Unavailable",
+          dependency: "Unavailable",
+          from_version: "Unavailable",
+          to_version: "Unavailable",
         };
 
       // Add run to persistent history store

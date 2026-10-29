@@ -12,7 +12,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const REPO_ROOT = path.resolve(__dirname, "../..");
 
-const ARTIFACT_DIR = process.env.ARTIFACT_DIR || path.resolve(REPO_ROOT, "artifacts");
+const ARTIFACT_DIR = process.env.ARTIFACT_DIR || path.resolve(REPO_ROOT, "artifacts/acceptance_test_evidence");
 const BASE_URL = process.env.BASE_URL || process.env.FRONTEND_URL || "http://localhost:3000";
 const BACKEND_URL = process.env.BACKEND_URL || "http://127.0.0.1:8000";
 

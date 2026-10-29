@@ -100,11 +100,11 @@ export function RunActiveView({
   const [streamLogs, setStreamLogs] = useState<string[]>([]);
 
   // Task details matching
-  const currentTaskId = activeRun?.task_id || "TASK-DEMO-SHOP";
+  const currentTaskId = activeRun?.task_id || "";
   const matchedTask = CURATED_TASKS.find((t) => t.task_id === currentTaskId);
   const displayRepo = matchedTask
     ? matchedTask.repository_url.replace(/^https?:\/\/github\.com\//, "")
-    : currentTaskId;
+    : currentTaskId || "Unavailable";
   const displayDependency = matchedTask
     ? `(${matchedTask.dependency} ${matchedTask.from_version} → ${matchedTask.to_version})`
     : "";

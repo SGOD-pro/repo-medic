@@ -12,6 +12,12 @@ export const SUPPORTED_DEMO_TASK_IDS: readonly string[] = [
   "TASK-DEMO-CLICK",
 ];
 
+export const APPROVED_DEMO_TASK_IDS: readonly string[] = [
+  "TASK-DEMO-SHOP",
+  "TASK-DEMO-PYDANTIC",
+  "TASK-DEMO-CLICK",
+];
+
 export interface CustomRepositoryConfig {
   repository_url: string;
   commit_sha: string;
