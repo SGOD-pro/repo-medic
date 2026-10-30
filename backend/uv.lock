@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.13"
 resolution-markers = [
     "python_full_version >= '3.15'",
@@ -133,7 +133,6 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
-    { name = "turso-serverless" },
     { name = "uvicorn" },
 ]
 
@@ -156,7 +155,6 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.14.0" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
-    { name = "turso-serverless", specifier = ">=0.1.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
 ]
 
@@ -794,15 +792,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/85/ad/430fb60d90e1d112a62ff57bdd1f286ec73a2a0331272febfddd21f330e1/StrEnum-0.4.15.tar.gz", hash = "sha256:878fb5ab705442070e4dd1929bb5e2249511c0bcf2b0eeacf3bcd80875c82eff", size = 23384, upload-time = "2023-06-29T22:02:58.399Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/81/69/297302c5f5f59c862faa31e6cb9a4cd74721cd1e052b38e464c5b402df8b/StrEnum-0.4.15-py3-none-any.whl", hash = "sha256:a30cda4af7cc6b5bf52c8055bc4bf4b2b6b14a93b574626da33df53cf7740659", size = 8851, upload-time = "2023-06-29T22:02:56.947Z" },
-]
-
-[[package]]
-name = "turso-serverless"
-version = "0.1.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8b/d7/81399012ea295f21e9dd8e35b6de5630c4f98be9edaf222de754c5ee2581/turso_serverless-0.1.0.tar.gz", hash = "sha256:36fdcc55b7f88e270a014e418c6220bb9f48da5087469f3dfacc68e56be05509", size = 15547, upload-time = "2026-07-27T07:16:49.747Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/3e/c4/f49cec34e7924cabae06da5548153aeb7278f2f73ad995d1435ec98e4b22/turso_serverless-0.1.0-py3-none-any.whl", hash = "sha256:6a45e7f7c66ed5831f940bf40c45c02f1a0021be102bd9abff8e5899fa79c107", size = 12433, upload-time = "2026-07-27T07:16:48.54Z" },
 ]
 
 [[package]]

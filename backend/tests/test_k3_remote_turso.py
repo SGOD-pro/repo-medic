@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import threading
 import time
 import urllib.request
@@ -490,7 +491,7 @@ def test_actual_backend_process_termination_and_startup_recovery(k3_turso_client
         # Step 2: Spawn first backend process
         proc1 = subprocess.Popen(
             [
-                "uv", "run", "python", "-m", "uvicorn", "src.main:create_app",
+                sys.executable, "-m", "uvicorn", "src.main:create_app",
                 "--factory", "--host", "127.0.0.1", "--port", str(test_port),
             ],
             cwd=str(backend_cwd),
@@ -531,7 +532,7 @@ def test_actual_backend_process_termination_and_startup_recovery(k3_turso_client
         # Step 7: Restart backend process
         proc2 = subprocess.Popen(
             [
-                "uv", "run", "python", "-m", "uvicorn", "src.main:create_app",
+                sys.executable, "-m", "uvicorn", "src.main:create_app",
                 "--factory", "--host", "127.0.0.1", "--port", str(test_port),
             ],
             cwd=str(backend_cwd),
