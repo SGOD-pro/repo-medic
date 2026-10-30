@@ -364,6 +364,21 @@ def test_stream_run_events(test_app_and_repo):
     assert "event: run.finished" in body
     assert "id: 1" in body
 
+    # Non-streaming JSON retrieval via query param
+    resp_json = client.get("/api/runs/run-stream-1/events?stream=false")
+    assert resp_json.status_code == 200
+    assert "application/json" in resp_json.headers.get("content-type", "")
+    data = resp_json.json()
+    assert "events" in data
+    assert len(data["events"]) >= 1
+    assert data["events"][0]["type"] == "stage.completed"
+
+    # Non-streaming JSON retrieval via Accept header
+    resp_accept = client.get("/api/runs/run-stream-1/events", headers={"Accept": "application/json"})
+    assert resp_accept.status_code == 200
+    assert "application/json" in resp_accept.headers.get("content-type", "")
+    assert len(resp_accept.json()["events"]) >= 1
+
     # Missing run returns 404
     resp_missing = client.get("/api/runs/run-nonexistent/events")
     assert resp_missing.status_code == 404

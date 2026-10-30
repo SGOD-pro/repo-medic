@@ -353,7 +353,12 @@ def verify_branch_pinned_sha(
         return False
 
     if proc.returncode != 0:
-        return False
+        try:
+            _, b_map = _query_smart_http_refs(url, timeout_seconds=timeout_seconds)
+            observed = b_map.get(branch_name, "").lower()
+            return bool(observed and observed == expected)
+        except Exception:
+            return False
 
     for line in proc.stdout.splitlines():
         line = line.strip()

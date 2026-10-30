@@ -1,6 +1,7 @@
 import pytest
 import asyncio
 import json
+from pathlib import Path
 from pydantic import ValidationError
 from src.contracts import (
     RepairRequest,
@@ -95,38 +96,39 @@ async def test_repair_budget_denial(dummy_request, dummy_recipe):
 
 
 def test_fixtures_validation():
+    fixtures_dir = Path(__file__).resolve().parent.parent.parent / "fixtures"
     # 1. Task recipe
-    with open('../fixtures/tasks/example-task-1.json') as f:
+    with open(fixtures_dir / "tasks" / "example-task-1.json") as f:
         TaskRecipe.model_validate_json(f.read())
 
     # 2. Documented runs
-    with open('../fixtures/runs/success.json') as f:
+    with open(fixtures_dir / "runs" / "success.json") as f:
         run = RunSummary.model_validate_json(f.read())
         assert run.state == "succeeded"
         assert run.reason is None
         assert run.usage.estimated_usd >= 0.0
 
-    with open('../fixtures/runs/failure.json') as f:
+    with open(fixtures_dir / "runs" / "failure.json") as f:
         run = RunSummary.model_validate_json(f.read())
         assert run.state == "failed"
         assert run.reason == "Baseline check failed"
 
-    with open('../fixtures/runs/cancel.json') as f:
+    with open(fixtures_dir / "runs" / "cancel.json") as f:
         run = RunSummary.model_validate_json(f.read())
         assert run.state == "cancelled"
 
-    with open('../fixtures/runs/queued.json') as f:
+    with open(fixtures_dir / "runs" / "queued.json") as f:
         run = RunSummary.model_validate_json(f.read())
         assert run.state == "queued"
         assert run.reason is None
 
     # 3. Events / reconnect
-    with open('../fixtures/runs/reconnect.json') as f:
+    with open(fixtures_dir / "runs" / "reconnect.json") as f:
         rec = ReconnectResult.model_validate_json(f.read())
         assert len(rec.events) == 4
 
     # 4. History
-    with open('../fixtures/runs/history.json') as f:
+    with open(fixtures_dir / "runs" / "history.json") as f:
         data = json.load(f)
         for item in data:
             RunHistoryItem.model_validate(item)

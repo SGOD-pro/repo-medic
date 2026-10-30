@@ -613,11 +613,17 @@ export class HttpTransport implements RepoMedicApiClient {
   }
 
   async getRunEvents(runId: string, lastEventId?: string | null): Promise<EventEnvelope[]> {
-    const headers: Record<string, string> = {};
+    const params = new URLSearchParams({ stream: "false" });
+    if (lastEventId) {
+      params.set("after", lastEventId);
+    }
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+    };
     if (lastEventId) {
       headers["Last-Event-ID"] = lastEventId;
     }
-    const res = await fetch(`${this.baseUrl}/runs/${runId}/events`, { headers });
+    const res = await fetch(`${this.baseUrl}/runs/${runId}/events?${params.toString()}`, { headers });
     if (!res.ok) {
       throw new Error("Failed to fetch run events");
     }
@@ -663,8 +669,8 @@ export function createEventStreamFetcher(
   apiClient: RepoMedicApiClient,
   runId: string,
   baseUrl = process.env.NEXT_PUBLIC_API_URL || "/api"
-): (lastEventId: string | null) => AsyncIterable<EventEnvelope> {
-  return async function* (lastEventId: string | null): AsyncIterable<EventEnvelope> {
+): (lastEventId: string | null, signal?: AbortSignal) => AsyncIterable<EventEnvelope> {
+  return async function* (lastEventId: string | null, signal?: AbortSignal): AsyncIterable<EventEnvelope> {
     if (typeof window !== "undefined" && typeof fetch === "function") {
       const transportType = process.env.NEXT_PUBLIC_API_TRANSPORT || "mock";
       if (transportType === "http") {
@@ -674,7 +680,8 @@ export function createEventStreamFetcher(
         if (lastEventId) {
           headers["Last-Event-ID"] = lastEventId;
         }
-        const res = await fetch(`${baseUrl}/runs/${runId}/events`, { headers });
+        const query = lastEventId ? `?after=${encodeURIComponent(lastEventId)}` : "";
+        const res = await fetch(`${baseUrl}/runs/${runId}/events${query}`, { headers, signal });
         if (!res.ok) {
           throw new Error(`Event stream request failed with status ${res.status}`);
         }

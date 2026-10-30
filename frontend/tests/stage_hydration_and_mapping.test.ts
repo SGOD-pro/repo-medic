@@ -122,7 +122,7 @@ describe("stage event mapping, hydration and terminal presentation", () => {
       passed: baselinePayload.passed,
       summary: baselinePayload.summary,
     };
-
+    assert.equal(baselineEv.type, "stage.completed");
     assert.equal(stageResults.baseline?.passed, true);
     assert.equal(stageResults.baseline?.summary, "Baseline tests passed cleanly (2/2 tests)");
 
@@ -139,6 +139,7 @@ describe("stage event mapping, hydration and terminal presentation", () => {
       type: "candidate.completed",
       payload: candPayload as unknown as Record<string, unknown>,
     };
+    assert.equal(candEv.type, "candidate.completed");
     stageResults.repair = {
       passed: candPayload.passed,
       summary: candPayload.summary,

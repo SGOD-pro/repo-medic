@@ -6,7 +6,10 @@ import {
 
 export interface StreamManagerOptions {
   runId: string;
-  streamFetcher: (lastEventId: string | null) => AsyncIterable<EventEnvelope> | Promise<AsyncIterable<EventEnvelope>>;
+  streamFetcher: (
+    lastEventId: string | null,
+    signal?: AbortSignal
+  ) => AsyncIterable<EventEnvelope> | Promise<AsyncIterable<EventEnvelope>>;
   onEvent: (event: EventEnvelope) => void;
   onStatusChange: (status: ConnectionStatus, attempt: number) => void;
   onError?: (error: ErrorDetail) => void;
@@ -16,7 +19,10 @@ export interface StreamManagerOptions {
 
 export class StreamManager {
   private runId: string;
-  private streamFetcher: (lastEventId: string | null) => AsyncIterable<EventEnvelope> | Promise<AsyncIterable<EventEnvelope>>;
+  private streamFetcher: (
+    lastEventId: string | null,
+    signal?: AbortSignal
+  ) => AsyncIterable<EventEnvelope> | Promise<AsyncIterable<EventEnvelope>>;
   private onEvent: (event: EventEnvelope) => void;
   private onStatusChange: (status: ConnectionStatus, attempt: number) => void;
   private onError?: (error: ErrorDetail) => void;
@@ -28,6 +34,7 @@ export class StreamManager {
   private lastEventId: string | null = null;
   private isCancelled: boolean = false;
   private retryTimer: NodeJS.Timeout | null = null;
+  private abortController: AbortController | null = null;
 
   constructor(options: StreamManagerOptions) {
     this.runId = options.runId;
@@ -61,6 +68,10 @@ export class StreamManager {
 
   public stop(): void {
     this.isCancelled = true;
+    if (this.abortController) {
+      this.abortController.abort();
+      this.abortController = null;
+    }
     if (this.retryTimer) {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
@@ -102,8 +113,10 @@ export class StreamManager {
   }
 
   private async consumeStream(): Promise<void> {
+    this.abortController = new AbortController();
+    const signal = this.abortController.signal;
     try {
-      const stream = await this.streamFetcher(this.lastEventId);
+      const stream = await this.streamFetcher(this.lastEventId, signal);
       this.setStatus("connected", 0);
       this.attempt = 0;
 
@@ -131,8 +144,23 @@ export class StreamManager {
           }
         }
       }
-    } catch (err) {
-      if (this.isCancelled) return;
+
+      // If stream ended cleanly without terminal event and manager is not cancelled,
+      // continue next polling or streaming interval with lastEventId
+      if (!this.isCancelled) {
+        this.attempt = 0;
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
+          if (!this.isCancelled) {
+            this.consumeStream();
+          }
+        }, 1000);
+        if (this.retryTimer && typeof this.retryTimer === "object" && "unref" in this.retryTimer) {
+          (this.retryTimer as NodeJS.Timeout).unref();
+        }
+      }
+    } catch (err: unknown) {
+      if (this.isCancelled || (err instanceof Error && err.name === "AbortError")) return;
       this.handleStreamError(err);
     }
   }
@@ -165,5 +193,8 @@ export class StreamManager {
         this.consumeStream();
       }
     }, delay);
+    if (this.retryTimer && typeof this.retryTimer === "object" && "unref" in this.retryTimer) {
+      (this.retryTimer as NodeJS.Timeout).unref();
+    }
   }
 }

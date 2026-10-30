@@ -760,8 +760,9 @@ def create_app(
         id: str,
         request: Request,
         after: int = Query(default=0, ge=0),
+        stream: bool = Query(default=True),
         repo: D1StorageRepository = Depends(get_repository),
-    ) -> StreamingResponse:
+    ) -> Response:
         run = await asyncio.to_thread(repo.get_run, id)
         if run is None:
             raise HTTPException(
@@ -774,11 +775,19 @@ def create_app(
         if last_event_id_header and last_event_id_header.isdigit():
             start_cursor = max(start_cursor, int(last_event_id_header))
 
+        accept_header = request.headers.get("accept", "")
+        # If client explicitly asks for non-streaming / json, or specifies stream=False, return event list immediately
+        if not stream or (accept_header and "application/json" in accept_header and "text/event-stream" not in accept_header):
+            events = await asyncio.to_thread(repo.list_events, id, after=start_cursor)
+            return JSONResponse(content={"events": [ev.model_dump() for ev in events]})
+
         async def event_generator() -> AsyncIterator[str]:
             cursor = start_cursor
             loop = asyncio.get_running_loop()
             last_heartbeat = loop.time()
+            start_time = loop.time()
             cycle_count = 0
+            max_duration_seconds = 18.0
 
             while True:
                 if await request.is_disconnected():
@@ -805,6 +814,11 @@ def create_app(
                         yield f"id: {ev.seq}\nevent: {ev.type}\ndata: {ev.model_dump_json()}\n\n"
                         if ev.seq > cursor:
                             cursor = ev.seq
+                    break
+
+                # AWS API Gateway enforces a strict 29s timeout and Lambda buffers chunked responses.
+                # Bounding the generator to 18s flushes events cleanly with 200 OK so the client continues seamlessly.
+                if loop.time() - start_time >= max_duration_seconds:
                     break
 
                 now = loop.time()
